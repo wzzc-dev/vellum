@@ -1555,24 +1555,14 @@ impl Render for VellumApp {
                         .w_full()
                         .px_2()
                         .pr_3()
+                        .child(self.render_chrome_menu(cx))
                         .child(
                             div()
-                                .w(px(36.))
-                                .child(self.render_chrome_menu(cx)),
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(self.document_label()),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(self.document_label()),
-                                ),
-                        )
-                        .child(div().w(px(36.))),
+                        .child(div().flex_1()),
                 ),
             )
             .child(div().flex_1().min_h(px(0.)).child(body))
