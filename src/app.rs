@@ -1,5 +1,6 @@
 use std::{
     cmp,
+    env, fs,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -62,6 +63,8 @@ const BODY_FONT_SIZE: f32 = 17.;
 const BODY_LINE_HEIGHT: f32 = 28.;
 const CODE_FONT_SIZE: f32 = 15.;
 const CODE_LINE_HEIGHT: f32 = 24.;
+const SESSION_DIR_NAME: &str = "Vellum";
+const LAST_OPENED_FILE_NAME: &str = "last-opened.txt";
 
 pub fn run() -> Result<()> {
     Application::new().run(|cx: &mut App| {
@@ -133,10 +136,10 @@ struct VellumApp {
 }
 
 impl VellumApp {
-    fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree_state = cx.new(|cx| TreeState::new(cx));
 
-        Self {
+        let mut this = Self {
             app_state: AppState {
                 workspace_root: None,
             },
@@ -149,7 +152,9 @@ impl VellumApp {
             status_message: SharedString::from(""),
             flush_generation: 0,
             autosave_generation: 0,
-        }
+        };
+        this.restore_last_opened_document(window, cx);
+        this
     }
 
     fn start_background_tasks(view: &Entity<Self>, window: &mut Window, cx: &mut App) {
@@ -194,6 +199,32 @@ impl VellumApp {
     fn toggle_sidebar_visibility(&mut self, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
         cx.notify();
+    }
+
+    fn restore_last_opened_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = read_last_opened_path() else {
+            return;
+        };
+
+        if !path.exists() {
+            clear_last_opened_path();
+            self.set_status(format!("Last file unavailable: {}", path.display()));
+            return;
+        }
+
+        if !is_markdown_path(&path) {
+            clear_last_opened_path();
+            self.set_status(format!("Last file is not Markdown: {}", path.display()));
+            return;
+        }
+
+        self.open_file(path, window, cx);
+    }
+
+    fn remember_last_opened_document(&self) {
+        if let Some(path) = self.document.path.as_ref().filter(|path| is_markdown_path(path)) {
+            let _ = write_last_opened_path(path);
+        }
     }
 
     fn document_label(&self) -> String {
@@ -348,6 +379,7 @@ impl VellumApp {
     ) {
         self.clear_session();
         self.document = document;
+        self.remember_last_opened_document();
         window.set_window_title(&self.window_title());
         cx.notify();
     }
@@ -436,6 +468,7 @@ impl VellumApp {
         if let Some(path) = &self.document.path {
             self.workspace.selected_file = Some(path.clone());
         }
+        self.remember_last_opened_document();
         window.set_window_title(&self.window_title());
         self.set_status(format!("Saved {}", self.document.display_name()));
         cx.notify();
@@ -464,6 +497,7 @@ impl VellumApp {
         self.document.set_path(path.clone());
         self.document.save_now()?;
         self.workspace.selected_file = Some(path.clone());
+        self.remember_last_opened_document();
         window.set_window_title(&self.window_title());
         self.set_status(format!("Saved {}", path.display()));
         cx.notify();
@@ -1424,6 +1458,58 @@ fn count_document_words(text: &str) -> usize {
     count
 }
 
+fn read_last_opened_path() -> Option<PathBuf> {
+    let session_file = session_file_path()?;
+    let raw = fs::read_to_string(session_file).ok()?;
+    parse_session_path(&raw)
+}
+
+fn write_last_opened_path(path: &Path) -> Result<()> {
+    let Some(session_file) = session_file_path() else {
+        return Ok(());
+    };
+
+    if let Some(parent) = session_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(session_file, path.as_os_str().to_string_lossy().into_owned())?;
+    Ok(())
+}
+
+fn clear_last_opened_path() {
+    if let Some(session_file) = session_file_path() {
+        let _ = fs::remove_file(session_file);
+    }
+}
+
+fn parse_session_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+fn session_file_path() -> Option<PathBuf> {
+    let base_dir = if cfg!(target_os = "windows") {
+        env::var_os("LOCALAPPDATA")
+            .or_else(|| env::var_os("APPDATA"))
+            .map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Library").join("Application Support"))
+    } else {
+        env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    }?;
+
+    Some(base_dir.join(SESSION_DIR_NAME).join(LAST_OPENED_FILE_NAME))
+}
+
 fn is_cjk_character(ch: char) -> bool {
     matches!(
         ch as u32,
@@ -1433,6 +1519,24 @@ fn is_cjk_character(ch: char) -> bool {
             | 0x31F0..=0x31FF
             | 0xAC00..=0xD7AF
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_session_path_trims_whitespace() {
+        assert_eq!(
+            parse_session_path("  /tmp/note.md \n"),
+            Some(PathBuf::from("/tmp/note.md"))
+        );
+    }
+
+    #[test]
+    fn parse_session_path_rejects_empty_values() {
+        assert_eq!(parse_session_path(" \r\n\t "), None);
+    }
 }
 
 fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
