@@ -37,7 +37,12 @@ impl VellumApp {
                         .rounded(px(8.))
                         .text_sm()
                         .pl(px(8. + entry.depth() as f32 * 14.))
-                        .child(div().text_color(foreground).child(label))
+                        .child(
+                            div()
+                                .text_color(foreground)
+                                .truncate()
+                                .child(label),
+                        )
                         .on_click({
                             let view = view.clone();
                             move |_, window, cx| {
