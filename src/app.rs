@@ -1544,7 +1544,10 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_focus_prev_block))
             .on_action(cx.listener(Self::on_focus_next_block))
             .child(
-                TitleBar::new().child(
+                TitleBar::new()
+                    .bg(cx.theme().background)
+                    .border_color(cx.theme().background)
+                    .child(
                     div()
                         .flex()
                         .items_center()
