@@ -12,15 +12,16 @@ use gpui::{
     AnyElement, App, AppContext, Application, Context, Entity, EntityInputHandler as _,
     InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Timer, VisualContext, Window, WindowOptions,
-    actions, div, px, size,
+    actions, div, px, rems, size,
 };
 use gpui_component::{
-    ActiveTheme, Root, TitleBar,
+    ActiveTheme, Icon, IconName, Root, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState},
     list::ListItem,
+    menu::{DropdownMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
-    text::TextView,
+    text::{TextView, TextViewStyle},
     tree::{TreeState, tree},
     v_virtual_list,
 };
@@ -56,7 +57,11 @@ const INPUT_CONTEXT: &str = "Input";
 const FLUSH_DELAY: Duration = Duration::from_millis(120);
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(700);
 const WATCH_POLL_DELAY: Duration = Duration::from_millis(250);
-const MAX_EDITOR_WIDTH: f32 = 860.;
+const MAX_EDITOR_WIDTH: f32 = 780.;
+const BODY_FONT_SIZE: f32 = 17.;
+const BODY_LINE_HEIGHT: f32 = 28.;
+const CODE_FONT_SIZE: f32 = 15.;
+const CODE_LINE_HEIGHT: f32 = 24.;
 
 pub fn run() -> Result<()> {
     Application::new().run(|cx: &mut App| {
@@ -112,7 +117,6 @@ fn bind_keys(cx: &mut App) {
 #[derive(Default)]
 struct AppState {
     workspace_root: Option<PathBuf>,
-    active_document_id: Option<u64>,
 }
 
 struct VellumApp {
@@ -135,15 +139,14 @@ impl VellumApp {
         Self {
             app_state: AppState {
                 workspace_root: None,
-                active_document_id: Some(1),
             },
             workspace: WorkspaceState::new(),
             tree_state,
             document: DocumentState::new_empty(None, None),
             active_session: None,
             input_subscription: None,
-            sidebar_visible: true,
-            status_message: SharedString::from("Ready"),
+            sidebar_visible: false,
+            status_message: SharedString::from(""),
             flush_generation: 0,
             autosave_generation: 0,
         }
@@ -186,6 +189,128 @@ impl VellumApp {
 
     fn set_status(&mut self, status: impl Into<SharedString>) {
         self.status_message = status.into();
+    }
+
+    fn toggle_sidebar_visibility(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_visible = !self.sidebar_visible;
+        cx.notify();
+    }
+
+    fn document_label(&self) -> String {
+        let mut label = self.document.display_name();
+        if self.document.dirty {
+            label.push_str(" *");
+        }
+        label
+    }
+
+    fn document_word_count(&self) -> usize {
+        count_document_words(&self.document.text())
+    }
+
+    fn render_chrome_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+
+        Button::new("chrome-menu")
+            .icon(IconName::Menu)
+            .ghost()
+            .compact()
+            .tooltip("Menu")
+            .dropdown_menu(move |menu, _, _| {
+                menu.min_w(px(220.))
+                    .item(
+                        PopupMenuItem::new("Open Folder")
+                            .icon(IconName::FolderOpen)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.open_folder_dialog(window, cx);
+                                    });
+                                }
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Open File")
+                            .icon(IconName::File)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.open_file_dialog(window, cx);
+                                    });
+                                }
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new("New File")
+                            .icon(IconName::Plus)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.create_new_file(window, cx);
+                                    });
+                                }
+                            }),
+                    )
+                    .separator()
+                    .item(PopupMenuItem::new("Save").on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                if let Err(err) = this.save_document(window, cx) {
+                                    this.set_status(format!("Save failed: {err}"));
+                                }
+                            });
+                        }
+                    }))
+                    .item(PopupMenuItem::new("Save As").on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                if let Err(err) = this.save_document_as(window, cx) {
+                                    this.set_status(format!("Save As failed: {err}"));
+                                }
+                            });
+                        }
+                    }))
+            })
+    }
+
+    fn render_sidebar_toggle(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let is_open = self.sidebar_visible;
+        let border_color = if is_open {
+            cx.theme().foreground.opacity(0.45)
+        } else {
+            cx.theme().muted_foreground.opacity(0.55)
+        };
+        let background_color = if is_open {
+            cx.theme().foreground.opacity(0.08)
+        } else {
+            cx.theme().background
+        };
+        let hover_border = cx.theme().foreground.opacity(0.38);
+        let hover_background = cx.theme().secondary.opacity(0.18);
+
+        div()
+            .id("sidebar-toggle")
+            .size(px(18.))
+            .rounded_full()
+            .border_1()
+            .border_color(border_color)
+            .bg(background_color)
+            .hover(move |style| {
+                style
+                    .border_color(hover_border)
+                    .bg(hover_background)
+            })
+            .on_click(move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.toggle_sidebar_visibility(cx);
+                });
+            })
     }
 
     fn clear_session(&mut self) {
@@ -712,31 +837,17 @@ impl VellumApp {
         cx.notify();
     }
 
-    fn render_toolbar_button(
-        &self,
-        id: &'static str,
-        label: &'static str,
-        on_click: impl Fn(&Entity<Self>, &mut Window, &mut App) + 'static,
-        cx: &Context<Self>,
-    ) -> Button {
-        let view = cx.entity();
-        Button::new(id)
-            .label(label)
-            .ghost()
-            .compact()
-            .on_click(move |_, window, cx| on_click(&view, window, cx))
-    }
-
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let selected_path = self.workspace.selected_file.clone();
+        let foreground = cx.theme().foreground;
 
         div()
             .size_full()
-            .bg(cx.theme().secondary.opacity(0.45))
+            .bg(cx.theme().background)
             .border_r_1()
-            .border_color(cx.theme().sidebar_border)
-            .p_2()
+            .border_color(cx.theme().border.opacity(0.35))
+            .p_3()
             .child(
                 tree(&self.tree_state, move |ix, entry, selected, _, _| {
                     let path = PathBuf::from(entry.item().id.as_ref());
@@ -750,11 +861,22 @@ impl VellumApp {
                         entry.item().label.to_string()
                     };
 
+                    let label = if entry.is_folder() {
+                        if entry.is_expanded() {
+                            format!("v {}", entry.item().label)
+                        } else {
+                            format!("> {}", entry.item().label)
+                        }
+                    } else {
+                        label
+                    };
                     let is_selected_file = selected_path.as_ref() == Some(&path);
                     ListItem::new(ix)
                         .selected(selected || is_selected_file)
+                        .rounded(px(8.))
+                        .text_sm()
                         .pl(px(8. + entry.depth() as f32 * 14.))
-                        .child(label)
+                        .child(div().text_color(foreground).child(label))
                         .on_click({
                             let view = view.clone();
                             move |_, window, cx| {
@@ -782,18 +904,18 @@ impl VellumApp {
                 .justify_between()
                 .items_center()
                 .gap_3()
-                .px_4()
-                .py_3()
-                .mb_3()
-                .rounded(px(10.))
-                .bg(cx.theme().warning.opacity(0.14))
+                .px_3()
+                .py_2()
+                .mb_4()
+                .rounded(px(8.))
+                .bg(cx.theme().warning.opacity(0.08))
                 .border_1()
-                .border_color(cx.theme().warning.opacity(0.4))
+                .border_color(cx.theme().warning.opacity(0.22))
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap_1()
+                        .gap_0p5()
                         .child("External file changes detected")
                         .child(
                             div()
@@ -840,15 +962,15 @@ impl VellumApp {
             .flex()
             .flex_col()
             .gap_2()
-            .items_center()
-            .justify_center()
-            .size_full()
+            .pt(px(56.))
+            .text_size(px(BODY_FONT_SIZE))
+            .line_height(px(BODY_LINE_HEIGHT))
             .text_color(cx.theme().muted_foreground)
-            .child("Open a Markdown file or folder to start writing.")
+            .child("Open a Markdown file or press Ctrl+N to start writing.")
             .child(
                 div()
                     .text_sm()
-                    .child("Vellum v1 uses block-level hybrid editing."),
+                    .child("Vellum keeps editing in a single quiet writing column."),
             )
     }
 
@@ -866,6 +988,7 @@ impl VellumApp {
             .map(|session| session.block_id == block.id)
             .unwrap_or(false);
         let view = cx.entity();
+        let metrics = block_layout_metrics(&block.kind);
 
         let content = if is_active {
             let session = self.active_session.as_ref().expect("active session");
@@ -877,46 +1000,43 @@ impl VellumApp {
                 &block.kind,
             );
             div()
-                .rounded(px(10.))
-                .bg(cx.theme().secondary.opacity(0.22))
-                .border_1()
-                .border_color(cx.theme().accent.opacity(0.35))
-                .px_3()
-                .py_2()
+                .px_1()
+                .py(px(metrics.block_padding_y))
                 .child(input)
                 .into_any_element()
         } else if self.document.is_empty() && block_text.is_empty() {
             div()
-                .rounded(px(10.))
-                .px_4()
-                .py_4()
+                .px_1()
+                .py(px(metrics.block_padding_y + 6.))
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
                 .text_color(cx.theme().muted_foreground)
                 .child("Start writing...")
                 .into_any_element()
         } else {
             div()
-                .rounded(px(10.))
-                .px_4()
-                .py_3()
-                .hover(|style| style.bg(cx.theme().secondary.opacity(0.16)))
+                .px_1()
+                .py(px(metrics.block_padding_y))
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
                 .child(TextView::markdown(
                     ("preview", block.id),
                     block_text,
                     window,
                     cx,
-                ))
+                )
+                .style(markdown_preview_style()))
                 .into_any_element()
         };
 
         div()
             .id(("block-row", block.id))
             .w_full()
-            .py_1()
+            .py(px(metrics.row_spacing_y))
             .child(
                 div()
                     .id(("activate-block", block.id))
                     .w_full()
-                    .rounded(px(10.))
                     .on_click(move |_, window, cx| {
                         let _ = view.update(cx, |this, cx| {
                             this.activate_block(block_ix, window, cx);
@@ -935,89 +1055,81 @@ impl VellumApp {
                 .map(|block| {
                     let text = self.document.block_text(block);
                     let line_count = cmp::max(text.lines().count(), 1);
-                    let base = match block.kind {
-                        BlockKind::Heading { depth: 1 } => 52.,
-                        BlockKind::Heading { depth: 2 } => 46.,
-                        BlockKind::Heading { depth: 3 } => 42.,
-                        BlockKind::Heading { depth: 4 } => 38.,
-                        BlockKind::CodeFence { .. } => 54.,
-                        BlockKind::Table => 58.,
-                        _ => 34.,
-                    };
-                    let per_line = match block.kind {
-                        BlockKind::Heading { depth: 1 } => 32.,
-                        BlockKind::Heading { depth: 2 } => 28.,
-                        BlockKind::Heading { depth: 3 } => 26.,
-                        BlockKind::Heading { depth: 4 } => 24.,
-                        BlockKind::CodeFence { .. } => 20.,
-                        _ => 24.,
-                    };
-                    size(px(1.), px(base + line_count as f32 * per_line))
+                    let metrics = block_layout_metrics(&block.kind);
+                    size(
+                        px(1.),
+                        px(
+                            metrics.block_padding_y * 2.
+                                + metrics.row_spacing_y * 2.
+                                + metrics.line_height * line_count as f32
+                                + metrics.extra_height,
+                        ),
+                    )
                 })
                 .collect(),
         )
     }
 
     fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        if self.document.blocks.is_empty() {
-            return self.render_empty_state(cx).into_any_element();
-        }
-
         let view = cx.entity();
         let sizes = self.block_item_sizes();
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
+        let content = if self.document.blocks.is_empty() {
+            self.render_empty_state(cx).into_any_element()
+        } else {
+            v_virtual_list(
+                view,
+                "document-blocks",
+                sizes,
+                |this, range: Range<usize>, window, cx| {
+                    range
+                        .map(|ix| this.render_block_row(ix, window, cx))
+                        .collect::<Vec<_>>()
+                },
+            )
+            .size_full()
+            .into_any_element()
+        };
 
         div()
             .size_full()
+            .bg(cx.theme().background)
             .overflow_hidden()
             .child(
                 div()
                     .size_full()
-                    .px_6()
-                    .py_5()
+                    .flex()
+                    .flex_col()
+                    .px_8()
+                    .pt(px(28.))
+                    .pb(px(44.))
                     .when_some(conflict_banner, |this, banner| this.child(banner))
                     .child(
                         div()
+                            .flex_1()
+                            .min_h(px(0.))
                             .mx_auto()
                             .max_w(px(MAX_EDITOR_WIDTH))
                             .w_full()
-                            .h_full()
-                            .child(
-                                v_virtual_list(
-                                    view,
-                                    "document-blocks",
-                                    sizes,
-                                    |this, range: Range<usize>, window, cx| {
-                                        range
-                                            .map(|ix| this.render_block_row(ix, window, cx))
-                                            .collect::<Vec<_>>()
-                                    },
-                                )
-                                .size_full(),
-                            ),
+                            .child(content),
                     ),
             )
             .into_any_element()
     }
 
     fn render_status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let workspace = self
-            .app_state
-            .workspace_root
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "No workspace".to_string());
-        let doc_status = if matches!(self.document.conflict, ConflictState::Conflict { .. }) {
-            "Conflict"
-        } else if self.document.saving {
-            "Saving"
-        } else if self.document.dirty {
-            "Dirty"
-        } else {
-            "Saved"
-        };
+        let (doc_status, icon, color) =
+            if matches!(self.document.conflict, ConflictState::Conflict { .. }) {
+                ("Conflict", IconName::TriangleAlert, cx.theme().warning)
+            } else if self.document.saving {
+                ("Saving", IconName::LoaderCircle, cx.theme().muted_foreground)
+            } else if self.document.dirty {
+                ("Edited", IconName::Asterisk, cx.theme().muted_foreground)
+            } else {
+                ("Saved", IconName::CircleCheck, cx.theme().success)
+            };
 
         div()
             .flex()
@@ -1027,26 +1139,44 @@ impl VellumApp {
             .px_4()
             .py_2()
             .border_t_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().border.opacity(0.35))
             .bg(cx.theme().background)
             .text_sm()
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.))
                     .flex()
+                    .items_center()
                     .gap_3()
-                    .child(workspace)
-                    .child(format!("Doc {}", self.document.display_name()))
-                    .child(format!("State {doc_status}"))
-                    .child(format!("Blocks {}", self.document.blocks.len()))
-                    .child(format!(
-                        "Active {}",
-                        self.app_state.active_document_id.unwrap_or_default()
-                    )),
+                    .child(self.render_sidebar_toggle(cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(self.status_message.clone()),
+                    ),
             )
             .child(
                 div()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(self.status_message.clone()),
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Words {}", self.document_word_count())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_color(color)
+                            .child(Icon::new(icon).small())
+                            .child(doc_status),
+                    ),
             )
     }
 
@@ -1075,8 +1205,7 @@ impl VellumApp {
     }
 
     fn on_toggle_sidebar(&mut self, _: &ToggleSidebar, _: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_visible = !self.sidebar_visible;
-        cx.notify();
+        self.toggle_sidebar_visibility(cx);
     }
 
     fn on_bold_selection(
@@ -1173,14 +1302,137 @@ fn activation_cursor_offset(text: &str) -> usize {
 }
 
 fn style_active_input_for_block(input: Input, kind: &BlockKind) -> Input {
+    let metrics = block_layout_metrics(kind);
+    input
+        .text_size(px(metrics.font_size))
+        .line_height(px(metrics.line_height))
+}
+
+#[derive(Clone, Copy)]
+struct BlockLayoutMetrics {
+    font_size: f32,
+    line_height: f32,
+    row_spacing_y: f32,
+    block_padding_y: f32,
+    extra_height: f32,
+}
+
+fn block_layout_metrics(kind: &BlockKind) -> BlockLayoutMetrics {
     match kind {
-        BlockKind::Heading { depth: 1 } => input.text_size(px(34.)).line_height(px(40.)),
-        BlockKind::Heading { depth: 2 } => input.text_size(px(28.)).line_height(px(34.)),
-        BlockKind::Heading { depth: 3 } => input.text_size(px(24.)).line_height(px(30.)),
-        BlockKind::Heading { depth: 4 } => input.text_size(px(20.)).line_height(px(26.)),
-        BlockKind::Heading { .. } => input.text_base(),
-        _ => input,
+        BlockKind::Heading { depth: 1 } => BlockLayoutMetrics {
+            font_size: 34.,
+            line_height: 42.,
+            row_spacing_y: 8.,
+            block_padding_y: 6.,
+            extra_height: 6.,
+        },
+        BlockKind::Heading { depth: 2 } => BlockLayoutMetrics {
+            font_size: 28.,
+            line_height: 36.,
+            row_spacing_y: 7.,
+            block_padding_y: 5.,
+            extra_height: 4.,
+        },
+        BlockKind::Heading { depth: 3 } => BlockLayoutMetrics {
+            font_size: 24.,
+            line_height: 32.,
+            row_spacing_y: 6.,
+            block_padding_y: 4.,
+            extra_height: 4.,
+        },
+        BlockKind::Heading { depth: 4 } => BlockLayoutMetrics {
+            font_size: 20.,
+            line_height: 28.,
+            row_spacing_y: 5.,
+            block_padding_y: 4.,
+            extra_height: 2.,
+        },
+        BlockKind::Heading { .. } => BlockLayoutMetrics {
+            font_size: 18.,
+            line_height: 26.,
+            row_spacing_y: 5.,
+            block_padding_y: 4.,
+            extra_height: 2.,
+        },
+        BlockKind::CodeFence { .. } => BlockLayoutMetrics {
+            font_size: CODE_FONT_SIZE,
+            line_height: CODE_LINE_HEIGHT,
+            row_spacing_y: 6.,
+            block_padding_y: 6.,
+            extra_height: 10.,
+        },
+        BlockKind::Table => BlockLayoutMetrics {
+            font_size: BODY_FONT_SIZE,
+            line_height: BODY_LINE_HEIGHT,
+            row_spacing_y: 6.,
+            block_padding_y: 5.,
+            extra_height: 12.,
+        },
+        BlockKind::ThematicBreak => BlockLayoutMetrics {
+            font_size: BODY_FONT_SIZE,
+            line_height: BODY_LINE_HEIGHT,
+            row_spacing_y: 8.,
+            block_padding_y: 6.,
+            extra_height: 18.,
+        },
+        _ => BlockLayoutMetrics {
+            font_size: BODY_FONT_SIZE,
+            line_height: BODY_LINE_HEIGHT,
+            row_spacing_y: 4.,
+            block_padding_y: 3.,
+            extra_height: 2.,
+        },
     }
+}
+
+fn markdown_preview_style() -> TextViewStyle {
+    TextViewStyle::default()
+        .paragraph_gap(rems(0.45))
+        .heading_font_size(|level, _| match level {
+            1 => px(34.),
+            2 => px(28.),
+            3 => px(24.),
+            4 => px(20.),
+            5 => px(18.),
+            _ => px(BODY_FONT_SIZE),
+        })
+}
+
+fn count_document_words(text: &str) -> usize {
+    let mut count = 0usize;
+    let mut in_word = false;
+
+    for ch in text.chars() {
+        if is_cjk_character(ch) {
+            if in_word {
+                count += 1;
+                in_word = false;
+            }
+            count += 1;
+        } else if ch.is_alphanumeric() {
+            in_word = true;
+        } else if in_word {
+            count += 1;
+            in_word = false;
+        }
+    }
+
+    if in_word {
+        count += 1;
+    }
+
+    count
+}
+
+fn is_cjk_character(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0x3040..=0x30FF
+            | 0x31F0..=0x31FF
+            | 0xAC00..=0xD7AF
+    )
 }
 
 fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
@@ -1253,15 +1505,22 @@ impl Render for VellumApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.window_title());
 
-        let body = h_resizable("vellum-layout")
-            .child(
-                resizable_panel()
-                    .size(px(260.))
-                    .size_range(px(180.)..px(420.))
-                    .visible(self.sidebar_visible)
-                    .child(self.render_sidebar(cx)),
-            )
-            .child(resizable_panel().child(self.render_editor(window, cx)));
+        let body = if self.sidebar_visible {
+            h_resizable("vellum-layout")
+                .child(
+                    resizable_panel()
+                        .size(px(240.))
+                        .size_range(px(180.)..px(360.))
+                        .child(self.render_sidebar(cx)),
+                )
+                .child(resizable_panel().child(self.render_editor(window, cx)))
+                .into_any_element()
+        } else {
+            div()
+                .size_full()
+                .child(self.render_editor(window, cx))
+                .into_any_element()
+        };
 
         div()
             .id("vellum-app")
@@ -1269,6 +1528,7 @@ impl Render for VellumApp {
             .size_full()
             .flex()
             .flex_col()
+            .bg(cx.theme().background)
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new_file))
@@ -1288,99 +1548,28 @@ impl Render for VellumApp {
                     div()
                         .flex()
                         .items_center()
-                        .justify_between()
-                        .gap_4()
+                        .gap_3()
                         .w_full()
+                        .px_2()
                         .pr_3()
                         .child(
                             div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(self.render_toolbar_button(
-                                    "open-folder",
-                                    "Open Folder",
-                                    |view, window, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            this.open_folder_dialog(window, cx)
-                                        });
-                                    },
-                                    cx,
-                                ))
-                                .child(self.render_toolbar_button(
-                                    "open-file",
-                                    "Open File",
-                                    |view, window, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            this.open_file_dialog(window, cx)
-                                        });
-                                    },
-                                    cx,
-                                ))
-                                .child(self.render_toolbar_button(
-                                    "new-file",
-                                    "New File",
-                                    |view, window, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            this.create_new_file(window, cx)
-                                        });
-                                    },
-                                    cx,
-                                ))
-                                .child(self.render_toolbar_button(
-                                    "save-now",
-                                    "Save",
-                                    |view, window, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            let _ = this.save_document(window, cx);
-                                        });
-                                    },
-                                    cx,
-                                ))
-                                .child(self.render_toolbar_button(
-                                    "save-as",
-                                    "Save As",
-                                    |view, window, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            let _ = this.save_document_as(window, cx);
-                                        });
-                                    },
-                                    cx,
-                                ))
-                                .child(self.render_toolbar_button(
-                                    "toggle-sidebar",
-                                    "Toggle Sidebar",
-                                    |view, _, cx| {
-                                        let _ = view.update(cx, |this, cx| {
-                                            this.sidebar_visible = !this.sidebar_visible;
-                                            cx.notify();
-                                        });
-                                    },
-                                    cx,
-                                )),
+                                .w(px(36.))
+                                .child(self.render_chrome_menu(cx)),
                         )
                         .child(
                             div()
+                                .flex_1()
                                 .flex()
-                                .items_center()
-                                .gap_3()
+                                .justify_center()
                                 .child(
                                     div()
                                         .text_sm()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(self.document.display_name()),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(if self.document.dirty {
-                                            "Unsaved"
-                                        } else {
-                                            "Synced"
-                                        }),
+                                        .child(self.document_label()),
                                 ),
-                        ),
+                        )
+                        .child(div().w(px(36.))),
                 ),
             )
             .child(div().flex_1().min_h(px(0.)).child(body))
