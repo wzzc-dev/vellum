@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use gpui_component::input::InputState;
 use markdown::{ParseOptions, mdast::Node, to_mdast};
 use ropey::Rope;
 
@@ -39,8 +38,6 @@ pub struct BlockSpan {
     pub cursor_anchor_policy: CursorAnchorPolicy,
     pub can_code_edit: bool,
 }
-
-impl BlockSpan {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictState {
@@ -281,31 +278,6 @@ impl DocumentState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ActiveBlockSession {
-    pub block_id: u64,
-    pub buffer: String,
-    pub cursor_offset: usize,
-    pub anchor_document_offset: usize,
-    pub input: gpui::Entity<InputState>,
-}
-
-impl ActiveBlockSession {
-    pub fn new(
-        document: &DocumentState,
-        block: &BlockSpan,
-        input: gpui::Entity<InputState>,
-    ) -> Self {
-        Self {
-            block_id: block.id,
-            buffer: document.block_text(block),
-            cursor_offset: 0,
-            anchor_document_offset: block.byte_range.start,
-            input,
-        }
-    }
-}
-
 fn make_block_id(parse_version: u64, index: usize) -> u64 {
     (parse_version << 32) | index as u64
 }
@@ -534,7 +506,7 @@ mod tests {
 
     #[test]
     fn handles_multibyte_block_ranges_and_splices() {
-        let mut doc = DocumentState::from_text(None, None, "# 标题\n\n段落🙂\n");
+        let mut doc = DocumentState::from_text(None, None, "# 鏍囬\n\n娈佃惤馃檪\n");
         let paragraph = doc
             .blocks
             .iter()
@@ -542,16 +514,16 @@ mod tests {
             .cloned()
             .expect("paragraph");
 
-        assert_eq!(doc.block_text(&paragraph), "段落🙂");
+        assert_eq!(doc.block_text(&paragraph), "娈佃惤馃檪");
 
-        doc.replace_range(paragraph.byte_range, "更新🙂\n");
+        doc.replace_range(paragraph.byte_range, "鏇存柊馃檪\n");
 
         let paragraph = doc
             .blocks
             .iter()
             .find(|block| block.kind == BlockKind::Paragraph)
             .expect("paragraph after replace");
-        assert_eq!(doc.block_text(paragraph), "更新🙂");
-        assert!(doc.text().contains("# 标题"));
+        assert_eq!(doc.block_text(paragraph), "鏇存柊馃檪");
+        assert!(doc.text().contains("# 鏍囬"));
     }
 }

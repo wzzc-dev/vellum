@@ -1,0 +1,11 @@
+[package]
+name = "editor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+markdown = "1.0.0"
+ropey = "1.6"

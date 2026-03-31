@@ -1,25 +1,31 @@
-use super::layout::count_document_words;
+use gpui::StatefulInteractiveElement as _;
+use gpui_component::{Sizable as _, menu::DropdownMenu as _};
+
 use super::*;
 
 impl VellumApp {
     pub(super) fn window_title(&self) -> String {
-        let mut title = format!("{} - Vellum", self.document.display_name());
-        if self.document.dirty {
-            title.push_str(" *");
-        }
-        title
+        let dirty_suffix = if self.editor_snapshot.dirty { " *" } else { "" };
+        format!(
+            "{}{dirty_suffix} - Vellum",
+            self.editor_snapshot.display_name
+        )
     }
 
     pub(super) fn current_document_dir(&self) -> Option<PathBuf> {
-        self.document
+        self.editor_snapshot
             .path
             .as_ref()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
             .or_else(|| self.app_state.workspace_root.clone())
     }
 
     pub(super) fn set_status(&mut self, status: impl Into<SharedString>) {
-        self.status_message = status.into();
+        self.shell_status_message = status.into();
+    }
+
+    pub(super) fn clear_status(&mut self) {
+        self.shell_status_message = SharedString::from("");
     }
 
     pub(super) fn toggle_sidebar_visibility(&mut self, cx: &mut Context<Self>) {
@@ -28,15 +34,23 @@ impl VellumApp {
     }
 
     pub(super) fn document_label(&self) -> String {
-        let mut label = self.document.display_name();
-        if self.document.dirty {
+        let mut label = self.editor_snapshot.display_name.clone();
+        if self.editor_snapshot.dirty {
             label.push_str(" *");
         }
         label
     }
 
     pub(super) fn document_word_count(&self) -> usize {
-        count_document_words(&self.document.text())
+        self.editor_snapshot.word_count
+    }
+
+    fn status_message(&self) -> SharedString {
+        if self.shell_status_message.is_empty() {
+            self.editor_snapshot.status_message.clone()
+        } else {
+            self.shell_status_message.clone()
+        }
     }
 
     pub(super) fn render_app_menu(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -46,7 +60,7 @@ impl VellumApp {
             .icon(IconName::Menu)
             .ghost()
             .compact()
-            .tooltip("Menu")
+            .tooltip("File")
             .dropdown_menu(move |menu, _, _| {
                 menu.min_w(px(220.))
                     .item(
@@ -92,6 +106,7 @@ impl VellumApp {
                             let _ = view.update(cx, |this, cx| {
                                 if let Err(err) = this.save_document(window, cx) {
                                     this.set_status(format!("Save failed: {err}"));
+                                    cx.notify();
                                 }
                             });
                         }
@@ -102,6 +117,7 @@ impl VellumApp {
                             let _ = view.update(cx, |this, cx| {
                                 if let Err(err) = this.save_document_as(window, cx) {
                                     this.set_status(format!("Save As failed: {err}"));
+                                    cx.notify();
                                 }
                             });
                         }
@@ -113,17 +129,17 @@ impl VellumApp {
         let view = cx.entity();
         let is_open = self.sidebar_visible;
         let border_color = if is_open {
-            cx.theme().foreground.opacity(0.45)
+            cx.theme().foreground.opacity(0.42)
         } else {
             cx.theme().muted_foreground.opacity(0.55)
         };
         let background_color = if is_open {
-            cx.theme().foreground.opacity(0.08)
+            cx.theme().foreground.opacity(0.06)
         } else {
             cx.theme().background
         };
         let hover_border = cx.theme().foreground.opacity(0.38);
-        let hover_background = cx.theme().secondary.opacity(0.18);
+        let hover_background = cx.theme().secondary.opacity(0.14);
 
         div()
             .id("sidebar-toggle")
@@ -141,47 +157,38 @@ impl VellumApp {
     }
 
     pub(super) fn render_status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let (doc_status, icon, color) =
-            if matches!(self.document.conflict, ConflictState::Conflict { .. }) {
-                ("Conflict", IconName::TriangleAlert, cx.theme().warning)
-            } else if self.document.saving {
-                (
-                    "Saving",
-                    IconName::LoaderCircle,
-                    cx.theme().muted_foreground,
-                )
-            } else if self.document.dirty {
-                ("Edited", IconName::Asterisk, cx.theme().muted_foreground)
-            } else {
-                ("Saved", IconName::CircleCheck, cx.theme().success)
-            };
+        let (doc_status, icon, color) = if self.editor_snapshot.has_conflict {
+            ("Conflict", IconName::TriangleAlert, cx.theme().warning)
+        } else if self.editor_snapshot.saving {
+            (
+                "Saving",
+                IconName::LoaderCircle,
+                cx.theme().muted_foreground,
+            )
+        } else if self.editor_snapshot.dirty {
+            ("Edited", IconName::Asterisk, cx.theme().muted_foreground)
+        } else {
+            ("Saved", IconName::CircleCheck, cx.theme().success)
+        };
 
         div()
             .flex()
-            .justify_between()
             .items_center()
             .gap_4()
             .px_4()
             .py_2()
             .border_t_1()
-            .border_color(cx.theme().border.opacity(0.35))
+            .border_color(cx.theme().border.opacity(0.18))
             .bg(cx.theme().background)
             .text_sm()
+            .child(self.render_sidebar_toggle(cx))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(0.))
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(self.render_sidebar_toggle(cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .text_color(cx.theme().muted_foreground)
-                            .child(self.status_message.clone()),
-                    ),
+                    .text_color(cx.theme().muted_foreground)
+                    .truncate()
+                    .child(self.status_message()),
             )
             .child(
                 div()

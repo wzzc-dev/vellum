@@ -1410,6 +1410,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui-component",
+ "markdown",
+ "ropey 1.6.0",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6397,15 +6408,11 @@ name = "vellum"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "editor",
  "gpui",
  "gpui-component",
- "markdown",
- "notify 8.2.0",
- "once_cell",
- "parking_lot",
  "rfd",
- "ropey 1.6.0",
- "serde",
+ "workspace",
 ]
 
 [[package]]
@@ -7325,6 +7332,15 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-component",
+ "notify 8.2.0",
 ]
 
 [[package]]
