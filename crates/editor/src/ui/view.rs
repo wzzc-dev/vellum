@@ -1,10 +1,28 @@
-use std::time::SystemTime;
+use std::{cmp, ops::Range, path::PathBuf, rc::Rc, time::SystemTime};
 
-use crate::layout::{
-    block_layout_metrics, markdown_preview_style, position_for_byte_offset,
-    style_active_input_for_block,
+use anyhow::Result;
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    AnyElement, Context, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Render, StatefulInteractiveElement, Styled, Subscription, Timer, VisualContext, Window, div,
+    px, size,
 };
-use crate::*;
+use gpui_component::ActiveTheme;
+
+use crate::core::controller::{
+    DocumentSource, EditCommand, EditorController, EditorEffects, EditorSnapshot, FileSyncEvent,
+    SyncPolicy,
+};
+
+use super::{
+    BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
+    component_ui::{
+        BlockInput, Button, ButtonVariants as _, InputEvent, render_markdown_preview,
+        render_virtual_block_list,
+    },
+    layout::block_layout_metrics,
+    session::ActiveBlockSession,
+};
 #[derive(Debug, Clone)]
 pub enum EditorEvent {
     Changed(EditorSnapshot),
@@ -163,21 +181,10 @@ impl MarkdownEditor {
 
         if needs_new_input {
             self.input_subscription = None;
-            let input = cx.new(|cx| {
-                let mut state = match &block.kind {
-                    BlockKind::CodeFence { language } => InputState::new(window, cx)
-                        .code_editor(language.clone().unwrap_or_else(|| "text".to_string()))
-                        .line_number(false),
-                    _ => InputState::new(window, cx)
-                        .multi_line(true)
-                        .auto_grow(1, 24),
-                };
-                state.set_value(block.text.clone(), window, cx);
-                state
-            });
+            let input = BlockInput::new(&block.kind, block.text.clone(), window, cx);
             let view = cx.entity();
             let subscription =
-                window.subscribe(&input, cx, move |_, event: &InputEvent, window, cx| {
+                window.subscribe(input.entity(), cx, move |_, event: &InputEvent, window, cx| {
                     let _ = view.update(cx, |this, cx| {
                         this.handle_input_event(event, window, cx);
                     });
@@ -191,25 +198,7 @@ impl MarkdownEditor {
             .active_cursor_offset
             .unwrap_or_else(|| block.text.len());
         if let Some(session) = self.active_session.as_ref() {
-            session.input.update(cx, |input, cx| {
-                let current_text = input.text().to_string();
-                let current_cursor = input.cursor();
-                if current_text != block.text {
-                    input.set_value(block.text.clone(), window, cx);
-                }
-                if current_cursor != desired_cursor {
-                    let (row, col) = position_for_byte_offset(&block.text, desired_cursor);
-                    input.set_cursor_position(
-                        gpui_component::input::Position {
-                            line: row as u32,
-                            character: col as u32,
-                        },
-                        window,
-                        cx,
-                    );
-                }
-                input.focus(window, cx);
-            });
+            session.input.sync(&block.text, desired_cursor, window, cx);
         }
     }
 
@@ -224,9 +213,7 @@ impl MarkdownEditor {
                 let Some(session) = self.active_session.as_ref() else {
                     return;
                 };
-                let (text, cursor_offset) = session
-                    .input
-                    .update(cx, |input, _| (input.text().to_string(), input.cursor()));
+                let (text, cursor_offset) = session.input.text_and_cursor(cx);
                 let effects = self.controller.dispatch(EditCommand::ReplaceActiveBlock {
                     text,
                     cursor_offset,
@@ -301,18 +288,7 @@ impl MarkdownEditor {
             return;
         };
 
-        let (selection, cursor_offset) = session.input.update(cx, |input, cx| {
-            let selection = input
-                .selected_text_range(true, window, cx)
-                .and_then(|selection| {
-                    if selection.range.is_empty() {
-                        None
-                    } else {
-                        Some(selection.range)
-                    }
-                });
-            (selection, input.cursor())
-        });
+        let (selection, cursor_offset) = session.input.selection_and_cursor(window, cx);
 
         let effects = self.controller.dispatch(EditCommand::WrapActiveSelection {
             selection,
@@ -445,17 +421,10 @@ impl MarkdownEditor {
 
         let content = if is_active {
             let session = self.active_session.as_ref().expect("active session");
-            let input = style_active_input_for_block(
-                Input::new(&session.input)
-                    .appearance(false)
-                    .bordered(false)
-                    .focus_bordered(false),
-                &block.kind,
-            );
             div()
                 .px_1()
                 .py(px(metrics.block_padding_y))
-                .child(input)
+                .child(session.input.render(&block.kind))
                 .into_any_element()
         } else if self.snapshot.blocks.len() == 1 && block.text.is_empty() {
             div()
@@ -472,10 +441,7 @@ impl MarkdownEditor {
                 .py(px(metrics.block_padding_y))
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
-                .child(
-                    TextView::markdown(("preview", block.id), block.text, window, cx)
-                        .style(markdown_preview_style()),
-                )
+                .child(render_markdown_preview(block.id, block.text, window, cx))
                 .into_any_element()
         };
 
@@ -526,9 +492,8 @@ impl MarkdownEditor {
         let content = if self.snapshot.blocks.is_empty() {
             self.render_empty_state(cx).into_any_element()
         } else {
-            v_virtual_list(
+            render_virtual_block_list(
                 view,
-                "document-blocks",
                 sizes,
                 |this, range: Range<usize>, window, cx| {
                     range
@@ -536,8 +501,6 @@ impl MarkdownEditor {
                         .collect::<Vec<_>>()
                 },
             )
-            .size_full()
-            .into_any_element()
         };
 
         div()

@@ -7,7 +7,10 @@ use std::{
 
 use anyhow::{Context as _, Result};
 
-use crate::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction};
+use super::{
+    document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
+    text_ops::{adjust_block_markup, count_document_words},
+};
 
 #[derive(Debug, Clone)]
 pub enum DocumentSource {
@@ -845,109 +848,6 @@ fn file_modified_at(path: &Path) -> Option<SystemTime> {
 
 fn activation_cursor_offset(text: &str) -> usize {
     text.trim_end_matches(['\r', '\n']).len()
-}
-
-fn count_document_words(text: &str) -> usize {
-    let mut count = 0usize;
-    let mut in_word = false;
-
-    for ch in text.chars() {
-        if is_cjk_character(ch) {
-            if in_word {
-                count += 1;
-                in_word = false;
-            }
-            count += 1;
-        } else if ch.is_alphanumeric() {
-            in_word = true;
-        } else if in_word {
-            count += 1;
-            in_word = false;
-        }
-    }
-
-    if in_word {
-        count += 1;
-    }
-
-    count
-}
-
-fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
-    let mut lines = text.lines();
-    let first = lines.next()?;
-    let rest = if text.contains('\n') {
-        text[first.len()..].to_string()
-    } else {
-        String::new()
-    };
-
-    let trimmed = first.trim_start();
-    let indent = &first[..first.len().saturating_sub(trimmed.len())];
-
-    if let Some(space_ix) = trimmed.find(' ') {
-        let marker = &trimmed[..space_ix];
-        if marker.chars().all(|ch| ch == '#') && !marker.is_empty() {
-            let current = marker.len();
-            let updated = if deepen {
-                cmp::min(current + 1, 6)
-            } else {
-                current.saturating_sub(1)
-            };
-            let head = if updated == 0 {
-                format!("{indent}{}", &trimmed[space_ix + 1..])
-            } else {
-                format!(
-                    "{indent}{} {}",
-                    "#".repeat(updated),
-                    &trimmed[space_ix + 1..]
-                )
-            };
-            return Some(format!("{head}{rest}"));
-        }
-    }
-
-    let list_markers = ["- ", "* ", "+ ", "- [ ] ", "- [x] ", "* [ ] ", "* [x] "];
-    if list_markers
-        .iter()
-        .any(|marker| trimmed.starts_with(marker))
-        || trimmed
-            .split_once(". ")
-            .map(|(n, _)| n.chars().all(|ch| ch.is_ascii_digit()))
-            .unwrap_or(false)
-    {
-        let updated_indent = if deepen {
-            format!("{indent}  ")
-        } else if indent.len() >= 2 {
-            indent[..indent.len() - 2].to_string()
-        } else {
-            String::new()
-        };
-
-        let updated = text
-            .lines()
-            .map(|line| format!("{updated_indent}{}", line.trim_start()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Some(updated);
-    }
-
-    if deepen {
-        Some(format!("# {text}"))
-    } else {
-        None
-    }
-}
-
-fn is_cjk_character(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0x3040..=0x30FF
-            | 0x31F0..=0x31FF
-            | 0xAC00..=0xD7AF
-    )
 }
 
 #[cfg(test)]

@@ -1,22 +1,24 @@
+use gpui::{App, Context, KeyBinding, Window};
+
 use crate::{
-    App, BoldSelection, Context, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock,
-    INPUT_CONTEXT, ItalicSelection, KeyBinding, LinkSelection, MarkdownEditor, PromoteBlock,
-    RedoEdit, UndoEdit, Window,
+    BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
+    LinkSelection, PromoteBlock, RedoEdit, UndoEdit,
 };
+use super::{EDITOR_CONTEXT, INPUT_CONTEXT, view::MarkdownEditor};
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-b", BoldSelection, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-i", ItalicSelection, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-k", LinkSelection, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-[", PromoteBlock, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-]", DemoteBlock, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("escape", ExitBlockEdit, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-up", FocusPrevBlock, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-down", FocusNextBlock, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-z", UndoEdit, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(crate::EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-y", RedoEdit, Some(crate::EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-b", BoldSelection, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-i", ItalicSelection, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-k", LinkSelection, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-[", PromoteBlock, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-]", DemoteBlock, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("escape", ExitBlockEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-up", FocusPrevBlock, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-down", FocusNextBlock, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-z", UndoEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-b", BoldSelection, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-i", ItalicSelection, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-k", LinkSelection, Some(INPUT_CONTEXT)),
