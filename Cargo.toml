@@ -1,15 +1,4 @@
-[package]
-name = "vellum"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
-members = ["crates/editor", "crates/workspace"]
-
-[dependencies]
-anyhow = "1.0"
-editor = { path = "crates/editor" }
-gpui = "0.2.2"
-gpui-component = "0.5.1"
-rfd = "0.15"
-workspace = { path = "crates/workspace" }
+resolver = "3"
+members = ["crates/editor", "crates/vellum", "crates/workspace"]
+default-members = ["crates/vellum"]
