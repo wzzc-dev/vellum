@@ -1,13 +1,12 @@
-use std::{ops::Range, rc::Rc};
+use std::ops::Range;
 
 use gpui::{
-    AnyElement, AppContext, Context, Entity, EntityInputHandler as _, IntoElement, Pixels, Render,
-    Size, Styled, Window, px,
+    AnyElement, AppContext, Context, Entity, EntityInputHandler as _, IntoElement,
+    ParentElement, Styled, Window, div, px,
 };
 use gpui_component::{
     input::{Input, InputState, Position},
     text::{TextView, TextViewStyle},
-    v_virtual_list,
 };
 
 pub(crate) use gpui_component::{
@@ -25,6 +24,14 @@ use super::{
 #[derive(Debug, Clone)]
 pub(crate) struct BlockInput {
     state: Entity<InputState>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct InputNavigationState {
+    pub(crate) text: String,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) has_selection: bool,
 }
 
 impl BlockInput {
@@ -71,6 +78,27 @@ impl BlockInput {
         })
     }
 
+    pub(crate) fn navigation_state<V>(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<V>,
+    ) -> InputNavigationState {
+        self.state.update(cx, |input, cx| {
+            let cursor = input.cursor_position();
+            let has_selection = input
+                .selected_text_range(true, window, cx)
+                .map(|selection| !selection.range.is_empty())
+                .unwrap_or(false);
+
+            InputNavigationState {
+                text: input.text().to_string(),
+                line: cursor.line as usize,
+                column: cursor.character as usize,
+                has_selection,
+            }
+        })
+    }
+
     pub(crate) fn sync<V>(
         &self,
         text: &str,
@@ -105,6 +133,8 @@ impl BlockInput {
             .appearance(false)
             .bordered(false)
             .focus_bordered(false)
+            .px(px(0.))
+            .py(px(0.))
             .text_size(px(metrics.font_size))
             .line_height(px(metrics.line_height))
             .into_any_element()
@@ -122,18 +152,12 @@ pub(crate) fn render_markdown_preview<V>(
         .into_any_element()
 }
 
-pub(crate) fn render_virtual_block_list<V, F>(
-    view: Entity<V>,
-    sizes: Rc<Vec<Size<Pixels>>>,
-    render_range: F,
-) -> AnyElement
-where
-    V: 'static + Render,
-    F: 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<AnyElement>,
-{
-    v_virtual_list(view, "document-blocks", sizes, render_range)
-        .size_full()
-        .into_any_element()
+pub(crate) fn render_block_list(items: impl IntoIterator<Item = AnyElement>) -> AnyElement {
+    let mut list = div().w_full().flex().flex_col();
+    for item in items {
+        list = list.child(item);
+    }
+    list.into_any_element()
 }
 
 fn markdown_preview_style() -> TextViewStyle {

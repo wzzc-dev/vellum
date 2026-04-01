@@ -6,6 +6,8 @@ use crate::{
 };
 use super::{EDITOR_CONTEXT, INPUT_CONTEXT, view::MarkdownEditor};
 
+const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
+
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-b", BoldSelection, Some(EDITOR_CONTEXT)),
@@ -29,6 +31,16 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-z", UndoEdit, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-y", RedoEdit, Some(INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-i", ItalicSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-]", DemoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-up", FocusPrevBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-down", FocusNextBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-z", UndoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-y", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
     ]);
 }
 
@@ -93,7 +105,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_adjacent_block(-1, window, cx);
+        self.focus_adjacent_block(-1, None, window, cx);
     }
 
     pub(crate) fn on_focus_next_block(
@@ -102,7 +114,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_adjacent_block(1, window, cx);
+        self.focus_adjacent_block(1, None, window, cx);
     }
 
     pub(crate) fn on_undo_edit(

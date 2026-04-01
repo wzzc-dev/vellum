@@ -29,6 +29,7 @@ pub struct BlockProjection {
     pub id: u64,
     pub kind: BlockKind,
     pub byte_range: Range<usize>,
+    pub content_range: Range<usize>,
     pub cursor_anchor_policy: CursorAnchorPolicy,
     pub can_code_edit: bool,
 }
@@ -150,10 +151,22 @@ impl DocumentBuffer {
     }
 
     pub fn block_text(&self, block: &BlockProjection) -> String {
+        self.text_for_range(block.content_range.clone())
+    }
+
+    pub fn block_span_text(&self, block: &BlockProjection) -> String {
         self.text_for_range(block.byte_range.clone())
     }
 
+    pub fn block_trailing_text(&self, block: &BlockProjection) -> String {
+        self.text_for_range(block.content_range.end..block.byte_range.end)
+    }
+
     pub fn text_for_range(&self, range: Range<usize>) -> String {
+        if range.start >= range.end {
+            return String::new();
+        }
+
         self.source
             .get_byte_slice(range)
             .expect("document byte range should align to UTF-8 boundaries")
@@ -200,6 +213,7 @@ impl DocumentBuffer {
                 id: make_block_id(self.parse_version, 0),
                 kind: BlockKind::Raw,
                 byte_range: 0..0,
+                content_range: 0..0,
                 cursor_anchor_policy: CursorAnchorPolicy::Clamp,
                 can_code_edit: false,
             });
@@ -217,6 +231,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..0,
+            content_range: 0..0,
             cursor_anchor_policy: CursorAnchorPolicy::Clamp,
             can_code_edit: false,
         }];
@@ -228,6 +243,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
+            content_range: 0..source.len(),
             cursor_anchor_policy: CursorAnchorPolicy::Clamp,
             can_code_edit: false,
         }];
@@ -238,6 +254,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
+            content_range: 0..source.len(),
             cursor_anchor_policy: CursorAnchorPolicy::Clamp,
             can_code_edit: false,
         }];
@@ -252,19 +269,21 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
         };
 
         let start = cmp::min(position.start.offset, source.len());
+        let content_end = cmp::min(position.end.offset, source.len());
         let end = root
             .children
             .get(index + 1)
             .and_then(Node::position)
             .map(|pos| cmp::min(pos.start.offset, source.len()))
-            .unwrap_or_else(|| cmp::min(position.end.offset, source.len()));
-        let span_end = cmp::max(cmp::min(position.end.offset, source.len()), end);
+            .unwrap_or(content_end);
+        let span_end = cmp::max(content_end, end);
 
         if start > cursor {
             blocks.push(BlockProjection {
                 id: make_block_id(parse_version, blocks.len()),
                 kind: BlockKind::Raw,
                 byte_range: cursor..start,
+                content_range: cursor..start,
                 cursor_anchor_policy: CursorAnchorPolicy::Clamp,
                 can_code_edit: false,
             });
@@ -274,6 +293,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, blocks.len()),
             kind: block_kind(node),
             byte_range: start..span_end,
+            content_range: start..content_end,
             cursor_anchor_policy: cursor_policy(node),
             can_code_edit: matches!(node, Node::Code(_)),
         });
@@ -285,6 +305,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, blocks.len()),
             kind: BlockKind::Raw,
             byte_range: cursor..source.len(),
+            content_range: cursor..source.len(),
             cursor_anchor_policy: CursorAnchorPolicy::Clamp,
             can_code_edit: false,
         });
@@ -295,6 +316,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
+            content_range: 0..source.len(),
             cursor_anchor_policy: CursorAnchorPolicy::Clamp,
             can_code_edit: false,
         });
@@ -383,6 +405,13 @@ mod tests {
         assert_eq!(doc.blocks[0].kind, BlockKind::Raw);
         assert_eq!(doc.block_text(&doc.blocks[0]), "\n\n");
         assert!(matches!(doc.blocks[1].kind, BlockKind::Heading { .. }));
+    }
+
+    #[test]
+    fn excludes_inter_block_separator_from_block_text() {
+        let doc = DocumentBuffer::from_text("First\n\nSecond\n");
+        assert_eq!(doc.block_text(&doc.blocks[0]), "First");
+        assert_eq!(doc.block_trailing_text(&doc.blocks[0]), "\n\n");
     }
 
     #[test]

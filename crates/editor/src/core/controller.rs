@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result};
 
 use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
-    text_ops::{adjust_block_markup, count_document_words},
+    text_ops::{adjust_block_markup, byte_offset_for_line_column, count_document_words},
 };
 
 #[derive(Debug, Clone)]
@@ -122,7 +122,10 @@ pub enum FileSyncEvent {
 
 #[derive(Debug, Clone)]
 pub enum EditCommand {
-    ActivateBlock(usize),
+    ActivateBlock {
+        index: usize,
+        cursor_offset: Option<usize>,
+    },
     ReplaceActiveBlock {
         text: String,
         cursor_offset: usize,
@@ -139,6 +142,7 @@ pub enum EditCommand {
     },
     FocusAdjacentBlock {
         direction: isize,
+        preferred_column: Option<usize>,
     },
     ExitEditMode,
     Undo,
@@ -379,8 +383,8 @@ impl EditorController {
         let active_cursor_offset = self.active_block().map(|block| {
             self.selection
                 .cursor()
-                .saturating_sub(block.byte_range.start)
-                .min(block.byte_range.end.saturating_sub(block.byte_range.start))
+                .saturating_sub(block.content_range.start)
+                .min(block.content_range.end.saturating_sub(block.content_range.start))
         });
 
         EditorSnapshot {
@@ -464,7 +468,10 @@ impl EditorController {
 
     pub fn dispatch(&mut self, command: EditCommand) -> EditorEffects {
         match command {
-            EditCommand::ActivateBlock(index) => self.activate_block(index),
+            EditCommand::ActivateBlock {
+                index,
+                cursor_offset,
+            } => self.activate_block(index, cursor_offset),
             EditCommand::ReplaceActiveBlock {
                 text,
                 cursor_offset,
@@ -477,7 +484,10 @@ impl EditorController {
                 placeholder,
             } => self.wrap_active_selection(selection, cursor_offset, before, after, placeholder),
             EditCommand::AdjustActiveBlock { deepen } => self.adjust_active_block(deepen),
-            EditCommand::FocusAdjacentBlock { direction } => self.focus_adjacent_block(direction),
+            EditCommand::FocusAdjacentBlock {
+                direction,
+                preferred_column,
+            } => self.focus_adjacent_block(direction, preferred_column),
             EditCommand::ExitEditMode => self.exit_edit_mode(),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
@@ -583,14 +593,16 @@ impl EditorController {
         *self = Self::new(source, self.sync_policy);
     }
 
-    fn activate_block(&mut self, index: usize) -> EditorEffects {
+    fn activate_block(&mut self, index: usize, cursor_offset: Option<usize>) -> EditorEffects {
         let Some(block) = self.document.blocks().get(index).cloned() else {
             return EditorEffects::default();
         };
         let text = self.document.block_text(&block);
-        let cursor_offset = activation_cursor_offset(&text);
+        let cursor_offset = cursor_offset
+            .map(|offset| cmp::min(offset, text.len()))
+            .unwrap_or_else(|| activation_cursor_offset(&text));
         self.active_block_id = Some(block.id);
-        self.selection = SelectionState::collapsed(block.byte_range.start + cursor_offset);
+        self.selection = SelectionState::collapsed(block.content_range.start + cursor_offset);
         self.status_message = format!("Editing block {}", index + 1);
         EditorEffects {
             changed: true,
@@ -604,8 +616,10 @@ impl EditorController {
             return EditorEffects::default();
         };
         let cursor_offset = cmp::min(cursor_offset, text.len());
-        let selection_after = SelectionState::collapsed(block.byte_range.start + cursor_offset);
-        self.apply_edit(block.byte_range, text, selection_after, "Edited block")
+        let trailing = self.document.block_trailing_text(&block);
+        let replacement = format!("{text}{trailing}");
+        let selection_after = SelectionState::collapsed(block.content_range.start + cursor_offset);
+        self.apply_edit(block.byte_range, replacement, selection_after, "Edited block")
     }
 
     fn wrap_active_selection(
@@ -635,8 +649,8 @@ impl EditorController {
         } else {
             format!("{before}{selected_text}{after}")
         };
-        let global_range =
-            block.byte_range.start + local_range.start..block.byte_range.start + local_range.end;
+        let global_range = block.content_range.start + local_range.start
+            ..block.content_range.start + local_range.end;
         let new_cursor = global_range.start + insertion.len();
         self.apply_edit(
             global_range,
@@ -657,17 +671,21 @@ impl EditorController {
         let relative_cursor = self
             .selection
             .cursor()
-            .saturating_sub(block.byte_range.start);
-        let new_cursor = block.byte_range.start + cmp::min(relative_cursor, updated.len());
+            .saturating_sub(block.content_range.start);
+        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
         self.apply_edit(
-            block.byte_range,
+            block.content_range,
             updated,
             SelectionState::collapsed(new_cursor),
             "Adjusted block structure",
         )
     }
 
-    fn focus_adjacent_block(&mut self, direction: isize) -> EditorEffects {
+    fn focus_adjacent_block(
+        &mut self,
+        direction: isize,
+        preferred_column: Option<usize>,
+    ) -> EditorEffects {
         if self.document.blocks().is_empty() {
             return EditorEffects::default();
         }
@@ -685,7 +703,17 @@ impl EditorController {
         } else {
             current.saturating_sub(1)
         };
-        self.activate_block(next)
+        if next == current {
+            return EditorEffects::default();
+        }
+
+        let cursor_offset = preferred_column.and_then(|column| {
+            let block = self.document.blocks().get(next)?;
+            let text = self.document.block_text(block);
+            Some(boundary_cursor_offset(&text, direction, column))
+        });
+
+        self.activate_block(next, cursor_offset)
     }
 
     fn exit_edit_mode(&mut self) -> EditorEffects {
@@ -850,6 +878,15 @@ fn activation_cursor_offset(text: &str) -> usize {
     text.trim_end_matches(['\r', '\n']).len()
 }
 
+fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize) -> usize {
+    let target_line = if direction >= 0 {
+        0
+    } else {
+        text.lines().count().saturating_sub(1)
+    };
+    byte_offset_for_line_column(text, target_line, preferred_column)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,7 +902,10 @@ mod tests {
             },
             SyncPolicy::default(),
         );
-        controller.dispatch(EditCommand::ActivateBlock(0));
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: None,
+        });
         controller.status_message = "Testing".to_string();
 
         let snapshot = controller.snapshot();
@@ -888,7 +928,10 @@ mod tests {
             SyncPolicy::default(),
         );
 
-        controller.dispatch(EditCommand::ActivateBlock(0));
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: None,
+        });
         controller.dispatch(EditCommand::ReplaceActiveBlock {
             text: "Updated title\n".to_string(),
             cursor_offset: 7,
@@ -917,7 +960,10 @@ mod tests {
             SyncPolicy::default(),
         );
 
-        controller.dispatch(EditCommand::ActivateBlock(0));
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: None,
+        });
         controller.dispatch(EditCommand::ReplaceActiveBlock {
             text: "draft\n".to_string(),
             cursor_offset: 5,
@@ -950,5 +996,30 @@ mod tests {
 
         assert_eq!(effects.reload_path, Some(PathBuf::from("new.md")));
         assert_eq!(controller.snapshot().path, Some(PathBuf::from("new.md")));
+    }
+
+    #[test]
+    fn editing_preserves_separator_between_blocks() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First\n\nSecond\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(2),
+        });
+        controller.dispatch(EditCommand::ReplaceActiveBlock {
+            text: "Changed".to_string(),
+            cursor_offset: 3,
+        });
+
+        assert_eq!(controller.snapshot().blocks[0].text, "Changed");
+        assert_eq!(controller.document.text(), "Changed\n\nSecond\n");
     }
 }

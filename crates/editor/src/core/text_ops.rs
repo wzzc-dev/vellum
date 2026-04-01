@@ -90,6 +90,30 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     }
 }
 
+pub(crate) fn byte_offset_for_line_column(text: &str, target_line: usize, target_column: usize) -> usize {
+    let mut offset = 0usize;
+
+    for (line_ix, segment) in text.split('\n').enumerate() {
+        if line_ix == target_line {
+            return offset + byte_offset_for_char_column(segment, target_column);
+        }
+
+        offset += segment.len();
+        if offset < text.len() {
+            offset += 1;
+        }
+    }
+
+    text.len()
+}
+
+fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
+    match text.char_indices().nth(target_column) {
+        Some((offset, _)) => offset,
+        None => text.len(),
+    }
+}
+
 fn is_cjk_character(ch: char) -> bool {
     matches!(
         ch as u32,
@@ -129,5 +153,13 @@ mod tests {
             adjust_block_markup("Title", true),
             Some("# Title".to_string())
         );
+    }
+
+    #[test]
+    fn maps_line_and_column_back_to_utf8_offset() {
+        assert_eq!(byte_offset_for_line_column("abc\ndef", 0, 0), 0);
+        assert_eq!(byte_offset_for_line_column("abc\ndef", 0, 2), 2);
+        assert_eq!(byte_offset_for_line_column("abc\ndef", 1, 1), 5);
+        assert_eq!(byte_offset_for_line_column("a\nworld", 1, 3), 5);
     }
 }

@@ -1,11 +1,17 @@
-use std::{cmp, ops::Range, path::PathBuf, rc::Rc, time::SystemTime};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::PathBuf,
+    rc::Rc,
+    time::SystemTime,
+};
 
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Subscription, Timer, VisualContext, Window, div,
-    px, size,
+    AnyElement, Bounds, ClickEvent, Context, EventEmitter, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled,
+    Subscription, Timer, VisualContext, Window, canvas, div, px,
 };
 use gpui_component::ActiveTheme;
 
@@ -17,10 +23,10 @@ use crate::core::controller::{
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
     component_ui::{
-        BlockInput, Button, ButtonVariants as _, InputEvent, render_markdown_preview,
-        render_virtual_block_list,
+        BlockInput, Button, ButtonVariants as _, InputEvent, render_block_list,
+        render_markdown_preview,
     },
-    layout::block_layout_metrics,
+    layout::{block_layout_metrics, byte_offset_for_click_position},
     session::ActiveBlockSession,
 };
 #[derive(Debug, Clone)]
@@ -34,6 +40,7 @@ pub struct MarkdownEditor {
     active_session: Option<ActiveBlockSession>,
     input_subscription: Option<Subscription>,
     autosave_generation: u64,
+    block_bounds: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -53,6 +60,7 @@ impl MarkdownEditor {
             active_session: None,
             input_subscription: None,
             autosave_generation: 0,
+            block_bounds: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -242,22 +250,61 @@ impl MarkdownEditor {
             .detach();
     }
 
-    fn activate_block(&mut self, block_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let effects = self
-            .controller
-            .dispatch(EditCommand::ActivateBlock(block_ix));
-        self.apply_effects(window, cx, effects);
-    }
-
-    pub(crate) fn focus_adjacent_block(
+    fn activate_block(
         &mut self,
-        direction: isize,
+        block_ix: usize,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let effects = self
             .controller
-            .dispatch(EditCommand::FocusAdjacentBlock { direction });
+            .dispatch(EditCommand::ActivateBlock {
+                index: block_ix,
+                cursor_offset,
+            });
+        self.apply_effects(window, cx, effects);
+    }
+
+    fn activate_block_from_click(
+        &mut self,
+        block_ix: usize,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cursor_offset = self.snapshot.blocks.get(block_ix).cloned().and_then(|block| {
+            self.block_bounds
+                .borrow()
+                .get(&block.id)
+                .cloned()
+                .map(|bounds| {
+                    byte_offset_for_click_position(
+                        &block.kind,
+                        &block.text,
+                        event.position(),
+                        bounds,
+                        window,
+                    )
+                })
+        });
+
+        self.activate_block(block_ix, cursor_offset, window, cx);
+    }
+
+    pub(crate) fn focus_adjacent_block(
+        &mut self,
+        direction: isize,
+        preferred_column: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self
+            .controller
+            .dispatch(EditCommand::FocusAdjacentBlock {
+                direction,
+                preferred_column,
+            });
         self.apply_effects(window, cx, effects);
     }
 
@@ -320,6 +367,58 @@ impl MarkdownEditor {
     fn keep_current_conflicted_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::KeepCurrentConflict);
         self.apply_effects(window, cx, effects);
+    }
+
+    fn handle_active_navigation_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.alt || modifiers.shift || modifiers.platform || modifiers.function {
+            return false;
+        }
+
+        let direction = match event.keystroke.key.as_str() {
+            "up" => -1,
+            "down" => 1,
+            _ => return false,
+        };
+
+        let Some(session) = self.active_session.as_ref() else {
+            return false;
+        };
+        let state = session.input.navigation_state(window, cx);
+        if state.has_selection {
+            return false;
+        }
+
+        let last_line = state.text.lines().count().max(1).saturating_sub(1);
+        let at_boundary = if direction < 0 {
+            state.line == 0
+        } else {
+            state.line >= last_line
+        };
+        if !at_boundary {
+            return false;
+        }
+
+        self.focus_adjacent_block(direction, Some(state.column), window, cx);
+        true
+    }
+
+    fn capture_block_bounds(&self, block_id: u64) -> AnyElement {
+        let block_bounds = self.block_bounds.clone();
+        canvas(
+            move |bounds, _, _| bounds,
+            move |_, bounds, _, _| {
+                block_bounds.borrow_mut().insert(block_id, bounds);
+            },
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
     }
 
     fn render_conflict_banner(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
@@ -411,6 +510,7 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let block = self.snapshot.blocks[block_ix].clone();
+        let block_is_empty = block.text.is_empty();
         let is_active = self
             .active_session
             .as_ref()
@@ -419,17 +519,25 @@ impl MarkdownEditor {
         let view = cx.entity();
         let metrics = block_layout_metrics(&block.kind);
 
-        let content = if is_active {
+        let content_body = if is_active {
             let session = self.active_session.as_ref().expect("active session");
             div()
-                .px_1()
-                .py(px(metrics.block_padding_y))
+                .w_full()
+                .capture_key_down({
+                    let view = view.clone();
+                    move |event, window, cx| {
+                        let handled =
+                            view.update(cx, |this, cx| this.handle_active_navigation_key(event, window, cx));
+                        if handled {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                        }
+                    }
+                })
                 .child(session.input.render(&block.kind))
                 .into_any_element()
-        } else if self.snapshot.blocks.len() == 1 && block.text.is_empty() {
+        } else if self.snapshot.blocks.len() == 1 && block_is_empty {
             div()
-                .px_1()
-                .py(px(metrics.block_padding_y + 6.))
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
                 .text_color(cx.theme().muted_foreground)
@@ -437,13 +545,28 @@ impl MarkdownEditor {
                 .into_any_element()
         } else {
             div()
-                .px_1()
-                .py(px(metrics.block_padding_y))
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
                 .child(render_markdown_preview(block.id, block.text, window, cx))
                 .into_any_element()
         };
+
+        let placeholder_extra_padding = if !is_active && self.snapshot.blocks.len() == 1 && block_is_empty {
+            6.
+        } else {
+            0.
+        };
+        let content = div()
+            .px_1()
+            .py(px(metrics.block_padding_y + placeholder_extra_padding))
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .child(self.capture_block_bounds(block.id))
+                    .child(content_body),
+            )
+            .into_any_element();
 
         div()
             .id(("block-row", block.id))
@@ -453,9 +576,9 @@ impl MarkdownEditor {
                 div()
                     .id(("activate-block", block.id))
                     .w_full()
-                    .on_click(move |_, window, cx| {
+                    .on_click(move |event, window, cx| {
                         let _ = view.update(cx, |this, cx| {
-                            this.activate_block(block_ix, window, cx);
+                            this.activate_block_from_click(block_ix, event, window, cx);
                         });
                     })
                     .child(content),
@@ -463,43 +586,18 @@ impl MarkdownEditor {
             .into_any_element()
     }
 
-    fn block_item_sizes(&self) -> Rc<Vec<gpui::Size<gpui::Pixels>>> {
-        Rc::new(
-            self.snapshot
-                .blocks
-                .iter()
-                .map(|block| {
-                    let line_count = cmp::max(block.text.lines().count(), 1);
-                    let metrics = block_layout_metrics(&block.kind);
-                    size(
-                        px(1.),
-                        px(metrics.block_padding_y * 2.
-                            + metrics.row_spacing_y * 2.
-                            + metrics.line_height * line_count as f32
-                            + metrics.extra_height),
-                    )
-                })
-                .collect(),
-        )
-    }
-
     fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let view = cx.entity();
-        let sizes = self.block_item_sizes();
+        self.block_bounds.borrow_mut().clear();
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
         let content = if self.snapshot.blocks.is_empty() {
             self.render_empty_state(cx).into_any_element()
         } else {
-            render_virtual_block_list(
-                view,
-                sizes,
-                |this, range: Range<usize>, window, cx| {
-                    range
-                        .map(|ix| this.render_block_row(ix, window, cx))
-                        .collect::<Vec<_>>()
-                },
+            render_block_list(
+                (0..self.snapshot.blocks.len())
+                    .map(|ix| self.render_block_row(ix, _window, cx))
+                    .collect::<Vec<_>>(),
             )
         };
 
