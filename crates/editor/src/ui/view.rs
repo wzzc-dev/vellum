@@ -606,7 +606,6 @@ impl MarkdownEditor {
             .min_w(px(0.))
             .min_h(px(0.))
             .bg(cx.theme().background)
-            .overflow_hidden()
             .child(
                 div()
                     .size_full()
@@ -614,19 +613,27 @@ impl MarkdownEditor {
                     .min_h(px(0.))
                     .flex()
                     .flex_col()
-                    .px_8()
-                    .pt(px(28.))
-                    .pb(px(44.))
-                    .when_some(conflict_banner, |this, banner| this.child(banner))
                     .child(
                         div()
+                            .id("editor-scroll-area")
                             .flex_1()
                             .min_w(px(0.))
                             .min_h(px(0.))
-                            .mx_auto()
-                            .max_w(px(MAX_EDITOR_WIDTH))
-                            .w_full()
-                            .child(content),
+                            .overflow_y_scroll()
+                            .child(
+                                div().w_full().px_8().pt(px(28.)).pb(px(44.)).child(
+                                    div()
+                                        .mx_auto()
+                                        .max_w(px(MAX_EDITOR_WIDTH))
+                                        .w_full()
+                                        .flex()
+                                        .flex_col()
+                                        .when_some(conflict_banner, |this, banner| {
+                                            this.child(banner)
+                                        })
+                                        .child(content),
+                                ),
+                            ),
                     ),
             )
             .into_any_element()
