@@ -3,6 +3,7 @@ use std::fs;
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{clear_last_opened_path, read_last_opened_path, write_last_opened_path};
+use editor::FileSyncEvent;
 
 impl VellumApp {
     pub(super) fn refresh_tree(&mut self, cx: &mut Context<Self>) {
@@ -211,17 +212,6 @@ impl VellumApp {
         self.open_file(path, window, cx);
     }
 
-    pub(super) fn remember_last_opened_document(&self) {
-        if let Some(path) = self
-            .editor_snapshot
-            .path
-            .as_ref()
-            .filter(|path| is_markdown_path(path))
-        {
-            let _ = write_last_opened_path(path);
-        }
-    }
-
     pub(super) fn poll_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let events = self.workspace.poll_events();
         if events.is_empty() {
@@ -231,46 +221,58 @@ impl VellumApp {
         let mut should_refresh_tree = false;
 
         for event in events {
-            match event {
-                WorkspaceEvent::Changed(path) => {
-                    should_refresh_tree = true;
-                    if !path.is_file() || !is_markdown_path(&path) {
-                        continue;
-                    }
+            should_refresh_tree = true;
 
-                    let Ok(disk_text) = fs::read_to_string(&path) else {
-                        continue;
-                    };
-                    let modified_at = fs::metadata(&path)
-                        .ok()
-                        .and_then(|meta| meta.modified().ok());
-                    self.editor.update(cx, |editor, cx| {
-                        editor.handle_disk_change(
-                            path.clone(),
-                            disk_text.clone(),
-                            modified_at,
-                            window,
-                            cx,
-                        );
-                    });
-                }
+            match &event {
                 WorkspaceEvent::Removed(path) => {
-                    should_refresh_tree = true;
-                    if self.workspace.selected_file.as_ref() == Some(&path) {
+                    if self.workspace.selected_file.as_ref() == Some(path) {
                         self.workspace.selected_file = None;
                     }
-                    self.editor.update(cx, |editor, cx| {
-                        editor.handle_disk_removed(path.clone(), window, cx);
-                    });
                 }
-                WorkspaceEvent::Unknown => {
-                    should_refresh_tree = true;
+                WorkspaceEvent::Relocated { from, to } => {
+                    if self.workspace.selected_file.as_ref() == Some(from) {
+                        self.workspace.selected_file = Some(to.clone());
+                    }
                 }
+                WorkspaceEvent::Changed(_) | WorkspaceEvent::Unknown => {}
             }
+
+            let reload_path = self.editor.update(cx, |editor, cx| {
+                editor.apply_file_event(map_workspace_event_for_editor(&event), window, cx)
+            });
+
+            let Some(path) = reload_path else {
+                continue;
+            };
+            if !path.is_file() || !is_markdown_path(&path) {
+                continue;
+            }
+
+            let Ok(disk_text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let modified_at = fs::metadata(&path)
+                .ok()
+                .and_then(|meta| meta.modified().ok());
+            self.editor.update(cx, |editor, cx| {
+                editor.apply_disk_state(path.clone(), disk_text.clone(), modified_at, window, cx);
+            });
         }
 
         if should_refresh_tree {
             self.refresh_tree(cx);
         }
+    }
+}
+
+fn map_workspace_event_for_editor(event: &WorkspaceEvent) -> FileSyncEvent {
+    match event {
+        WorkspaceEvent::Changed(path) => FileSyncEvent::Changed(path.clone()),
+        WorkspaceEvent::Removed(path) => FileSyncEvent::Removed(path.clone()),
+        WorkspaceEvent::Relocated { from, to } => FileSyncEvent::Relocated {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        WorkspaceEvent::Unknown => FileSyncEvent::Unknown,
     }
 }

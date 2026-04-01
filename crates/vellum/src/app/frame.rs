@@ -16,16 +16,17 @@ impl VellumApp {
         self.editor_snapshot
             .path
             .as_ref()
+            .or(self.editor_snapshot.suggested_path.as_ref())
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
             .or_else(|| self.app_state.workspace_root.clone())
     }
 
-    pub(super) fn set_status(&mut self, status: impl Into<SharedString>) {
+    pub(super) fn set_status(&mut self, status: impl Into<String>) {
         self.shell_status_message = status.into();
     }
 
     pub(super) fn clear_status(&mut self) {
-        self.shell_status_message = SharedString::from("");
+        self.shell_status_message.clear();
     }
 
     pub(super) fn toggle_sidebar_visibility(&mut self, cx: &mut Context<Self>) {
@@ -45,7 +46,7 @@ impl VellumApp {
         self.editor_snapshot.word_count
     }
 
-    fn status_message(&self) -> SharedString {
+    fn status_message(&self) -> String {
         if self.shell_status_message.is_empty() {
             self.editor_snapshot.status_message.clone()
         } else {
@@ -159,6 +160,8 @@ impl VellumApp {
     pub(super) fn render_status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let (doc_status, icon, color) = if self.editor_snapshot.has_conflict {
             ("Conflict", IconName::TriangleAlert, cx.theme().warning)
+        } else if self.editor_snapshot.is_missing {
+            ("Missing", IconName::TriangleAlert, cx.theme().warning)
         } else if self.editor_snapshot.saving {
             (
                 "Saving",

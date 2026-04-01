@@ -7,8 +7,7 @@ use anyhow::Result;
 use editor::{EditorEvent, EditorSnapshot, MarkdownEditor, bind_keys as bind_editor_keys};
 use gpui::{
     App, AppContext, Application, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, Render, SharedString, Styled, Timer, VisualContext, Window, WindowOptions,
-    actions, div, px,
+    ParentElement, Render, Styled, Timer, VisualContext, Window, WindowOptions, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
@@ -54,7 +53,7 @@ struct VellumApp {
     editor: Entity<MarkdownEditor>,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
-    shell_status_message: SharedString,
+    shell_status_message: String,
 }
 
 pub fn run() -> Result<()> {
@@ -102,9 +101,8 @@ impl VellumApp {
             let EditorEvent::Changed(snapshot) = event;
             this.editor_snapshot = snapshot.clone();
             if !snapshot.status_message.is_empty() {
-                this.shell_status_message = SharedString::from("");
+                this.shell_status_message.clear();
             }
-            this.remember_last_opened_document();
             cx.notify();
         })
         .detach();
@@ -116,7 +114,7 @@ impl VellumApp {
             editor,
             editor_snapshot,
             sidebar_visible: false,
-            shell_status_message: SharedString::from(""),
+            shell_status_message: String::new(),
         };
         this.restore_last_opened_document(window, cx);
         this

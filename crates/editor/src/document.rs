@@ -1,11 +1,5 @@
-use std::{
-    cmp, fs,
-    ops::Range,
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::{cmp, ops::Range};
 
-use anyhow::{Context as _, Result};
 use markdown::{ParseOptions, mdast::Node, to_mdast};
 use ropey::Rope;
 
@@ -31,7 +25,7 @@ pub enum CursorAnchorPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockSpan {
+pub struct BlockProjection {
     pub id: u64,
     pub kind: BlockKind,
     pub byte_range: Range<usize>,
@@ -40,106 +34,79 @@ pub struct BlockSpan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConflictState {
-    Clean,
-    Conflict {
-        disk_text: String,
-        observed_at: Option<SystemTime>,
+pub struct SelectionState {
+    pub anchor: usize,
+    pub head: usize,
+    pub preferred_column: Option<usize>,
+}
+
+impl SelectionState {
+    pub fn collapsed(offset: usize) -> Self {
+        Self {
+            anchor: offset,
+            head: offset,
+            preferred_column: None,
+        }
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        cmp::min(self.anchor, self.head)..cmp::max(self.anchor, self.head)
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.head
+    }
+
+    pub fn is_collapsed(&self) -> bool {
+        self.anchor == self.head
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transaction {
+    Replace {
+        range: Range<usize>,
+        replacement: String,
     },
 }
 
-#[derive(Debug)]
-pub struct DocumentState {
-    pub path: Option<PathBuf>,
-    suggested_path: Option<PathBuf>,
-    pub source: Rope,
-    pub dirty: bool,
-    pub saving: bool,
-    pub conflict: ConflictState,
-    pub blocks: Vec<BlockSpan>,
-    pub parse_version: u64,
-    modified_at: Option<SystemTime>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedTransaction {
+    pub before_range: Range<usize>,
+    pub before_text: String,
+    pub after_range: Range<usize>,
+    pub after_text: String,
 }
 
-impl DocumentState {
-    pub fn new_empty(path: Option<PathBuf>, suggested_path: Option<PathBuf>) -> Self {
+#[derive(Debug, Clone)]
+pub struct DocumentBuffer {
+    source: Rope,
+    blocks: Vec<BlockProjection>,
+    parse_version: u64,
+}
+
+pub type BlockSpan = BlockProjection;
+pub type DocumentState = DocumentBuffer;
+
+impl DocumentBuffer {
+    pub fn new_empty() -> Self {
         let mut this = Self {
-            path,
-            suggested_path,
             source: Rope::new(),
-            dirty: false,
-            saving: false,
-            conflict: ConflictState::Clean,
             blocks: Vec::new(),
             parse_version: 0,
-            modified_at: None,
         };
         this.reparse();
         this
     }
 
-    pub fn from_disk(path: PathBuf) -> Result<Self> {
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let modified_at = file_modified_at(&path);
+    pub fn from_text(text: impl AsRef<str>) -> Self {
         let mut this = Self {
-            path: Some(path.clone()),
-            suggested_path: Some(path),
-            source: Rope::from_str(&text),
-            dirty: false,
-            saving: false,
-            conflict: ConflictState::Clean,
-            blocks: Vec::new(),
-            parse_version: 0,
-            modified_at,
-        };
-        this.reparse();
-        Ok(this)
-    }
-
-    #[cfg(test)]
-    pub fn from_text(
-        path: Option<PathBuf>,
-        suggested_path: Option<PathBuf>,
-        text: impl AsRef<str>,
-    ) -> Self {
-        let mut this = Self {
-            path,
-            suggested_path,
             source: Rope::from_str(text.as_ref()),
-            dirty: false,
-            saving: false,
-            conflict: ConflictState::Clean,
             blocks: Vec::new(),
             parse_version: 0,
-            modified_at: None,
         };
         this.reparse();
         this
-    }
-
-    pub fn suggested_path(&self) -> Option<&PathBuf> {
-        self.suggested_path.as_ref().or(self.path.as_ref())
-    }
-
-    pub fn display_name(&self) -> String {
-        if let Some(path) = &self.path {
-            return path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Untitled")
-                .to_string();
-        }
-
-        if let Some(path) = &self.suggested_path {
-            return path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Untitled")
-                .to_string();
-        }
-
-        "Untitled.md".to_string()
     }
 
     pub fn text(&self) -> String {
@@ -154,11 +121,19 @@ impl DocumentState {
         self.len() == 0
     }
 
+    pub fn blocks(&self) -> &[BlockProjection] {
+        &self.blocks
+    }
+
+    pub fn parse_version(&self) -> u64 {
+        self.parse_version
+    }
+
     pub fn block_index_by_id(&self, block_id: u64) -> Option<usize> {
         self.blocks.iter().position(|block| block.id == block_id)
     }
 
-    pub fn block_by_id(&self, block_id: u64) -> Option<&BlockSpan> {
+    pub fn block_by_id(&self, block_id: u64) -> Option<&BlockProjection> {
         self.blocks.iter().find(|block| block.id == block_id)
     }
 
@@ -174,100 +149,54 @@ impl DocumentState {
             .unwrap_or_else(|| self.blocks.len().saturating_sub(1))
     }
 
-    pub fn block_text(&self, block: &BlockSpan) -> String {
+    pub fn block_text(&self, block: &BlockProjection) -> String {
         self.text_for_range(block.byte_range.clone())
     }
 
     pub fn text_for_range(&self, range: Range<usize>) -> String {
         self.source
             .get_byte_slice(range)
-            .expect("block byte range should align to UTF-8 boundaries")
+            .expect("document byte range should align to UTF-8 boundaries")
             .to_string()
     }
 
+    pub fn apply_transaction(&mut self, transaction: Transaction) -> AppliedTransaction {
+        match transaction {
+            Transaction::Replace { range, replacement } => {
+                let before_text = self.text_for_range(range.clone());
+                self.replace_range(range.clone(), &replacement);
+                AppliedTransaction {
+                    before_range: range.clone(),
+                    before_text,
+                    after_range: range.start..range.start + replacement.len(),
+                    after_text: replacement,
+                }
+            }
+        }
+    }
+
     pub fn replace_range(&mut self, range: Range<usize>, replacement: &str) {
-        let mut text = self.text();
-        let start = cmp::min(range.start, text.len());
-        let end = cmp::min(range.end, text.len());
-        assert!(
-            text.is_char_boundary(start) && text.is_char_boundary(end),
-            "document byte range should align to UTF-8 boundaries"
-        );
-        text.replace_range(start..end, replacement);
-        self.source = Rope::from_str(&text);
-        self.dirty = true;
-        self.saving = false;
+        let start = cmp::min(range.start, self.len());
+        let end = cmp::min(range.end, self.len());
+        let start_char = self
+            .source
+            .try_byte_to_char(start)
+            .expect("document byte range should align to UTF-8 boundaries");
+        let end_char = self
+            .source
+            .try_byte_to_char(end)
+            .expect("document byte range should align to UTF-8 boundaries");
+
+        self.source.remove(start_char..end_char);
+        self.source.insert(start_char, replacement);
         self.reparse();
-    }
-
-    pub fn overwrite_from_disk_text(
-        &mut self,
-        path: PathBuf,
-        text: impl AsRef<str>,
-        modified_at: Option<SystemTime>,
-    ) {
-        self.path = Some(path.clone());
-        self.suggested_path = Some(path);
-        self.source = Rope::from_str(text.as_ref());
-        self.dirty = false;
-        self.saving = false;
-        self.conflict = ConflictState::Clean;
-        self.modified_at = modified_at;
-        self.reparse();
-    }
-
-    pub fn mark_conflict(&mut self, disk_text: String, observed_at: Option<SystemTime>) {
-        self.conflict = ConflictState::Conflict {
-            disk_text,
-            observed_at,
-        };
-    }
-
-    pub fn keep_current_version(&mut self) {
-        if let ConflictState::Conflict { observed_at, .. } = self.conflict.clone() {
-            self.modified_at = observed_at;
-        }
-        self.conflict = ConflictState::Clean;
-    }
-
-    pub fn save_now(&mut self) -> Result<()> {
-        let path = self
-            .path
-            .clone()
-            .or_else(|| self.suggested_path.clone())
-            .context("cannot save without a target path")?;
-
-        self.saving = true;
-        let text = self.text();
-        if let Err(err) = fs::write(&path, text.as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))
-        {
-            self.saving = false;
-            return Err(err);
-        }
-        self.path = Some(path.clone());
-        self.suggested_path = Some(path.clone());
-        self.modified_at = file_modified_at(&path);
-        self.dirty = false;
-        self.saving = false;
-        self.conflict = ConflictState::Clean;
-        Ok(())
-    }
-
-    pub fn set_path(&mut self, path: PathBuf) {
-        self.path = Some(path.clone());
-        self.suggested_path = Some(path);
-    }
-
-    pub fn has_same_disk_timestamp(&self, path: &Path) -> bool {
-        file_modified_at(path) == self.modified_at
     }
 
     fn reparse(&mut self) {
         self.parse_version = self.parse_version.wrapping_add(1);
         self.blocks = parse_blocks(&self.text(), self.parse_version);
         if self.blocks.is_empty() {
-            self.blocks.push(BlockSpan {
+            self.blocks.push(BlockProjection {
                 id: make_block_id(self.parse_version, 0),
                 kind: BlockKind::Raw,
                 byte_range: 0..0,
@@ -282,9 +211,9 @@ fn make_block_id(parse_version: u64, index: usize) -> u64 {
     (parse_version << 32) | index as u64
 }
 
-fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
+fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
     if source.is_empty() {
-        return vec![BlockSpan {
+        return vec![BlockProjection {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..0,
@@ -295,7 +224,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
 
     let tree = to_mdast(source, &ParseOptions::gfm()).ok();
     let Some(Node::Root(root)) = tree else {
-        return vec![BlockSpan {
+        return vec![BlockProjection {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
@@ -305,7 +234,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
     };
 
     if root.children.is_empty() {
-        return vec![BlockSpan {
+        return vec![BlockProjection {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
@@ -332,7 +261,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
         let span_end = cmp::max(cmp::min(position.end.offset, source.len()), end);
 
         if start > cursor {
-            blocks.push(BlockSpan {
+            blocks.push(BlockProjection {
                 id: make_block_id(parse_version, blocks.len()),
                 kind: BlockKind::Raw,
                 byte_range: cursor..start,
@@ -341,7 +270,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
             });
         }
 
-        blocks.push(BlockSpan {
+        blocks.push(BlockProjection {
             id: make_block_id(parse_version, blocks.len()),
             kind: block_kind(node),
             byte_range: start..span_end,
@@ -352,7 +281,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
     }
 
     if cursor < source.len() {
-        blocks.push(BlockSpan {
+        blocks.push(BlockProjection {
             id: make_block_id(parse_version, blocks.len()),
             kind: BlockKind::Raw,
             byte_range: cursor..source.len(),
@@ -362,7 +291,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockSpan> {
     }
 
     if blocks.is_empty() {
-        blocks.push(BlockSpan {
+        blocks.push(BlockProjection {
             id: make_block_id(parse_version, 0),
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
@@ -402,19 +331,13 @@ fn cursor_policy(node: &Node) -> CursorAnchorPolicy {
     }
 }
 
-fn file_modified_at(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path)
-        .ok()
-        .and_then(|meta| meta.modified().ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parses_empty_document_into_single_raw_block() {
-        let doc = DocumentState::new_empty(None, None);
+        let doc = DocumentBuffer::new_empty();
         assert_eq!(doc.blocks.len(), 1);
         assert_eq!(doc.blocks[0].kind, BlockKind::Raw);
         assert_eq!(doc.blocks[0].byte_range, 0..0);
@@ -429,7 +352,7 @@ mod tests {
             "| a | b |\n| - | - |\n| 1 | 2 |\n\n",
             "```rust\nfn main() {}\n```\n"
         );
-        let doc = DocumentState::from_text(None, None, text);
+        let doc = DocumentBuffer::from_text(text);
         assert!(
             doc.blocks
                 .iter()
@@ -456,7 +379,7 @@ mod tests {
     #[test]
     fn preserves_leading_raw_content_before_first_ast_block() {
         let text = "\n\n# Title\n";
-        let doc = DocumentState::from_text(None, None, text);
+        let doc = DocumentBuffer::from_text(text);
         assert_eq!(doc.blocks[0].kind, BlockKind::Raw);
         assert_eq!(doc.block_text(&doc.blocks[0]), "\n\n");
         assert!(matches!(doc.blocks[1].kind, BlockKind::Heading { .. }));
@@ -464,8 +387,8 @@ mod tests {
 
     #[test]
     fn reparses_after_splice_and_tracks_block_merges() {
-        let mut doc = DocumentState::from_text(None, None, "# Title\n\nParagraph\n");
-        let first_parse = doc.parse_version;
+        let mut doc = DocumentBuffer::from_text("# Title\n\nParagraph\n");
+        let first_parse = doc.parse_version();
         let paragraph = doc
             .blocks
             .iter()
@@ -473,7 +396,7 @@ mod tests {
             .cloned()
             .expect("paragraph block");
         doc.replace_range(paragraph.byte_range, "Paragraph\n\n## Child\n");
-        assert!(doc.parse_version > first_parse);
+        assert!(doc.parse_version() > first_parse);
         assert!(
             doc.blocks
                 .iter()
@@ -483,8 +406,7 @@ mod tests {
 
     #[test]
     fn maps_offsets_back_to_current_blocks() {
-        let doc =
-            DocumentState::from_text(None, None, "# A\n\nParagraph\n\n```rs\nfn main() {}\n```\n");
+        let doc = DocumentBuffer::from_text("# A\n\nParagraph\n\n```rs\nfn main() {}\n```\n");
         let paragraph = doc
             .blocks
             .iter()
@@ -505,8 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn handles_multibyte_block_ranges_and_splices() {
-        let mut doc = DocumentState::from_text(None, None, "# 鏍囬\n\n娈佃惤馃檪\n");
+    fn applies_transactions_without_rebuilding_whole_document() {
+        let mut doc = DocumentBuffer::from_text("# 标题\n\n段落\n");
         let paragraph = doc
             .blocks
             .iter()
@@ -514,16 +436,27 @@ mod tests {
             .cloned()
             .expect("paragraph");
 
-        assert_eq!(doc.block_text(&paragraph), "娈佃惤馃檪");
+        let applied = doc.apply_transaction(Transaction::Replace {
+            range: paragraph.byte_range,
+            replacement: "更新后的段落\n".to_string(),
+        });
 
-        doc.replace_range(paragraph.byte_range, "鏇存柊馃檪\n");
-
+        assert_eq!(applied.before_text, "段落");
+        assert_eq!(applied.after_text, "更新后的段落\n");
         let paragraph = doc
             .blocks
             .iter()
             .find(|block| block.kind == BlockKind::Paragraph)
             .expect("paragraph after replace");
-        assert_eq!(doc.block_text(paragraph), "鏇存柊馃檪");
-        assert!(doc.text().contains("# 鏍囬"));
+        assert_eq!(doc.block_text(paragraph), "更新后的段落");
+        assert!(doc.text().contains("# 标题"));
+    }
+
+    #[test]
+    fn tracks_collapsed_selection_ranges() {
+        let selection = SelectionState::collapsed(5);
+        assert!(selection.is_collapsed());
+        assert_eq!(selection.range(), 5..5);
+        assert_eq!(selection.cursor(), 5);
     }
 }

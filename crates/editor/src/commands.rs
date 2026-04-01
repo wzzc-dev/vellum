@@ -1,7 +1,7 @@
 use crate::{
     App, BoldSelection, Context, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock,
     INPUT_CONTEXT, ItalicSelection, KeyBinding, LinkSelection, MarkdownEditor, PromoteBlock,
-    Window,
+    RedoEdit, UndoEdit, Window,
 };
 
 pub fn bind_keys(cx: &mut App) {
@@ -14,6 +14,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", ExitBlockEdit, Some(crate::EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-up", FocusPrevBlock, Some(crate::EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-down", FocusNextBlock, Some(crate::EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-z", UndoEdit, Some(crate::EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(crate::EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-y", RedoEdit, Some(crate::EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-b", BoldSelection, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-i", ItalicSelection, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-k", LinkSelection, Some(INPUT_CONTEXT)),
@@ -21,6 +24,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-]", DemoteBlock, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-up", FocusPrevBlock, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-down", FocusNextBlock, Some(INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-z", UndoEdit, Some(INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-y", RedoEdit, Some(INPUT_CONTEXT)),
     ]);
 }
 
@@ -95,5 +101,23 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.focus_adjacent_block(1, window, cx);
+    }
+
+    pub(crate) fn on_undo_edit(
+        &mut self,
+        _: &UndoEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.undo(window, cx);
+    }
+
+    pub(crate) fn on_redo_edit(
+        &mut self,
+        _: &RedoEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.redo(window, cx);
     }
 }

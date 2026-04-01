@@ -7,12 +7,13 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use gpui_component::tree::TreeItem;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 
 #[derive(Debug, Clone)]
 pub enum WorkspaceEvent {
     Changed(PathBuf),
     Removed(PathBuf),
+    Relocated { from: PathBuf, to: PathBuf },
     Unknown,
 }
 
@@ -48,16 +49,7 @@ impl WorkspaceState {
             let (tx, rx) = mpsc::channel();
             let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
                 let event = match result {
-                    Ok(event) => {
-                        let path = event.paths.first().cloned();
-                        match (event.kind, path) {
-                            (EventKind::Modify(_), Some(path))
-                            | (EventKind::Create(_), Some(path))
-                            | (EventKind::Any, Some(path)) => WorkspaceEvent::Changed(path),
-                            (EventKind::Remove(_), Some(path)) => WorkspaceEvent::Removed(path),
-                            _ => WorkspaceEvent::Unknown,
-                        }
-                    }
+                    Ok(event) => map_workspace_event(event),
                     Err(_) => WorkspaceEvent::Unknown,
                 };
                 let _ = tx.send(event);
@@ -91,6 +83,24 @@ impl WorkspaceState {
             return Ok(Vec::new());
         };
         Ok(vec![build_tree_item(root, &self.expanded_dirs)?])
+    }
+}
+
+fn map_workspace_event(event: Event) -> WorkspaceEvent {
+    if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.len() >= 2 {
+        return WorkspaceEvent::Relocated {
+            from: event.paths[0].clone(),
+            to: event.paths[1].clone(),
+        };
+    }
+
+    let path = event.paths.first().cloned();
+    match (event.kind, path) {
+        (EventKind::Modify(_), Some(path))
+        | (EventKind::Create(_), Some(path))
+        | (EventKind::Any, Some(path)) => WorkspaceEvent::Changed(path),
+        (EventKind::Remove(_), Some(path)) => WorkspaceEvent::Removed(path),
+        _ => WorkspaceEvent::Unknown,
     }
 }
 

@@ -24,6 +24,7 @@ pub(crate) fn position_for_byte_offset(text: &str, byte_offset: usize) -> (usize
     (row, col)
 }
 
+#[allow(dead_code)]
 pub(crate) fn activation_cursor_offset(text: &str) -> usize {
     text.trim_end_matches(['\r', '\n']).len()
 }
@@ -116,6 +117,7 @@ pub(crate) fn markdown_preview_style() -> TextViewStyle {
         })
 }
 
+#[allow(dead_code)]
 pub(crate) fn count_document_words(text: &str) -> usize {
     let mut count = 0usize;
     let mut in_word = false;
@@ -142,6 +144,7 @@ pub(crate) fn count_document_words(text: &str) -> usize {
     count
 }
 
+#[allow(dead_code)]
 pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     let mut lines = text.lines();
     let first = lines.next()?;
@@ -208,6 +211,7 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn is_cjk_character(ch: char) -> bool {
     matches!(
         ch as u32,

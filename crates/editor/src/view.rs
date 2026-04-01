@@ -1,80 +1,53 @@
+use std::time::SystemTime;
+
 use crate::layout::{
-    activation_cursor_offset, adjust_block_markup, block_layout_metrics, count_document_words,
-    markdown_preview_style, position_for_byte_offset, style_active_input_for_block,
+    block_layout_metrics, markdown_preview_style, position_for_byte_offset,
+    style_active_input_for_block,
 };
 use crate::*;
-
-#[derive(Debug, Clone, Default)]
-pub struct EditorSnapshot {
-    pub path: Option<PathBuf>,
-    pub display_name: String,
-    pub dirty: bool,
-    pub saving: bool,
-    pub has_conflict: bool,
-    pub word_count: usize,
-    pub status_message: SharedString,
-}
-
 #[derive(Debug, Clone)]
 pub enum EditorEvent {
     Changed(EditorSnapshot),
 }
 
 pub struct MarkdownEditor {
-    document: DocumentState,
+    controller: EditorController,
+    snapshot: EditorSnapshot,
     active_session: Option<ActiveBlockSession>,
     input_subscription: Option<Subscription>,
-    flush_generation: u64,
     autosave_generation: u64,
-    status_message: SharedString,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
 
 impl MarkdownEditor {
     pub fn new(_: &mut Window, _: &mut Context<Self>) -> Self {
+        let controller = EditorController::new(
+            DocumentSource::Empty {
+                suggested_path: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
         Self {
-            document: DocumentState::new_empty(None, None),
+            controller,
+            snapshot,
             active_session: None,
             input_subscription: None,
-            flush_generation: 0,
             autosave_generation: 0,
-            status_message: SharedString::from(""),
-        }
-    }
-
-    #[cfg(test)]
-    fn new_for_test(document: DocumentState) -> Self {
-        Self {
-            document,
-            active_session: None,
-            input_subscription: None,
-            flush_generation: 0,
-            autosave_generation: 0,
-            status_message: SharedString::from(""),
         }
     }
 
     pub fn snapshot(&self) -> EditorSnapshot {
-        EditorSnapshot {
-            path: self.document.path.clone(),
-            display_name: self.document.display_name(),
-            dirty: self.document.dirty,
-            saving: self.document.saving,
-            has_conflict: matches!(self.document.conflict, ConflictState::Conflict { .. }),
-            word_count: count_document_words(&self.document.text()),
-            status_message: self.status_message.clone(),
-        }
+        self.snapshot.clone()
     }
 
     pub fn current_document_dir(&self) -> Option<PathBuf> {
-        self.document
-            .suggested_path()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
+        self.controller.current_document_dir()
     }
 
     pub fn document_path(&self) -> Option<&PathBuf> {
-        self.document.path.as_ref()
+        self.controller.document_path()
     }
 
     pub fn open_path(
@@ -83,11 +56,8 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.flush_active_session(true, window, cx)?;
-        self.clear_session();
-        self.document = DocumentState::from_disk(path.clone())?;
-        self.set_status(format!("Opened {}", path.display()));
-        self.emit_changed(cx);
+        let effects = self.controller.open_path(path)?;
+        self.apply_effects(window, cx, effects);
         Ok(())
     }
 
@@ -97,21 +67,13 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Err(err) = self.flush_active_session(true, window, cx) {
-            self.set_status(format!("Failed to flush before new file: {err}"));
-        }
-
-        self.clear_session();
-        self.document = DocumentState::new_empty(None, suggested_path);
-        self.set_status("New file");
-        self.emit_changed(cx);
+        let effects = self.controller.new_untitled(suggested_path);
+        self.apply_effects(window, cx, effects);
     }
 
     pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
-        self.flush_active_session(false, window, cx)?;
-        self.document.save_now()?;
-        self.set_status(format!("Saved {}", self.document.display_name()));
-        self.emit_changed(cx);
+        let effects = self.controller.save()?;
+        self.apply_effects(window, cx, effects);
         Ok(())
     }
 
@@ -121,53 +83,55 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.flush_active_session(false, window, cx)?;
-        self.document.set_path(path.clone());
-        self.document.save_now()?;
-        self.set_status(format!("Saved {}", path.display()));
-        self.emit_changed(cx);
+        let effects = self.controller.save_as(path)?;
+        self.apply_effects(window, cx, effects);
         Ok(())
     }
 
-    pub fn handle_disk_change(
+    pub fn apply_file_event(
+        &mut self,
+        event: FileSyncEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        let effects = self.controller.apply_file_event(event);
+        let reload_path = effects.reload_path.clone();
+        self.apply_effects(window, cx, effects);
+        reload_path
+    }
+
+    pub fn apply_disk_state(
         &mut self,
         path: PathBuf,
         disk_text: String,
         modified_at: Option<SystemTime>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.document.path.as_ref() != Some(&path)
-            || self.document.has_same_disk_timestamp(&path)
-        {
-            return;
-        }
-
-        if self.document.dirty {
-            if self.document.text() != disk_text {
-                self.document.mark_conflict(disk_text, modified_at);
-                self.set_status("External changes detected");
-                self.emit_changed(cx);
-            }
-            return;
-        }
-
-        self.clear_session();
-        self.document
-            .overwrite_from_disk_text(path.clone(), disk_text, modified_at);
-        self.set_status(format!("Reloaded {}", path.display()));
-        self.emit_changed(cx);
+        let effects = self
+            .controller
+            .apply_disk_state(path, disk_text, modified_at);
+        self.apply_effects(window, cx, effects);
     }
 
-    pub fn handle_disk_removed(&mut self, path: PathBuf, _: &mut Window, cx: &mut Context<Self>) {
-        if self.document.path.as_ref() == Some(&path) {
-            self.set_status(format!("File removed: {}", path.display()));
+    fn apply_effects(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        effects: EditorEffects,
+    ) {
+        if effects.active_block_changed {
+            self.input_subscription = None;
+            if self.snapshot.active_block_id != self.controller.snapshot().active_block_id {
+                self.active_session = None;
+            }
+        }
+
+        self.snapshot = self.controller.snapshot();
+        self.sync_active_input(window, cx);
+        if effects.changed || effects.active_block_changed {
             self.emit_changed(cx);
         }
-    }
-
-    fn set_status(&mut self, status: impl Into<SharedString>) {
-        self.status_message = status.into();
     }
 
     fn emit_changed(&mut self, cx: &mut Context<Self>) {
@@ -181,6 +145,74 @@ impl MarkdownEditor {
         self.active_session = None;
     }
 
+    fn sync_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(block_id) = self.snapshot.active_block_id else {
+            self.clear_session();
+            return;
+        };
+        let Some(block) = self.snapshot.block_by_id(block_id).cloned() else {
+            self.clear_session();
+            return;
+        };
+
+        let needs_new_input = self
+            .active_session
+            .as_ref()
+            .map(|session| session.block_id != block_id)
+            .unwrap_or(true);
+
+        if needs_new_input {
+            self.input_subscription = None;
+            let input = cx.new(|cx| {
+                let mut state = match &block.kind {
+                    BlockKind::CodeFence { language } => InputState::new(window, cx)
+                        .code_editor(language.clone().unwrap_or_else(|| "text".to_string()))
+                        .line_number(false),
+                    _ => InputState::new(window, cx)
+                        .multi_line(true)
+                        .auto_grow(1, 24),
+                };
+                state.set_value(block.text.clone(), window, cx);
+                state
+            });
+            let view = cx.entity();
+            let subscription =
+                window.subscribe(&input, cx, move |_, event: &InputEvent, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.handle_input_event(event, window, cx);
+                    });
+                });
+            self.active_session = Some(ActiveBlockSession::new(block_id, input));
+            self.input_subscription = Some(subscription);
+        }
+
+        let desired_cursor = self
+            .snapshot
+            .active_cursor_offset
+            .unwrap_or_else(|| block.text.len());
+        if let Some(session) = self.active_session.as_ref() {
+            session.input.update(cx, |input, cx| {
+                let current_text = input.text().to_string();
+                let current_cursor = input.cursor();
+                if current_text != block.text {
+                    input.set_value(block.text.clone(), window, cx);
+                }
+                if current_cursor != desired_cursor {
+                    let (row, col) = position_for_byte_offset(&block.text, desired_cursor);
+                    input.set_cursor_position(
+                        gpui_component::input::Position {
+                            line: row as u32,
+                            character: col as u32,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+                input.focus(window, cx);
+            });
+        }
+    }
+
     fn handle_input_event(
         &mut self,
         event: &InputEvent,
@@ -189,59 +221,33 @@ impl MarkdownEditor {
     ) {
         match event {
             InputEvent::Change => {
-                if let Some(session) = self.active_session.as_mut() {
-                    let block_start = self
-                        .document
-                        .block_by_id(session.block_id)
-                        .map(|block| block.byte_range.start)
-                        .unwrap_or(0);
-
-                    let (buffer, cursor_offset) = session
-                        .input
-                        .update(cx, |input, _| (input.text().to_string(), input.cursor()));
-                    session.buffer = buffer;
-                    session.cursor_offset = cmp::min(cursor_offset, session.buffer.len());
-                    session.anchor_document_offset = block_start + session.cursor_offset;
-                }
-                self.schedule_flush(window, cx);
+                let Some(session) = self.active_session.as_ref() else {
+                    return;
+                };
+                let (text, cursor_offset) = session
+                    .input
+                    .update(cx, |input, _| (input.text().to_string(), input.cursor()));
+                let effects = self.controller.dispatch(EditCommand::ReplaceActiveBlock {
+                    text,
+                    cursor_offset,
+                });
+                self.apply_effects(window, cx, effects);
                 self.schedule_autosave(window, cx);
             }
-            InputEvent::Blur => {
-                if let Err(err) = self.flush_active_session(true, window, cx) {
-                    self.set_status(format!("Failed to flush block: {err}"));
-                    self.emit_changed(cx);
-                }
-            }
-            InputEvent::PressEnter { .. } | InputEvent::Focus => {}
+            InputEvent::Blur | InputEvent::Focus | InputEvent::PressEnter { .. } => {}
         }
-    }
-
-    fn schedule_flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush_generation = self.flush_generation.wrapping_add(1);
-        let token = self.flush_generation;
-        let view = cx.entity();
-        window
-            .spawn(cx, async move |cx| {
-                Timer::after(FLUSH_DELAY).await;
-                let _ = cx.update_window_entity(&view, |this, window, cx| {
-                    if this.flush_generation == token {
-                        let _ = this.flush_active_session(false, window, cx);
-                    }
-                });
-            })
-            .detach();
     }
 
     fn schedule_autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.autosave_generation = self.autosave_generation.wrapping_add(1);
         let token = self.autosave_generation;
         let view = cx.entity();
+        let autosave_delay = self.controller.autosave_delay();
         window
             .spawn(cx, async move |cx| {
-                Timer::after(AUTOSAVE_DELAY).await;
+                Timer::after(autosave_delay).await;
                 let _ = cx.update_window_entity(&view, |this, window, cx| {
-                    if this.autosave_generation == token {
-                        let _ = this.flush_active_session(false, window, cx);
+                    if this.autosave_generation == token && this.snapshot.dirty {
                         let _ = this.save(window, cx);
                     }
                 });
@@ -250,151 +256,10 @@ impl MarkdownEditor {
     }
 
     fn activate_block(&mut self, block_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if block_ix >= self.document.blocks.len() {
-            return;
-        }
-
-        if let Err(err) = self.flush_active_session(true, window, cx) {
-            self.set_status(format!("Failed to switch block: {err}"));
-        }
-
-        let block = self.document.blocks[block_ix].clone();
-        let text = self.document.block_text(&block);
-        let view = cx.entity();
-        let input = cx.new(|cx| {
-            let mut state = match &block.kind {
-                BlockKind::CodeFence { language } => InputState::new(window, cx)
-                    .code_editor(language.clone().unwrap_or_else(|| "text".to_string()))
-                    .line_number(false),
-                _ => InputState::new(window, cx)
-                    .multi_line(true)
-                    .auto_grow(1, 24),
-            };
-            state.set_value(text.clone(), window, cx);
-            state
-        });
-        let subscription =
-            window.subscribe(&input, cx, move |_, event: &InputEvent, window, cx| {
-                let _ = view.update(cx, |this, cx| {
-                    this.handle_input_event(event, window, cx);
-                });
-            });
-
-        self.active_session = Some(ActiveBlockSession::new(
-            &self.document,
-            &block,
-            input.clone(),
-        ));
-        self.input_subscription = Some(subscription);
-        input.update(cx, |input, cx| {
-            input.focus(window, cx);
-            if !text.is_empty() {
-                let (row, col) = position_for_byte_offset(&text, activation_cursor_offset(&text));
-                input.set_cursor_position(
-                    gpui_component::input::Position {
-                        line: row as u32,
-                        character: col as u32,
-                    },
-                    window,
-                    cx,
-                );
-            }
-        });
-        self.set_status(format!("Editing block {}", block_ix + 1));
-        self.emit_changed(cx);
-    }
-
-    fn flush_active_session(
-        &mut self,
-        exit_after_flush: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let Some(mut session) = self.active_session.take() else {
-            return Ok(());
-        };
-
-        let block_start = self
-            .document
-            .block_by_id(session.block_id)
-            .map(|block| block.byte_range.start)
-            .unwrap_or(0);
-        let (buffer, cursor_offset) = session
-            .input
-            .update(cx, |input, _| (input.text().to_string(), input.cursor()));
-        session.buffer = buffer;
-        session.cursor_offset = cmp::min(cursor_offset, session.buffer.len());
-        session.anchor_document_offset = block_start + session.cursor_offset;
-
-        let Some(block_ix) = self
-            .document
-            .block_index_by_id(session.block_id)
-            .or_else(|| {
-                self.document
-                    .blocks
-                    .iter()
-                    .position(|block| session.anchor_document_offset <= block.byte_range.end)
-            })
-        else {
-            self.input_subscription = None;
-            return Ok(());
-        };
-
-        let old_range = self.document.blocks[block_ix].byte_range.clone();
-        let new_anchor = old_range.start + cmp::min(session.cursor_offset, session.buffer.len());
-        self.document.replace_range(old_range, &session.buffer);
-
-        let new_block_ix = self.document.block_index_at_offset(new_anchor);
-        let new_block = self.document.blocks[new_block_ix].clone();
-        let new_text = self.document.block_text(&new_block);
-        let new_cursor_offset = new_anchor.saturating_sub(new_block.byte_range.start);
-
-        self.input_subscription = None;
-        if exit_after_flush {
-            self.active_session = None;
-            self.set_status("Block synced");
-            self.emit_changed(cx);
-            return Ok(());
-        }
-
-        session.block_id = new_block.id;
-        session.buffer = new_text.clone();
-        session.cursor_offset = cmp::min(new_cursor_offset, new_text.len());
-        session.anchor_document_offset = new_anchor;
-
-        session.input.update(cx, |input, cx| {
-            input.set_value(new_text.clone(), window, cx);
-            let (row, col) = position_for_byte_offset(&new_text, session.cursor_offset);
-            input.set_cursor_position(
-                gpui_component::input::Position {
-                    line: row as u32,
-                    character: col as u32,
-                },
-                window,
-                cx,
-            );
-        });
-
-        let view = cx.entity();
-        let input = session.input.clone();
-        self.input_subscription =
-            Some(
-                window.subscribe(&input, cx, move |_, event: &InputEvent, window, cx| {
-                    let _ = view.update(cx, |this, cx| {
-                        this.handle_input_event(event, window, cx);
-                    });
-                }),
-            );
-        self.active_session = Some(session);
-        self.set_status("Block synced");
-        self.emit_changed(cx);
-        Ok(())
-    }
-
-    fn current_block_index(&self) -> Option<usize> {
-        self.active_session
-            .as_ref()
-            .and_then(|session| self.document.block_index_by_id(session.block_id))
+        let effects = self
+            .controller
+            .dispatch(EditCommand::ActivateBlock(block_ix));
+        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn focus_adjacent_block(
@@ -403,28 +268,25 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.document.blocks.is_empty() {
-            return;
-        }
-
-        let current = self.current_block_index().unwrap_or(if direction >= 0 {
-            0
-        } else {
-            self.document.blocks.len().saturating_sub(1)
-        });
-        let next = if direction >= 0 {
-            cmp::min(current + 1, self.document.blocks.len().saturating_sub(1))
-        } else {
-            current.saturating_sub(1)
-        };
-        self.activate_block(next, window, cx);
+        let effects = self
+            .controller
+            .dispatch(EditCommand::FocusAdjacentBlock { direction });
+        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn exit_edit_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Err(err) = self.flush_active_session(true, window, cx) {
-            self.set_status(format!("Failed to exit edit mode: {err}"));
-            self.emit_changed(cx);
-        }
+        let effects = self.controller.dispatch(EditCommand::ExitEditMode);
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::Undo);
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::Redo);
+        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn apply_markup(
@@ -439,31 +301,27 @@ impl MarkdownEditor {
             return;
         };
 
-        session.input.update(cx, |input, cx| {
-            let selection = input.selected_text_range(true, window, cx);
-            let replacement = if let Some(selection) = selection.as_ref() {
-                if !selection.range.is_empty() {
-                    let mut adjusted = None;
-                    let selected = input
-                        .text_for_range(selection.range.clone(), &mut adjusted, window, cx)
-                        .unwrap_or_default();
-                    format!("{before}{selected}{after}")
-                } else {
-                    format!("{before}{placeholder}{after}")
-                }
-            } else {
-                format!("{before}{placeholder}{after}")
-            };
-
-            let range = selection.and_then(|selection| {
-                if selection.range.is_empty() {
-                    None
-                } else {
-                    Some(selection.range)
-                }
-            });
-            input.replace_text_in_range(range, &replacement, window, cx);
+        let (selection, cursor_offset) = session.input.update(cx, |input, cx| {
+            let selection = input
+                .selected_text_range(true, window, cx)
+                .and_then(|selection| {
+                    if selection.range.is_empty() {
+                        None
+                    } else {
+                        Some(selection.range)
+                    }
+                });
+            (selection, input.cursor())
         });
+
+        let effects = self.controller.dispatch(EditCommand::WrapActiveSelection {
+            selection,
+            cursor_offset,
+            before: before.to_string(),
+            after: after.to_string(),
+            placeholder: placeholder.to_string(),
+        });
+        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn adjust_current_block(
@@ -472,45 +330,24 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.active_session.as_ref() else {
-            return;
-        };
-
-        session.input.update(cx, |input, cx| {
-            let text = input.text().to_string();
-            if let Some(updated) = adjust_block_markup(&text, deepen) {
-                input.set_value(updated, window, cx);
-            }
-        });
+        let effects = self
+            .controller
+            .dispatch(EditCommand::AdjustActiveBlock { deepen });
+        self.apply_effects(window, cx, effects);
     }
 
-    fn reload_conflict_from_disk(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.document.path.clone() else {
-            return;
-        };
-
-        let disk_text = match &self.document.conflict {
-            ConflictState::Conflict { disk_text, .. } => disk_text.clone(),
-            ConflictState::Clean => return,
-        };
-        let modified_at = std::fs::metadata(&path)
-            .ok()
-            .and_then(|meta| meta.modified().ok());
-        self.clear_session();
-        self.document
-            .overwrite_from_disk_text(path, disk_text, modified_at);
-        self.set_status("Reloaded disk version");
-        self.emit_changed(cx);
+    fn reload_conflict_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::ReloadConflict);
+        self.apply_effects(window, cx, effects);
     }
 
-    fn keep_current_conflicted_version(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.document.keep_current_version();
-        self.set_status("Keeping current changes");
-        self.emit_changed(cx);
+    fn keep_current_conflicted_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::KeepCurrentConflict);
+        self.apply_effects(window, cx, effects);
     }
 
     fn render_conflict_banner(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        if !matches!(self.document.conflict, ConflictState::Conflict { .. }) {
+        if !self.snapshot.has_conflict {
             return None;
         }
 
@@ -597,8 +434,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let block = self.document.blocks[block_ix].clone();
-        let block_text = self.document.block_text(&block);
+        let block = self.snapshot.blocks[block_ix].clone();
         let is_active = self
             .active_session
             .as_ref()
@@ -621,7 +457,7 @@ impl MarkdownEditor {
                 .py(px(metrics.block_padding_y))
                 .child(input)
                 .into_any_element()
-        } else if self.document.is_empty() && block_text.is_empty() {
+        } else if self.snapshot.blocks.len() == 1 && block.text.is_empty() {
             div()
                 .px_1()
                 .py(px(metrics.block_padding_y + 6.))
@@ -637,7 +473,7 @@ impl MarkdownEditor {
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
                 .child(
-                    TextView::markdown(("preview", block.id), block_text, window, cx)
+                    TextView::markdown(("preview", block.id), block.text, window, cx)
                         .style(markdown_preview_style()),
                 )
                 .into_any_element()
@@ -663,12 +499,11 @@ impl MarkdownEditor {
 
     fn block_item_sizes(&self) -> Rc<Vec<gpui::Size<gpui::Pixels>>> {
         Rc::new(
-            self.document
+            self.snapshot
                 .blocks
                 .iter()
                 .map(|block| {
-                    let text = self.document.block_text(block);
-                    let line_count = cmp::max(text.lines().count(), 1);
+                    let line_count = cmp::max(block.text.lines().count(), 1);
                     let metrics = block_layout_metrics(&block.kind);
                     size(
                         px(1.),
@@ -688,7 +523,7 @@ impl MarkdownEditor {
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
-        let content = if self.document.blocks.is_empty() {
+        let content = if self.snapshot.blocks.is_empty() {
             self.render_empty_state(cx).into_any_element()
         } else {
             v_virtual_list(
@@ -754,6 +589,8 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_exit_block_edit))
             .on_action(cx.listener(Self::on_focus_prev_block))
             .on_action(cx.listener(Self::on_focus_next_block))
+            .on_action(cx.listener(Self::on_undo_edit))
+            .on_action(cx.listener(Self::on_redo_edit))
             .child(self.render_editor(window, cx))
     }
 }
@@ -763,24 +600,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snapshot_reflects_document_state() {
-        let mut editor = MarkdownEditor::new_for_test(DocumentState::from_text(
-            Some(PathBuf::from("note.md")),
-            Some(PathBuf::from("note.md")),
-            "hello world",
-        ));
-        editor.document.dirty = true;
-        editor.document.saving = true;
-        editor.document.mark_conflict("disk".to_string(), None);
-        editor.set_status("Testing");
-
-        let snapshot = editor.snapshot();
-        assert_eq!(snapshot.path, Some(PathBuf::from("note.md")));
+    fn snapshot_is_forwarded_from_controller() {
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(PathBuf::from("note.md")),
+                suggested_path: Some(PathBuf::from("note.md")),
+                text: "hello world".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
         assert_eq!(snapshot.display_name, "note.md");
-        assert!(snapshot.dirty);
-        assert!(snapshot.saving);
-        assert!(snapshot.has_conflict);
         assert_eq!(snapshot.word_count, 2);
-        assert_eq!(snapshot.status_message, SharedString::from("Testing"));
     }
 }
