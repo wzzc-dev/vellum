@@ -94,27 +94,28 @@ pub fn run() -> Result<()> {
 fn bind_keys(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.bind_keys([
-        KeyBinding::new("cmd-o", OpenFile, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-shift-o", OpenFolder, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-n", NewFile, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-o", OpenFile, None),
+        KeyBinding::new("cmd-shift-o", OpenFolder, None),
+        KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("ctrl-o", OpenFile, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-shift-o", OpenFolder, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-n", NewFile, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-o", OpenFile, None),
+        KeyBinding::new("ctrl-shift-o", OpenFolder, None),
+        KeyBinding::new("ctrl-n", NewFile, None),
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
     ]);
 
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
-        KeyBinding::new("ctrl-o", OpenFile, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-shift-o", OpenFolder, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-n", NewFile, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-o", OpenFile, None),
+        KeyBinding::new("ctrl-shift-o", OpenFolder, None),
+        KeyBinding::new("ctrl-n", NewFile, None),
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
     ]);
+
 }
 
 #[cfg(target_os = "macos")]
