@@ -5,7 +5,7 @@ use gpui::{Context, Window};
 
 use crate::core::controller::{EditorEffects, FileSyncEvent};
 
-use super::view::MarkdownEditor;
+use super::{interaction::ActiveSelectionView, view::MarkdownEditor};
 
 impl MarkdownEditor {
     pub fn current_document_dir(&self) -> Option<PathBuf> {
@@ -86,18 +86,24 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
         effects: EditorEffects,
     ) {
-        let previous_active_block_id = self.snapshot.active_block_id;
+        let previous_active_selection = ActiveSelectionView::from_snapshot(&self.snapshot);
         let next_snapshot = self.controller.snapshot();
+        let next_active_selection = ActiveSelectionView::from_snapshot(&next_snapshot);
         if effects.active_block_changed {
-            self.interaction.reset_after_active_block_change(
-                previous_active_block_id,
-                next_snapshot.active_block_id,
+            self.interaction.reset_after_active_selection_change(
+                previous_active_selection,
+                next_active_selection,
             );
         }
 
         self.snapshot = next_snapshot;
-        self.interaction
-            .sync_active_input(cx.entity(), &self.snapshot, window, cx);
+        self.interaction.sync_active_input(
+            cx.entity(),
+            &self.snapshot,
+            next_active_selection,
+            window,
+            cx,
+        );
         if effects.changed || effects.active_block_changed {
             self.emit_changed(cx);
         }

@@ -17,6 +17,21 @@ use super::{
     view::MarkdownEditor,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ActiveSelectionView {
+    pub(crate) block_id: Option<u64>,
+    pub(crate) cursor_offset: Option<usize>,
+}
+
+impl ActiveSelectionView {
+    pub(crate) fn from_snapshot(snapshot: &EditorSnapshot) -> Self {
+        Self {
+            block_id: snapshot.active_block_id,
+            cursor_offset: snapshot.active_cursor_offset,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveBlockSession {
     pub(crate) block_id: u64,
@@ -46,13 +61,13 @@ impl EditorInteractionState {
         }
     }
 
-    pub(crate) fn reset_after_active_block_change(
+    pub(crate) fn reset_after_active_selection_change(
         &mut self,
-        previous_active_block_id: Option<u64>,
-        next_active_block_id: Option<u64>,
+        previous: ActiveSelectionView,
+        next: ActiveSelectionView,
     ) {
         self.input_subscription = None;
-        if previous_active_block_id != next_active_block_id {
+        if previous.block_id != next.block_id {
             self.active_session = None;
         }
     }
@@ -77,10 +92,11 @@ impl EditorInteractionState {
         &mut self,
         view: Entity<MarkdownEditor>,
         snapshot: &EditorSnapshot,
+        active_selection: ActiveSelectionView,
         window: &mut Window,
         cx: &mut Context<MarkdownEditor>,
     ) {
-        let Some(block_id) = snapshot.active_block_id else {
+        let Some(block_id) = active_selection.block_id else {
             self.clear_session();
             return;
         };
@@ -108,8 +124,8 @@ impl EditorInteractionState {
             self.input_subscription = Some(subscription);
         }
 
-        let desired_cursor = snapshot
-            .active_cursor_offset
+        let desired_cursor = active_selection
+            .cursor_offset
             .unwrap_or_else(|| block.text.len());
         if let Some(session) = self.active_session.as_ref() {
             session.input.sync(&block.text, desired_cursor, window, cx);
