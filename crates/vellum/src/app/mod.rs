@@ -99,12 +99,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("ctrl-o", OpenFile, None),
-        KeyBinding::new("ctrl-shift-o", OpenFolder, None),
-        KeyBinding::new("ctrl-n", NewFile, None),
-        KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-q", Quit, None)
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -121,6 +116,48 @@ fn bind_keys(cx: &mut App) {
 #[cfg(target_os = "macos")]
 fn install_app_menus(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &NewFile, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |root, window, cx| {
+                let Ok(root) = root.downcast::<Root>() else {
+                    return;
+                };
+                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
+                    let _ = app.update(cx, |this, cx| {
+                        this.create_new_file(window, cx);
+                    });
+                }
+            });
+        }
+    });
+    cx.on_action(|_: &OpenFile, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |root, window, cx| {
+                let Ok(root) = root.downcast::<Root>() else {
+                    return;
+                };
+                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
+                    let _ = app.update(cx, |this, cx| {
+                        this.open_file_dialog(window, cx);
+                    });
+                }
+            });
+        }
+    });
+    cx.on_action(|_: &OpenFolder, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |root, window, cx| {
+                let Ok(root) = root.downcast::<Root>() else {
+                    return;
+                };
+                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
+                    let _ = app.update(cx, |this, cx| {
+                        this.request_open_folder(window, cx);
+                    });
+                }
+            });
+        }
+    });
     cx.set_menus(vec![
         Menu {
             name: "Vellum".into(),
