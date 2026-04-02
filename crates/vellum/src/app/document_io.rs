@@ -21,32 +21,47 @@ impl VellumApp {
         cx.notify();
     }
 
-    pub(super) fn set_workspace_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
+    pub(super) fn set_workspace_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) -> bool {
         self.app_state.workspace_root = root.clone();
         match self.workspace.set_root(root) {
-            Ok(()) => self.refresh_tree(cx),
+            Ok(()) => true,
             Err(err) => {
                 self.set_status(format!("Failed to watch workspace: {err}"));
                 cx.notify();
+                false
             }
         }
     }
 
-    pub(super) fn open_folder_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(folder) = FileDialog::new().pick_folder() else {
-            return;
-        };
+    pub(super) fn request_open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        window
+            .spawn(cx, async move |cx| {
+                let folder = FileDialog::new().pick_folder();
+                let Some(folder) = folder else {
+                    return;
+                };
 
-        self.set_workspace_root(Some(folder.clone()), cx);
+                let _ = cx.update_window_entity(&view, |this, _, cx| {
+                    this.apply_open_folder(folder, cx);
+                });
+            })
+            .detach();
+    }
+
+    fn apply_open_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        if !self.set_workspace_root(Some(folder.clone()), cx) {
+            return;
+        }
+
         self.workspace.selected_file = self
             .editor_snapshot
             .path
             .as_ref()
             .filter(|path| path.starts_with(&folder))
             .cloned();
-        self.refresh_tree(cx);
         self.set_status(format!("Opened folder {}", folder.display()));
-        cx.notify();
+        self.refresh_tree(cx);
     }
 
     pub(super) fn open_file_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -90,7 +105,9 @@ impl VellumApp {
             Ok(()) => {
                 if let Some(root) = path.parent().map(|parent| parent.to_path_buf()) {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
-                        self.set_workspace_root(Some(root), cx);
+                        if self.set_workspace_root(Some(root), cx) {
+                            self.refresh_tree(cx);
+                        }
                     }
                 }
                 self.workspace.selected_file = Some(path.clone());
@@ -170,15 +187,19 @@ impl VellumApp {
         self.editor
             .update(cx, |editor, cx| editor.save_as(path.clone(), window, cx))?;
 
+        let mut refreshed_tree = false;
         if let Some(parent) = path.parent().map(|parent| parent.to_path_buf()) {
             if self.app_state.workspace_root.as_ref() != Some(&parent) {
-                self.set_workspace_root(Some(parent), cx);
+                if self.set_workspace_root(Some(parent), cx) {
+                    self.refresh_tree(cx);
+                    refreshed_tree = true;
+                }
             }
         }
 
         self.workspace.selected_file = Some(path.clone());
         let _ = write_last_opened_path(&path);
-        if self.workspace.root.is_some() {
+        if self.workspace.root.is_some() && !refreshed_tree {
             self.refresh_tree(cx);
         }
         self.clear_status();

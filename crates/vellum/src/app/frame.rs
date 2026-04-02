@@ -161,7 +161,7 @@ impl VellumApp {
                                 let view = view.clone();
                                 move |_, window, cx| {
                                     let _ = view.update(cx, |this, cx| {
-                                        this.open_folder_dialog(window, cx);
+                                        this.request_open_folder(window, cx);
                                     });
                                 }
                             }),

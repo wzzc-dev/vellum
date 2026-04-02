@@ -16,7 +16,7 @@ impl VellumApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_folder_dialog(window, cx);
+        self.request_open_folder(window, cx);
     }
 
     pub(super) fn on_new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
