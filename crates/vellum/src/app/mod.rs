@@ -9,6 +9,8 @@ use gpui::{
     App, AppContext, Application, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
     ParentElement, Render, Styled, Timer, VisualContext, Window, WindowOptions, actions, div, px,
 };
+#[cfg(target_os = "macos")]
+use gpui::{Menu, MenuItem, SystemMenuType}; 
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
     button::{Button, ButtonVariants as _},
@@ -34,6 +36,7 @@ actions!(
         NewFile,
         SaveNow,
         SaveAs,
+        Quit,
         ToggleSidebar
     ]
 );
@@ -61,6 +64,7 @@ pub fn run() -> Result<()> {
         gpui_component::init(cx);
         bind_keys(cx);
         bind_editor_keys(cx);
+        install_app_menus(cx);
 
         let options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
@@ -82,6 +86,22 @@ pub fn run() -> Result<()> {
 }
 
 fn bind_keys(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-o", OpenFile, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-o", OpenFolder, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-n", NewFile, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("ctrl-o", OpenFile, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-shift-o", OpenFolder, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-n", NewFile, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
+    ]);
+
+    #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
         KeyBinding::new("ctrl-o", OpenFile, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-o", OpenFolder, Some(APP_CONTEXT)),
@@ -90,6 +110,36 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
     ]);
 }
+
+#[cfg(target_os = "macos")]
+fn install_app_menus(cx: &mut App) {
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.set_menus(vec![
+        Menu {
+            name: "Vellum".into(),
+            items: vec![
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Quit Vellum", Quit),
+            ],
+        },
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("New File", NewFile),
+                MenuItem::separator(),
+                MenuItem::action("Open File...", OpenFile),
+                MenuItem::action("Open Folder...", OpenFolder),
+                MenuItem::separator(),
+                MenuItem::action("Save", SaveNow),
+                MenuItem::action("Save As...", SaveAs),
+            ],
+        },
+    ]);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_app_menus(_: &mut App) {}
 
 impl VellumApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {

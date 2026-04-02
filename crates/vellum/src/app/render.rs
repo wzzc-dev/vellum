@@ -1,4 +1,4 @@
-use gpui::AnyElement;
+use gpui::{AnyElement, prelude::FluentBuilder as _};
 
 use super::*;
 
@@ -122,7 +122,9 @@ impl Render for VellumApp {
                             .w_full()
                             .px_2()
                             .pr_3()
-                            .child(self.render_app_menu(cx))
+                            .when(!cfg!(target_os = "macos"), |this| {
+                                this.child(self.render_app_menu(cx))
+                            })
                             .child(
                                 div()
                                     .text_sm()
