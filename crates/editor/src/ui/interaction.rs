@@ -1,0 +1,202 @@
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+};
+
+use gpui::{
+    AnyElement, Bounds, ClickEvent, Context, Entity, IntoElement, KeyDownEvent, Pixels,
+    Styled, Subscription, Window, canvas,
+};
+
+use crate::core::controller::{BlockSnapshot, EditorSnapshot};
+
+use super::{
+    component_ui::{BlockInput, InputEvent},
+    layout::byte_offset_for_click_position,
+    view::MarkdownEditor,
+};
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActiveBlockSession {
+    pub(crate) block_id: u64,
+    pub(crate) input: BlockInput,
+}
+
+impl ActiveBlockSession {
+    pub(crate) fn new(block_id: u64, input: BlockInput) -> Self {
+        Self { block_id, input }
+    }
+}
+
+pub(crate) struct EditorInteractionState {
+    active_session: Option<ActiveBlockSession>,
+    input_subscription: Option<Subscription>,
+    autosave_generation: u64,
+    block_bounds: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+}
+
+impl EditorInteractionState {
+    pub(crate) fn new() -> Self {
+        Self {
+            active_session: None,
+            input_subscription: None,
+            autosave_generation: 0,
+            block_bounds: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn reset_after_active_block_change(
+        &mut self,
+        previous_active_block_id: Option<u64>,
+        next_active_block_id: Option<u64>,
+    ) {
+        self.input_subscription = None;
+        if previous_active_block_id != next_active_block_id {
+            self.active_session = None;
+        }
+    }
+
+    pub(crate) fn clear_session(&mut self) {
+        self.input_subscription = None;
+        self.active_session = None;
+    }
+
+    pub(crate) fn active_session(&self) -> Option<&ActiveBlockSession> {
+        self.active_session.as_ref()
+    }
+
+    pub(crate) fn is_block_active(&self, block_id: u64) -> bool {
+        self.active_session
+            .as_ref()
+            .map(|session| session.block_id == block_id)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn sync_active_input(
+        &mut self,
+        view: Entity<MarkdownEditor>,
+        snapshot: &EditorSnapshot,
+        window: &mut Window,
+        cx: &mut Context<MarkdownEditor>,
+    ) {
+        let Some(block_id) = snapshot.active_block_id else {
+            self.clear_session();
+            return;
+        };
+        let Some(block) = snapshot.block_by_id(block_id).cloned() else {
+            self.clear_session();
+            return;
+        };
+
+        let needs_new_input = self
+            .active_session
+            .as_ref()
+            .map(|session| session.block_id != block_id)
+            .unwrap_or(true);
+
+        if needs_new_input {
+            self.input_subscription = None;
+            let input = BlockInput::new(&block.kind, block.text.clone(), window, cx);
+            let subscription =
+                window.subscribe(input.entity(), cx, move |_, event: &InputEvent, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.handle_input_event(event, window, cx);
+                    });
+                });
+            self.active_session = Some(ActiveBlockSession::new(block_id, input));
+            self.input_subscription = Some(subscription);
+        }
+
+        let desired_cursor = snapshot
+            .active_cursor_offset
+            .unwrap_or_else(|| block.text.len());
+        if let Some(session) = self.active_session.as_ref() {
+            session.input.sync(&block.text, desired_cursor, window, cx);
+        }
+    }
+
+    pub(crate) fn next_autosave_token(&mut self) -> u64 {
+        self.autosave_generation = self.autosave_generation.wrapping_add(1);
+        self.autosave_generation
+    }
+
+    pub(crate) fn autosave_generation(&self) -> u64 {
+        self.autosave_generation
+    }
+
+    pub(crate) fn navigation_target(
+        &self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<MarkdownEditor>,
+    ) -> Option<(isize, usize)> {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control
+            || modifiers.alt
+            || modifiers.shift
+            || modifiers.platform
+            || modifiers.function
+        {
+            return None;
+        }
+
+        let direction = match event.keystroke.key.as_str() {
+            "up" => -1,
+            "down" => 1,
+            _ => return None,
+        };
+
+        let session = self.active_session.as_ref()?;
+        let state = session.input.navigation_state(window, cx);
+        if state.has_selection {
+            return None;
+        }
+
+        let last_line = state.text.lines().count().max(1).saturating_sub(1);
+        let at_boundary = if direction < 0 {
+            state.line == 0
+        } else {
+            state.line >= last_line
+        };
+        if !at_boundary {
+            return None;
+        }
+
+        Some((direction, state.column))
+    }
+
+    pub(crate) fn cursor_offset_for_click(
+        &self,
+        block: &BlockSnapshot,
+        event: &ClickEvent,
+        window: &mut Window,
+    ) -> Option<usize> {
+        self.block_bounds.borrow().get(&block.id).cloned().map(|bounds| {
+            byte_offset_for_click_position(
+                &block.kind,
+                &block.text,
+                event.position(),
+                bounds,
+                window,
+            )
+        })
+    }
+
+    pub(crate) fn capture_block_bounds(&self, block_id: u64) -> AnyElement {
+        let block_bounds = self.block_bounds.clone();
+        canvas(
+            move |bounds, _, _| bounds,
+            move |_, bounds, _, _| {
+                block_bounds.borrow_mut().insert(block_id, bounds);
+            },
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    }
+
+    pub(crate) fn clear_block_bounds(&self) {
+        self.block_bounds.borrow_mut().clear();
+    }
+}

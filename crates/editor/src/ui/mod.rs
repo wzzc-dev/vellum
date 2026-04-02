@@ -1,7 +1,11 @@
+mod command_adapter;
 mod commands;
 pub(crate) mod component_ui;
+mod edit_ops;
+mod file_ops;
+mod interaction;
 pub(crate) mod layout;
-mod session;
+mod render;
 mod view;
 
 pub use commands::bind_keys;
