@@ -1,4 +1,4 @@
-use gpui::{AnyElement, prelude::FluentBuilder as _};
+use gpui::{AnyElement, StatefulInteractiveElement as _, prelude::FluentBuilder as _};
 
 use super::*;
 
@@ -95,6 +95,12 @@ impl Render for VellumApp {
             editor_panel
         };
 
+        let status_bar = if self.status_bar_visible {
+            Some(self.render_status_bar(cx).into_any_element())
+        } else {
+            None
+        };
+
         div()
             .id("vellum-app")
             .key_context(APP_CONTEXT)
@@ -104,6 +110,8 @@ impl Render for VellumApp {
             .flex()
             .flex_col()
             .bg(cx.theme().background)
+            .on_hover(cx.listener(Self::on_root_hover))
+            .on_mouse_move(cx.listener(Self::on_root_mouse_move))
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_new_file))
@@ -135,6 +143,6 @@ impl Render for VellumApp {
                     ),
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))
-            .child(self.render_status_bar(cx))
+            .when_some(status_bar, |this, status_bar| this.child(status_bar))
     }
 }

@@ -4,6 +4,96 @@ use gpui_component::{Sizable as _, menu::DropdownMenu as _};
 use super::*;
 
 impl VellumApp {
+        fn cancel_status_bar_hide(&mut self) {
+        self.status_bar_hide_generation = self.status_bar_hide_generation.wrapping_add(1);
+    }
+
+    fn reveal_status_bar(&mut self, cx: &mut Context<Self>) {
+        self.cancel_status_bar_hide();
+        if !self.status_bar_visible {
+            self.status_bar_visible = true;
+            cx.notify();
+        }
+    }
+
+    fn schedule_status_bar_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.status_bar_visible {
+            return;
+        }
+
+        self.status_bar_hide_generation = self.status_bar_hide_generation.wrapping_add(1);
+        let token = self.status_bar_hide_generation;
+        let view = cx.entity();
+        window
+            .spawn(cx, async move |cx| {
+                Timer::after(STATUS_BAR_HIDE_DELAY).await;
+                let _ = cx.update_window_entity(&view, |this, _, cx| {
+                    if this.status_bar_hide_generation == token
+                        && !this.status_bar_hovered
+                        && !this.status_bar_edge_hovered
+                    {
+                        this.status_bar_visible = false;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+    }
+
+    pub(super) fn on_root_mouse_move(
+        &mut self,
+        event: &gpui::MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reveal_threshold = window.viewport_size().height - px(STATUS_BAR_REVEAL_EDGE_HEIGHT);
+        let near_bottom = event.position.y >= reveal_threshold;
+
+        if self.status_bar_edge_hovered == near_bottom {
+            return;
+        }
+
+        self.status_bar_edge_hovered = near_bottom;
+        if near_bottom {
+            self.reveal_status_bar(cx);
+        } else if !self.status_bar_hovered {
+            self.schedule_status_bar_hide(window, cx);
+        }
+    }
+
+    pub(super) fn on_root_hover(
+        &mut self,
+        hovered: &bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if *hovered {
+            return;
+        }
+
+        self.status_bar_edge_hovered = false;
+        self.status_bar_hovered = false;
+        self.schedule_status_bar_hide(window, cx);
+    }
+
+    pub(super) fn on_status_bar_hover(
+        &mut self,
+        hovered: &bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.status_bar_hovered == *hovered {
+            return;
+        }
+
+        self.status_bar_hovered = *hovered;
+        if *hovered {
+            self.reveal_status_bar(cx);
+        } else if !self.status_bar_edge_hovered {
+            self.schedule_status_bar_hide(window, cx);
+        }
+    }
+
     pub(super) fn window_title(&self) -> String {
         let dirty_suffix = if self.editor_snapshot.dirty { " *" } else { "" };
         format!(
@@ -175,6 +265,7 @@ impl VellumApp {
         };
 
         div()
+            .id("status-bar")
             .flex()
             .items_center()
             .gap_4()
@@ -184,6 +275,7 @@ impl VellumApp {
             .border_color(cx.theme().border.opacity(0.18))
             .bg(cx.theme().background)
             .text_sm()
+            .on_hover(cx.listener(Self::on_status_bar_hover))
             .child(self.render_sidebar_toggle(cx))
             .child(
                 div()

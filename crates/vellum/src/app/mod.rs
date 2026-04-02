@@ -43,6 +43,8 @@ actions!(
 
 const APP_CONTEXT: &str = "VellumApp";
 const WATCH_POLL_DELAY: Duration = Duration::from_millis(250);
+const STATUS_BAR_HIDE_DELAY: Duration = Duration::from_secs(3);
+const STATUS_BAR_REVEAL_EDGE_HEIGHT: f32 = 12.;
 
 #[derive(Default)]
 struct AppState {
@@ -56,6 +58,10 @@ struct VellumApp {
     editor: Entity<MarkdownEditor>,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
+    status_bar_visible: bool,
+    status_bar_hovered: bool,
+    status_bar_edge_hovered: bool,
+    status_bar_hide_generation: u64,
     shell_status_message: String,
 }
 
@@ -164,6 +170,10 @@ impl VellumApp {
             editor,
             editor_snapshot,
             sidebar_visible: false,
+            status_bar_visible: false,
+            status_bar_hovered: false,
+            status_bar_edge_hovered: false,
+            status_bar_hide_generation: 0,
             shell_status_message: String::new(),
         };
         this.restore_last_opened_document(window, cx);
