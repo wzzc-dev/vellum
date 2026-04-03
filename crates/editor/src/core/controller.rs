@@ -932,6 +932,7 @@ mod tests {
             index: 0,
             cursor_offset: None,
         });
+        let active_before = controller.snapshot().active_block_id;
         controller.dispatch(EditCommand::ReplaceActiveBlock {
             text: "Updated title\n".to_string(),
             cursor_offset: 7,
@@ -940,12 +941,43 @@ mod tests {
         let snapshot = controller.snapshot();
         assert!(snapshot.dirty);
         assert_eq!(snapshot.blocks[0].text, "Updated title");
+        assert_eq!(snapshot.active_block_id, active_before);
 
         controller.dispatch(EditCommand::Undo);
-        assert_eq!(controller.snapshot().blocks[0].text, "Title");
+        let undo_snapshot = controller.snapshot();
+        assert_eq!(undo_snapshot.blocks[0].text, "Title");
+        assert_eq!(undo_snapshot.active_block_id, active_before);
 
         controller.dispatch(EditCommand::Redo);
-        assert_eq!(controller.snapshot().blocks[0].text, "Updated title");
+        let redo_snapshot = controller.snapshot();
+        assert_eq!(redo_snapshot.blocks[0].text, "Updated title");
+        assert_eq!(redo_snapshot.active_block_id, active_before);
+    }
+
+    #[test]
+    fn adjust_command_preserves_active_block_id_when_kind_changes() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Title\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(3),
+        });
+        let active_before = controller.snapshot().active_block_id;
+
+        controller.dispatch(EditCommand::AdjustActiveBlock { deepen: true });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.active_block_id, active_before);
+        assert!(matches!(snapshot.blocks[0].kind, BlockKind::Heading { depth: 1 }));
+        assert_eq!(snapshot.blocks[0].text, "# Title");
     }
 
     #[test]

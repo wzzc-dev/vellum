@@ -66,8 +66,8 @@ impl EditorInteractionState {
         previous: ActiveSelectionView,
         next: ActiveSelectionView,
     ) {
-        self.input_subscription = None;
         if previous.block_id != next.block_id {
+            self.input_subscription = None;
             self.active_session = None;
         }
     }

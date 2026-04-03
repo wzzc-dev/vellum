@@ -84,6 +84,7 @@ pub struct DocumentBuffer {
     source: Rope,
     blocks: Vec<BlockProjection>,
     parse_version: u64,
+    next_block_id: u64,
 }
 
 pub type BlockSpan = BlockProjection;
@@ -95,8 +96,9 @@ impl DocumentBuffer {
             source: Rope::new(),
             blocks: Vec::new(),
             parse_version: 0,
+            next_block_id: 1,
         };
-        this.reparse();
+        this.reparse(None, &[]);
         this
     }
 
@@ -105,8 +107,9 @@ impl DocumentBuffer {
             source: Rope::from_str(text.as_ref()),
             blocks: Vec::new(),
             parse_version: 0,
+            next_block_id: 1,
         };
-        this.reparse();
+        this.reparse(None, &[]);
         this
     }
 
@@ -189,6 +192,8 @@ impl DocumentBuffer {
     }
 
     pub fn replace_range(&mut self, range: Range<usize>, replacement: &str) {
+        let previous_source = self.text();
+        let previous_blocks = self.blocks.clone();
         let start = cmp::min(range.start, self.len());
         let end = cmp::min(range.end, self.len());
         let start_char = self
@@ -202,15 +207,24 @@ impl DocumentBuffer {
 
         self.source.remove(start_char..end_char);
         self.source.insert(start_char, replacement);
-        self.reparse();
+        self.reparse(Some(previous_source.as_str()), &previous_blocks);
     }
 
-    fn reparse(&mut self) {
+    fn reparse(&mut self, previous_source: Option<&str>, previous_blocks: &[BlockProjection]) {
         self.parse_version = self.parse_version.wrapping_add(1);
-        self.blocks = parse_blocks(&self.text(), self.parse_version);
+        let source = self.text();
+        let mut parsed = parse_blocks(&source);
+        assign_block_ids(
+            &mut parsed,
+            &source,
+            previous_source,
+            previous_blocks,
+            &mut self.next_block_id,
+        );
+        self.blocks = parsed;
         if self.blocks.is_empty() {
             self.blocks.push(BlockProjection {
-                id: make_block_id(self.parse_version, 0),
+                id: take_next_block_id(&mut self.next_block_id),
                 kind: BlockKind::Raw,
                 byte_range: 0..0,
                 content_range: 0..0,
@@ -221,14 +235,10 @@ impl DocumentBuffer {
     }
 }
 
-fn make_block_id(parse_version: u64, index: usize) -> u64 {
-    (parse_version << 32) | index as u64
-}
-
-fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
+fn parse_blocks(source: &str) -> Vec<BlockProjection> {
     if source.is_empty() {
         return vec![BlockProjection {
-            id: make_block_id(parse_version, 0),
+            id: 0,
             kind: BlockKind::Raw,
             byte_range: 0..0,
             content_range: 0..0,
@@ -240,7 +250,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
     let tree = to_mdast(source, &ParseOptions::gfm()).ok();
     let Some(Node::Root(root)) = tree else {
         return vec![BlockProjection {
-            id: make_block_id(parse_version, 0),
+            id: 0,
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
             content_range: 0..source.len(),
@@ -251,7 +261,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
 
     if root.children.is_empty() {
         return vec![BlockProjection {
-            id: make_block_id(parse_version, 0),
+            id: 0,
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
             content_range: 0..source.len(),
@@ -280,7 +290,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
 
         if start > cursor {
             blocks.push(BlockProjection {
-                id: make_block_id(parse_version, blocks.len()),
+                id: 0,
                 kind: BlockKind::Raw,
                 byte_range: cursor..start,
                 content_range: cursor..start,
@@ -290,7 +300,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
         }
 
         blocks.push(BlockProjection {
-            id: make_block_id(parse_version, blocks.len()),
+            id: 0,
             kind: block_kind(node),
             byte_range: start..span_end,
             content_range: start..content_end,
@@ -302,7 +312,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
 
     if cursor < source.len() {
         blocks.push(BlockProjection {
-            id: make_block_id(parse_version, blocks.len()),
+            id: 0,
             kind: BlockKind::Raw,
             byte_range: cursor..source.len(),
             content_range: cursor..source.len(),
@@ -313,7 +323,7 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
 
     if blocks.is_empty() {
         blocks.push(BlockProjection {
-            id: make_block_id(parse_version, 0),
+            id: 0,
             kind: BlockKind::Raw,
             byte_range: 0..source.len(),
             content_range: 0..source.len(),
@@ -323,6 +333,82 @@ fn parse_blocks(source: &str, parse_version: u64) -> Vec<BlockProjection> {
     }
 
     blocks
+}
+
+fn assign_block_ids(
+    blocks: &mut [BlockProjection],
+    source: &str,
+    previous_source: Option<&str>,
+    previous_blocks: &[BlockProjection],
+    next_block_id: &mut u64,
+) {
+    if let Some(previous_source) = previous_source.filter(|_| !previous_blocks.is_empty()) {
+        let mut previous_prefix = 0usize;
+        let mut next_prefix = 0usize;
+        while previous_prefix < previous_blocks.len()
+            && next_prefix < blocks.len()
+            && same_block_signature(
+                &previous_blocks[previous_prefix],
+                previous_source,
+                &blocks[next_prefix],
+                source,
+            )
+        {
+            blocks[next_prefix].id = previous_blocks[previous_prefix].id;
+            previous_prefix += 1;
+            next_prefix += 1;
+        }
+
+        let mut previous_suffix = previous_blocks.len();
+        let mut next_suffix = blocks.len();
+        while previous_suffix > previous_prefix
+            && next_suffix > next_prefix
+            && same_block_signature(
+                &previous_blocks[previous_suffix - 1],
+                previous_source,
+                &blocks[next_suffix - 1],
+                source,
+            )
+        {
+            previous_suffix -= 1;
+            next_suffix -= 1;
+            blocks[next_suffix].id = previous_blocks[previous_suffix].id;
+        }
+
+        for (block, previous_block) in blocks[next_prefix..next_suffix]
+            .iter_mut()
+            .zip(previous_blocks[previous_prefix..previous_suffix].iter())
+        {
+            block.id = previous_block.id;
+        }
+    }
+
+    for block in blocks.iter_mut().filter(|block| block.id == 0) {
+        block.id = take_next_block_id(next_block_id);
+    }
+}
+
+fn same_block_signature(
+    previous_block: &BlockProjection,
+    previous_source: &str,
+    block: &BlockProjection,
+    source: &str,
+) -> bool {
+    previous_block.kind == block.kind
+        && previous_block.cursor_anchor_policy == block.cursor_anchor_policy
+        && previous_block.can_code_edit == block.can_code_edit
+        && source_text(previous_source, previous_block.byte_range.clone())
+            == source_text(source, block.byte_range.clone())
+}
+
+fn source_text(source: &str, range: Range<usize>) -> &str {
+    source.get(range).unwrap_or_default()
+}
+
+fn take_next_block_id(next_block_id: &mut u64) -> u64 {
+    let id = *next_block_id;
+    *next_block_id = next_block_id.wrapping_add(1);
+    id
 }
 
 fn block_kind(node: &Node) -> BlockKind {
@@ -431,6 +517,31 @@ mod tests {
                 .iter()
                 .any(|block| matches!(block.kind, BlockKind::Heading { depth: 2 }))
         );
+    }
+
+    #[test]
+    fn preserves_block_ids_for_in_place_edits_and_unchanged_neighbors() {
+        let mut doc = DocumentBuffer::from_text("First\n\nSecond\n");
+        let first = doc.blocks[0].clone();
+        let second = doc.blocks[1].clone();
+
+        doc.replace_range(first.byte_range.clone(), "Changed\n\n");
+
+        assert_eq!(doc.blocks[0].id, first.id);
+        assert_eq!(doc.blocks[1].id, second.id);
+        assert_eq!(doc.block_text(&doc.blocks[0]), "Changed");
+        assert_eq!(doc.block_text(&doc.blocks[1]), "Second");
+    }
+
+    #[test]
+    fn preserves_block_id_when_block_kind_changes_in_place() {
+        let mut doc = DocumentBuffer::from_text("Title\n");
+        let original = doc.blocks[0].clone();
+
+        doc.replace_range(original.byte_range.clone(), "# Title\n");
+
+        assert_eq!(doc.blocks[0].id, original.id);
+        assert!(matches!(doc.blocks[0].kind, BlockKind::Heading { depth: 1 }));
     }
 
     #[test]
