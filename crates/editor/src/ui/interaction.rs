@@ -1,18 +1,14 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, Entity, IntoElement, KeyDownEvent, Pixels,
-    Styled, Subscription, Window, canvas,
+    AnyElement, Bounds, ClickEvent, Context, Entity, IntoElement, Pixels, Styled, Subscription,
+    Window, canvas,
 };
 
 use crate::core::controller::{BlockSnapshot, EditorSnapshot};
 
 use super::{
-    component_ui::{BlockInput, InputEvent},
+    component_ui::{BlockInput, InputEvent, InputNavigationState},
     layout::byte_offset_for_click_position,
     view::MarkdownEditor,
 };
@@ -114,12 +110,15 @@ impl EditorInteractionState {
         if needs_new_input {
             self.input_subscription = None;
             let input = BlockInput::new(&block.kind, block.text.clone(), window, cx);
-            let subscription =
-                window.subscribe(input.entity(), cx, move |_, event: &InputEvent, window, cx| {
+            let subscription = window.subscribe(
+                input.entity(),
+                cx,
+                move |_, event: &InputEvent, window, cx| {
                     let _ = view.update(cx, |this, cx| {
                         this.handle_input_event(event, window, cx);
                     });
-                });
+                },
+            );
             self.active_session = Some(ActiveBlockSession::new(block_id, input));
             self.input_subscription = Some(subscription);
         }
@@ -141,45 +140,15 @@ impl EditorInteractionState {
         self.autosave_generation
     }
 
-    pub(crate) fn navigation_target(
+    pub(crate) fn navigation_target_for_direction(
         &self,
-        event: &KeyDownEvent,
+        direction: isize,
         window: &mut Window,
         cx: &mut Context<MarkdownEditor>,
     ) -> Option<(isize, usize)> {
-        let modifiers = event.keystroke.modifiers;
-        if modifiers.control
-            || modifiers.alt
-            || modifiers.shift
-            || modifiers.platform
-            || modifiers.function
-        {
-            return None;
-        }
-
-        let direction = match event.keystroke.key.as_str() {
-            "up" => -1,
-            "down" => 1,
-            _ => return None,
-        };
-
         let session = self.active_session.as_ref()?;
         let state = session.input.navigation_state(window, cx);
-        if state.has_selection {
-            return None;
-        }
-
-        let last_line = state.text.lines().count().max(1).saturating_sub(1);
-        let at_boundary = if direction < 0 {
-            state.line == 0
-        } else {
-            state.line >= last_line
-        };
-        if !at_boundary {
-            return None;
-        }
-
-        Some((direction, state.column))
+        navigation_target_for_state(&state, direction)
     }
 
     pub(crate) fn cursor_offset_for_click(
@@ -188,15 +157,19 @@ impl EditorInteractionState {
         event: &ClickEvent,
         window: &mut Window,
     ) -> Option<usize> {
-        self.block_bounds.borrow().get(&block.id).cloned().map(|bounds| {
-            byte_offset_for_click_position(
-                &block.kind,
-                &block.text,
-                event.position(),
-                bounds,
-                window,
-            )
-        })
+        self.block_bounds
+            .borrow()
+            .get(&block.id)
+            .cloned()
+            .map(|bounds| {
+                byte_offset_for_click_position(
+                    &block.kind,
+                    &block.text,
+                    event.position(),
+                    bounds,
+                    window,
+                )
+            })
     }
 
     pub(crate) fn capture_block_bounds(&self, block_id: u64) -> AnyElement {
@@ -214,5 +187,84 @@ impl EditorInteractionState {
 
     pub(crate) fn clear_block_bounds(&self) {
         self.block_bounds.borrow_mut().clear();
+    }
+}
+
+fn navigation_target_for_state(
+    state: &InputNavigationState,
+    direction: isize,
+) -> Option<(isize, usize)> {
+    if state.has_selection {
+        return None;
+    }
+
+    let moving_up = match direction.cmp(&0) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => return None,
+    };
+
+    let last_line = state.text.lines().count().max(1).saturating_sub(1);
+    let at_boundary = if moving_up {
+        state.line == 0
+    } else {
+        state.line >= last_line
+    };
+
+    at_boundary.then_some((direction.signum(), state.column))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_target_moves_up_from_first_line() {
+        let state = InputNavigationState {
+            text: "first\nsecond".to_string(),
+            line: 0,
+            column: 3,
+            has_selection: false,
+        };
+
+        assert_eq!(navigation_target_for_state(&state, -1), Some((-1, 3)));
+    }
+
+    #[test]
+    fn navigation_target_moves_down_from_last_line() {
+        let state = InputNavigationState {
+            text: "first\nsecond".to_string(),
+            line: 1,
+            column: 2,
+            has_selection: false,
+        };
+
+        assert_eq!(navigation_target_for_state(&state, 1), Some((1, 2)));
+    }
+
+    #[test]
+    fn navigation_target_does_not_move_from_middle_line() {
+        let state = InputNavigationState {
+            text: "one\ntwo\nthree".to_string(),
+            line: 1,
+            column: 1,
+            has_selection: false,
+        };
+
+        assert_eq!(navigation_target_for_state(&state, -1), None);
+        assert_eq!(navigation_target_for_state(&state, 1), None);
+    }
+
+    #[test]
+    fn navigation_target_ignores_selection() {
+        let state = InputNavigationState {
+            text: "first\nsecond".to_string(),
+            line: 0,
+            column: 0,
+            has_selection: true,
+        };
+
+        assert_eq!(navigation_target_for_state(&state, -1), None);
+        assert_eq!(navigation_target_for_state(&state, 1), None);
     }
 }

@@ -1,9 +1,7 @@
-use gpui::{ClickEvent, Context, KeyDownEvent, VisualContext, Window};
+use gpui::{ClickEvent, Context, VisualContext, Window};
 
 use super::{
-    command_adapter::EditorCommandAdapter,
-    component_ui::InputEvent,
-    view::MarkdownEditor,
+    command_adapter::EditorCommandAdapter, component_ui::InputEvent, view::MarkdownEditor,
 };
 
 impl MarkdownEditor {
@@ -19,9 +17,9 @@ impl MarkdownEditor {
                     return;
                 };
                 let (text, cursor_offset) = session.input.text_and_cursor(cx);
-                let effects = self.controller.dispatch(
-                    EditorCommandAdapter::sync_active_text(text, cursor_offset),
-                );
+                let effects = self
+                    .controller
+                    .dispatch(EditorCommandAdapter::sync_active_text(text, cursor_offset));
                 self.apply_effects(window, cx, effects);
                 self.schedule_autosave(window, cx);
             }
@@ -52,10 +50,12 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let effects = self.controller.dispatch(EditorCommandAdapter::begin_block_edit(
-            block_ix,
-            cursor_offset,
-        ));
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::begin_block_edit(
+                block_ix,
+                cursor_offset,
+            ));
         self.apply_effects(window, cx, effects);
     }
 
@@ -66,11 +66,10 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let cursor_offset = self
-            .snapshot
-            .blocks
-            .get(block_ix)
-            .and_then(|block| self.interaction.cursor_offset_for_click(block, event, window));
+        let cursor_offset = self.snapshot.blocks.get(block_ix).and_then(|block| {
+            self.interaction
+                .cursor_offset_for_click(block, event, window)
+        });
 
         self.activate_block(block_ix, cursor_offset, window, cx);
     }
@@ -82,25 +81,33 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let effects = self.controller.dispatch(EditorCommandAdapter::move_to_adjacent_block(
-            direction,
-            preferred_column,
-        ));
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::move_to_adjacent_block(
+                direction,
+                preferred_column,
+            ));
         self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn exit_edit_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let effects = self.controller.dispatch(EditorCommandAdapter::stop_block_edit());
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::stop_block_edit());
         self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let effects = self.controller.dispatch(EditorCommandAdapter::undo_last_edit());
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::undo_last_edit());
         self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let effects = self.controller.dispatch(EditorCommandAdapter::redo_last_edit());
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::redo_last_edit());
         self.apply_effects(window, cx, effects);
     }
 
@@ -118,13 +125,15 @@ impl MarkdownEditor {
 
         let (selection, cursor_offset) = session.input.selection_and_cursor(window, cx);
 
-        let effects = self.controller.dispatch(EditorCommandAdapter::wrap_selection_with_markup(
-            selection,
-            cursor_offset,
-            before.to_string(),
-            after.to_string(),
-            placeholder.to_string(),
-        ));
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::wrap_selection_with_markup(
+                selection,
+                cursor_offset,
+                before.to_string(),
+                after.to_string(),
+                placeholder.to_string(),
+            ));
         self.apply_effects(window, cx, effects);
     }
 
@@ -140,27 +149,44 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
-    pub(super) fn reload_conflict_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reload_conflict_from_disk(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let effects = self
             .controller
             .dispatch(EditorCommandAdapter::reload_conflicted_document());
         self.apply_effects(window, cx, effects);
     }
 
-    pub(super) fn keep_current_conflicted_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn keep_current_conflicted_version(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let effects = self
             .controller
             .dispatch(EditorCommandAdapter::keep_conflicted_document());
         self.apply_effects(window, cx, effects);
     }
 
-    pub(super) fn handle_active_navigation_key(
+    pub(super) fn handle_active_navigation_action(
         &mut self,
-        event: &KeyDownEvent,
+        direction: isize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some((direction, column)) = self.interaction.navigation_target(event, window, cx)
+        let Some(session) = self.interaction.active_session() else {
+            return false;
+        };
+        if !session.input.is_focused(window, cx) {
+            return false;
+        }
+
+        let Some((direction, column)) = self
+            .interaction
+            .navigation_target_for_direction(direction, window, cx)
         else {
             return false;
         };

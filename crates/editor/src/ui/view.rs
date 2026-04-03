@@ -1,6 +1,6 @@
 use gpui::{
-    Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render, Styled,
-    Window, div, px,
+    Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window,
+    div, px,
 };
 
 use crate::core::controller::{DocumentSource, EditorController, EditorSnapshot, SyncPolicy};
@@ -65,7 +65,12 @@ impl Render for MarkdownEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{cell::RefCell, path::PathBuf, rc::Rc};
+
+    use gpui::{AppContext, Entity, TestAppContext, VisualContext, VisualTestContext, Window};
+    use gpui_component::Root;
+
+    use crate::EditCommand;
 
     use super::*;
 
@@ -83,5 +88,116 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.display_name, "note.md");
         assert_eq!(snapshot.word_count, 2);
+    }
+
+    #[gpui::test]
+    fn bare_down_moves_to_next_block_at_boundary(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\nSecond", 0, Some(0));
+        let initial_ids = block_ids(&view, cx);
+
+        cx.simulate_keystrokes("down");
+
+        assert_eq!(active_block_id(&view, cx), Some(initial_ids[1]));
+    }
+
+    #[gpui::test]
+    fn bare_up_moves_to_previous_block_at_boundary(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\nSecond", 1, Some(0));
+        let initial_ids = block_ids(&view, cx);
+
+        cx.simulate_keystrokes("up");
+
+        assert_eq!(active_block_id(&view, cx), Some(initial_ids[0]));
+    }
+
+    #[gpui::test]
+    fn bare_down_stays_within_multiline_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "one\ntwo\nthree\n\nnext", 0, Some(1));
+        let initial_active = active_block_id(&view, cx);
+
+        cx.simulate_keystrokes("down");
+
+        assert_eq!(active_block_id(&view, cx), initial_active);
+    }
+
+    fn build_editor_window(
+        cx: &mut TestAppContext,
+    ) -> (Entity<MarkdownEditor>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            crate::bind_keys(cx);
+        });
+        let editor = Rc::new(RefCell::new(None));
+        let editor_for_root = editor.clone();
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| MarkdownEditor::new(window, cx));
+            *editor_for_root.borrow_mut() = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+
+        (
+            editor
+                .borrow()
+                .clone()
+                .expect("editor view should be captured from component root"),
+            cx,
+        )
+    }
+
+    fn load_document(
+        cx: &mut VisualTestContext,
+        view: &Entity<MarkdownEditor>,
+        text: &str,
+        block_index: usize,
+        cursor_offset: Option<usize>,
+    ) {
+        let active_input = cx.update_window_entity(view, |editor, window, cx| {
+            let mut controller = EditorController::new(
+                DocumentSource::Text {
+                    path: None,
+                    suggested_path: None,
+                    text: text.to_string(),
+                    modified_at: None,
+                },
+                SyncPolicy::default(),
+            );
+            let effects = controller.dispatch(EditCommand::ActivateBlock {
+                index: block_index,
+                cursor_offset,
+            });
+
+            editor.controller = controller;
+            editor.apply_effects(window, cx, effects);
+            editor
+                .interaction
+                .active_session()
+                .map(|session| session.input.entity().clone())
+        });
+        cx.update(|window: &mut Window, _| {
+            window.refresh();
+            window.activate_window();
+        });
+        if let Some(active_input) = active_input {
+            cx.focus(&active_input);
+        }
+        cx.run_until_parked();
+    }
+
+    fn block_ids(view: &Entity<MarkdownEditor>, cx: &VisualTestContext) -> Vec<u64> {
+        cx.read(|app| {
+            view.read(app)
+                .snapshot()
+                .blocks
+                .iter()
+                .map(|block| block.id)
+                .collect()
+        })
+    }
+
+    fn active_block_id(view: &Entity<MarkdownEditor>, cx: &VisualTestContext) -> Option<u64> {
+        cx.read(|app| view.read(app).snapshot().active_block_id)
     }
 }

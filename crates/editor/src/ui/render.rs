@@ -3,12 +3,15 @@ use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
-use gpui_component::ActiveTheme;
+use gpui_component::{
+    ActiveTheme,
+    input::{MoveDown, MoveUp},
+};
 
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, MAX_EDITOR_WIDTH,
     component_ui::{Button, ButtonVariants as _, render_block_list, render_markdown_preview},
-    layout::block_layout_metrics,
+    layout::block_presentation,
     view::MarkdownEditor,
 };
 
@@ -42,7 +45,9 @@ impl MarkdownEditor {
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Reload the disk version or keep your current in-memory changes."),
+                                .child(
+                                "Reload the disk version or keep your current in-memory changes.",
+                            ),
                         ),
                 )
                 .child(
@@ -105,48 +110,38 @@ impl MarkdownEditor {
         let block_is_empty = block.text.is_empty();
         let is_active = self.interaction.is_block_active(block.id);
         let view = cx.entity();
-        let metrics = block_layout_metrics(&block.kind);
+        let presentation = block_presentation(&block.kind);
 
         let content_body = if is_active {
             let session = self.interaction.active_session().expect("active session");
             div()
                 .w_full()
-                .capture_key_down({
-                    let view = view.clone();
-                    move |event, window, cx| {
-                        let handled =
-                            view.update(cx, |this, cx| this.handle_active_navigation_key(event, window, cx));
-                        if handled {
-                            cx.stop_propagation();
-                            window.prevent_default();
-                        }
-                    }
-                })
                 .child(session.input.render(&block.kind))
                 .into_any_element()
         } else if self.snapshot.blocks.len() == 1 && block_is_empty {
             div()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height))
                 .text_color(cx.theme().muted_foreground)
                 .child("Start writing...")
                 .into_any_element()
         } else {
             div()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
-                .child(render_markdown_preview(block.id, block.text, window, cx))
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height))
+                .child(render_markdown_preview(
+                    block.id,
+                    &block.kind,
+                    block.text,
+                    window,
+                    cx,
+                ))
                 .into_any_element()
         };
 
-        let placeholder_extra_padding = if !is_active && self.snapshot.blocks.len() == 1 && block_is_empty {
-            6.
-        } else {
-            0.
-        };
         let content = div()
             .px_1()
-            .py(px(metrics.block_padding_y + placeholder_extra_padding))
+            .py(px(presentation.block_padding_y))
             .child(
                 div()
                     .relative()
@@ -159,7 +154,7 @@ impl MarkdownEditor {
         div()
             .id(("block-row", block.id))
             .w_full()
-            .py(px(metrics.row_spacing_y))
+            .py(px(presentation.row_spacing_y))
             .child(
                 div()
                     .id(("activate-block", block.id))
@@ -174,7 +169,11 @@ impl MarkdownEditor {
             .into_any_element()
     }
 
-    pub(super) fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         self.interaction.clear_block_bounds();
         let conflict_banner = self
             .render_conflict_banner(cx)
@@ -188,12 +187,33 @@ impl MarkdownEditor {
                     .collect::<Vec<_>>(),
             )
         };
+        let view = cx.entity();
 
         div()
             .size_full()
             .min_w(px(0.))
             .min_h(px(0.))
             .bg(cx.theme().background)
+            .when(self.interaction.active_session().is_some(), |this| {
+                let up_view = view.clone();
+                let down_view = view.clone();
+                this.capture_action(move |_: &MoveUp, window, app| {
+                    let handled = up_view.update(app, |this, cx| {
+                        this.handle_active_navigation_action(-1, window, cx)
+                    });
+                    if handled {
+                        app.stop_propagation();
+                    }
+                })
+                .capture_action(move |_: &MoveDown, window, app| {
+                    let handled = down_view.update(app, |this, cx| {
+                        this.handle_active_navigation_action(1, window, cx)
+                    });
+                    if handled {
+                        app.stop_propagation();
+                    }
+                })
+            })
             .child(
                 div()
                     .size_full()
