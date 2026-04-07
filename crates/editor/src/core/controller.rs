@@ -9,7 +9,10 @@ use anyhow::{Context as _, Result};
 
 use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
-    text_ops::{adjust_block_markup, byte_offset_for_line_column, count_document_words},
+    text_ops::{
+        adjust_block_markup, byte_offset_for_line_column, count_document_words,
+        semantic_enter_transform,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -136,6 +139,10 @@ pub enum EditCommand {
         before: String,
         after: String,
         placeholder: String,
+    },
+    SemanticEnter {
+        selection: Option<Range<usize>>,
+        cursor_offset: usize,
     },
     AdjustActiveBlock {
         deepen: bool,
@@ -384,7 +391,12 @@ impl EditorController {
             self.selection
                 .cursor()
                 .saturating_sub(block.content_range.start)
-                .min(block.content_range.end.saturating_sub(block.content_range.start))
+                .min(
+                    block
+                        .content_range
+                        .end
+                        .saturating_sub(block.content_range.start),
+                )
         });
 
         EditorSnapshot {
@@ -483,6 +495,10 @@ impl EditorController {
                 after,
                 placeholder,
             } => self.wrap_active_selection(selection, cursor_offset, before, after, placeholder),
+            EditCommand::SemanticEnter {
+                selection,
+                cursor_offset,
+            } => self.semantic_enter_active_block(selection, cursor_offset),
             EditCommand::AdjustActiveBlock { deepen } => self.adjust_active_block(deepen),
             EditCommand::FocusAdjacentBlock {
                 direction,
@@ -619,7 +635,12 @@ impl EditorController {
         let trailing = self.document.block_trailing_text(&block);
         let replacement = format!("{text}{trailing}");
         let selection_after = SelectionState::collapsed(block.content_range.start + cursor_offset);
-        self.apply_edit(block.byte_range, replacement, selection_after, "Edited block")
+        self.apply_edit(
+            block.byte_range,
+            replacement,
+            selection_after,
+            "Edited block",
+        )
     }
 
     fn wrap_active_selection(
@@ -657,6 +678,33 @@ impl EditorController {
             insertion,
             SelectionState::collapsed(new_cursor),
             "Updated formatting",
+        )
+    }
+
+    fn semantic_enter_active_block(
+        &mut self,
+        selection: Option<Range<usize>>,
+        cursor_offset: usize,
+    ) -> EditorEffects {
+        let Some(block) = self.active_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let block_text = self.document.block_text(&block);
+        let Some(transform) =
+            semantic_enter_transform(&block.kind, &block_text, selection, cursor_offset)
+        else {
+            return EditorEffects::default();
+        };
+        let trailing = self.document.block_trailing_text(&block);
+        let replacement = format!("{}{}", transform.replacement, trailing);
+        let selection_after =
+            SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
+
+        self.apply_edit(
+            block.byte_range,
+            replacement,
+            selection_after,
+            "Updated block structure",
         )
     }
 
@@ -976,7 +1024,10 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.active_block_id, active_before);
-        assert!(matches!(snapshot.blocks[0].kind, BlockKind::Heading { depth: 1 }));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            BlockKind::Heading { depth: 1 }
+        ));
         assert_eq!(snapshot.blocks[0].text, "# Title");
     }
 
@@ -1053,5 +1104,156 @@ mod tests {
 
         assert_eq!(controller.snapshot().blocks[0].text, "Changed");
         assert_eq!(controller.document.text(), "Changed\n\nSecond\n");
+    }
+
+    #[test]
+    fn semantic_enter_splits_paragraph_and_focuses_new_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(2),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: None,
+            cursor_offset: 2,
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert_eq!(snapshot.blocks[0].text, "Fi");
+        assert_eq!(snapshot.blocks[1].text, "rst");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
+    }
+
+    #[test]
+    fn semantic_enter_at_end_creates_editable_empty_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(7),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: None,
+            cursor_offset: 7,
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            BlockKind::Heading { depth: 1 }
+        ));
+        assert_eq!(snapshot.blocks[0].text, "# Title");
+        assert_eq!(snapshot.blocks[1].kind, BlockKind::Raw);
+        assert_eq!(snapshot.blocks[1].text, "");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
+    }
+
+    #[test]
+    fn semantic_enter_continues_unordered_list_item() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(6),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: None,
+            cursor_offset: 6,
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.blocks.len(), 1);
+        assert_eq!(snapshot.blocks[0].kind, BlockKind::List);
+        assert_eq!(snapshot.blocks[0].text, "- item\n- ");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(9));
+    }
+
+    #[test]
+    fn semantic_enter_exits_empty_list_item_into_empty_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item\n- ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(9),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: None,
+            cursor_offset: 9,
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert_eq!(snapshot.blocks[0].kind, BlockKind::List);
+        assert_eq!(snapshot.blocks[0].text, "- item\n");
+        assert_eq!(snapshot.blocks[1].text, "");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
+    }
+
+    #[test]
+    fn semantic_enter_replaces_selection_before_splitting() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "alpha beta".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(7),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: Some(2..7),
+            cursor_offset: 7,
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert_eq!(snapshot.blocks[0].text, "al");
+        assert_eq!(snapshot.blocks[1].text, "eta");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
     }
 }

@@ -5,7 +5,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme,
-    input::{MoveDown, MoveUp},
+    input::{Enter, MoveDown, MoveUp},
 };
 
 use super::{
@@ -195,9 +195,24 @@ impl MarkdownEditor {
             .min_h(px(0.))
             .bg(cx.theme().background)
             .when(self.interaction.active_session().is_some(), |this| {
+                let enter_view = view.clone();
+                let keydown_view = view.clone();
                 let up_view = view.clone();
                 let down_view = view.clone();
-                this.capture_action(move |_: &MoveUp, window, app| {
+                this.capture_key_down(move |event, window, app| {
+                    let _ = keydown_view.update(app, |this, cx| {
+                        this.record_active_enter_keydown(event, window, cx);
+                    });
+                })
+                .capture_action(move |action: &Enter, window, app| {
+                    let handled = enter_view.update(app, |this, cx| {
+                        this.handle_active_semantic_enter_action(action.secondary, window, cx)
+                    });
+                    if handled {
+                        app.stop_propagation();
+                    }
+                })
+                .capture_action(move |_: &MoveUp, window, app| {
                     let handled = up_view.update(app, |this, cx| {
                         this.handle_active_navigation_action(-1, window, cx)
                     });

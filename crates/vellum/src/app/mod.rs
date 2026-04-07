@@ -10,7 +10,7 @@ use gpui::{
     ParentElement, Render, Styled, Timer, VisualContext, Window, WindowOptions, actions, div, px,
 };
 #[cfg(target_os = "macos")]
-use gpui::{Menu, MenuItem, SystemMenuType}; 
+use gpui::{Menu, MenuItem, SystemMenuType};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
     button::{Button, ButtonVariants as _},
@@ -99,7 +99,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-q", Quit, None)
+        KeyBinding::new("cmd-q", Quit, None),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -110,7 +110,6 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
     ]);
-
 }
 
 #[cfg(target_os = "macos")]

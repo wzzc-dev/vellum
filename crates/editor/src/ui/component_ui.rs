@@ -62,8 +62,18 @@ impl BlockInput {
         &self.state
     }
 
-    pub(crate) fn is_focused(&self, window: &Window, cx: &App) -> bool {
-        self.state.focus_handle(cx).is_focused(window)
+    pub(crate) fn is_entity(&self, entity: &Entity<InputState>) -> bool {
+        self.state.entity_id() == entity.entity_id()
+    }
+
+    pub(crate) fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        self.state.focus_handle(cx).contains_focused(window, cx)
+    }
+
+    pub(crate) fn has_marked_text<V>(&self, window: &mut Window, cx: &mut Context<V>) -> bool {
+        self.state.update(cx, |input, cx| {
+            input.marked_text_range(window, cx).is_some()
+        })
     }
 
     pub(crate) fn text_and_cursor<V>(&self, cx: &mut Context<V>) -> (String, usize) {

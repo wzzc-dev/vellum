@@ -147,6 +147,13 @@ impl DocumentBuffer {
         }
 
         let clipped = cmp::min(offset, self.len());
+        if let Some(index) = self.blocks.iter().rposition(|block| {
+            clipped == block.byte_range.start
+                && (block.content_range.is_empty() || block.kind != BlockKind::Raw)
+        }) {
+            return index;
+        }
+
         self.blocks
             .iter()
             .position(|block| clipped >= block.byte_range.start && clipped <= block.byte_range.end)
@@ -332,7 +339,41 @@ fn parse_blocks(source: &str) -> Vec<BlockProjection> {
         });
     }
 
+    materialize_trailing_empty_block(&mut blocks, source);
+
     blocks
+}
+
+fn materialize_trailing_empty_block(blocks: &mut Vec<BlockProjection>, source: &str) {
+    let Some(trailing) = blocks.last().cloned() else {
+        return;
+    };
+    if trailing.kind != BlockKind::Raw {
+        return;
+    }
+    if blocks.len() < 2 || blocks[blocks.len() - 2].kind == BlockKind::Raw {
+        return;
+    }
+
+    let previous_text = source_text(source, blocks[blocks.len() - 2].content_range.clone());
+    let trailing_text = source_text(source, trailing.byte_range.clone());
+    if !is_trailing_block_separator(previous_text, trailing_text) {
+        return;
+    }
+
+    let separator_end = trailing.byte_range.end;
+    blocks.pop();
+    if let Some(previous) = blocks.last_mut() {
+        previous.byte_range.end = separator_end;
+    }
+    blocks.push(BlockProjection {
+        id: 0,
+        kind: BlockKind::Raw,
+        byte_range: source.len()..source.len(),
+        content_range: source.len()..source.len(),
+        cursor_anchor_policy: CursorAnchorPolicy::Clamp,
+        can_code_edit: false,
+    });
 }
 
 fn assign_block_ids(
@@ -403,6 +444,25 @@ fn same_block_signature(
 
 fn source_text(source: &str, range: Range<usize>) -> &str {
     source.get(range).unwrap_or_default()
+}
+
+fn is_trailing_block_separator(previous_text: &str, trailing_text: &str) -> bool {
+    if !trailing_text
+        .trim_matches([' ', '\t', '\r', '\n'])
+        .is_empty()
+    {
+        return false;
+    }
+
+    trailing_newline_count(previous_text) + trailing_newline_count(trailing_text) >= 2
+}
+
+fn trailing_newline_count(text: &str) -> usize {
+    text.bytes()
+        .rev()
+        .take_while(|byte| matches!(byte, b'\n' | b'\r'))
+        .filter(|byte| *byte == b'\n')
+        .count()
 }
 
 fn take_next_block_id(next_block_id: &mut u64) -> u64 {
@@ -541,7 +601,10 @@ mod tests {
         doc.replace_range(original.byte_range.clone(), "# Title\n");
 
         assert_eq!(doc.blocks[0].id, original.id);
-        assert!(matches!(doc.blocks[0].kind, BlockKind::Heading { depth: 1 }));
+        assert!(matches!(
+            doc.blocks[0].kind,
+            BlockKind::Heading { depth: 1 }
+        ));
     }
 
     #[test]
@@ -598,5 +661,17 @@ mod tests {
         assert!(selection.is_collapsed());
         assert_eq!(selection.range(), 5..5);
         assert_eq!(selection.cursor(), 5);
+    }
+
+    #[test]
+    fn materializes_editable_trailing_empty_block_after_separator() {
+        let doc = DocumentBuffer::from_text("First\n\n");
+
+        assert_eq!(doc.blocks.len(), 2);
+        assert_eq!(doc.blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(doc.block_trailing_text(&doc.blocks[0]), "\n\n");
+        assert_eq!(doc.blocks[1].kind, BlockKind::Raw);
+        assert_eq!(doc.block_text(&doc.blocks[1]), "");
+        assert_eq!(doc.blocks[1].byte_range, 7..7);
     }
 }

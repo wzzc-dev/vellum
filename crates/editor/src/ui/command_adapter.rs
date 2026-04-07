@@ -13,7 +13,10 @@ impl EditorCommandAdapter {
     }
 
     pub(crate) fn sync_active_text(text: String, cursor_offset: usize) -> EditCommand {
-        EditCommand::ReplaceActiveBlock { text, cursor_offset }
+        EditCommand::ReplaceActiveBlock {
+            text,
+            cursor_offset,
+        }
     }
 
     pub(crate) fn wrap_selection_with_markup(
@@ -29,6 +32,16 @@ impl EditorCommandAdapter {
             before,
             after,
             placeholder,
+        }
+    }
+
+    pub(crate) fn semantic_enter(
+        selection: Option<Range<usize>>,
+        cursor_offset: usize,
+    ) -> EditCommand {
+        EditCommand::SemanticEnter {
+            selection,
+            cursor_offset,
         }
     }
 

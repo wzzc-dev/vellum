@@ -21,7 +21,11 @@ impl VellumApp {
         cx.notify();
     }
 
-    pub(super) fn set_workspace_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) -> bool {
+    pub(super) fn set_workspace_root(
+        &mut self,
+        root: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.app_state.workspace_root = root.clone();
         match self.workspace.set_root(root) {
             Ok(()) => true,

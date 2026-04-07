@@ -4,7 +4,7 @@ use gpui_component::{Sizable as _, menu::DropdownMenu as _};
 use super::*;
 
 impl VellumApp {
-        fn cancel_status_bar_hide(&mut self) {
+    fn cancel_status_bar_hide(&mut self) {
         self.status_bar_hide_generation = self.status_bar_hide_generation.wrapping_add(1);
     }
 

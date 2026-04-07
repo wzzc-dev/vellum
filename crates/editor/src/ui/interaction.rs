@@ -40,11 +40,27 @@ impl ActiveBlockSession {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingEnterIntent {
+    pub(crate) block_id: u64,
+    pub(crate) secondary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingEnterChange {
+    pub(crate) block_id: u64,
+    pub(crate) text: String,
+    pub(crate) cursor_offset: usize,
+}
+
 pub(crate) struct EditorInteractionState {
     active_session: Option<ActiveBlockSession>,
     input_subscription: Option<Subscription>,
+    input_observer: Option<Subscription>,
     autosave_generation: u64,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    pending_enter_intent: Option<PendingEnterIntent>,
+    pending_enter_change: Option<PendingEnterChange>,
 }
 
 impl EditorInteractionState {
@@ -52,8 +68,11 @@ impl EditorInteractionState {
         Self {
             active_session: None,
             input_subscription: None,
+            input_observer: None,
             autosave_generation: 0,
             block_bounds: Rc::new(RefCell::new(HashMap::new())),
+            pending_enter_intent: None,
+            pending_enter_change: None,
         }
     }
 
@@ -64,13 +83,19 @@ impl EditorInteractionState {
     ) {
         if previous.block_id != next.block_id {
             self.input_subscription = None;
+            self.input_observer = None;
             self.active_session = None;
+            self.pending_enter_intent = None;
+            self.pending_enter_change = None;
         }
     }
 
     pub(crate) fn clear_session(&mut self) {
         self.input_subscription = None;
+        self.input_observer = None;
         self.active_session = None;
+        self.pending_enter_intent = None;
+        self.pending_enter_change = None;
     }
 
     pub(crate) fn active_session(&self) -> Option<&ActiveBlockSession> {
@@ -109,7 +134,12 @@ impl EditorInteractionState {
 
         if needs_new_input {
             self.input_subscription = None;
+            self.input_observer = None;
             let input = BlockInput::new(&block.kind, block.text.clone(), window, cx);
+            let input_entity = input.entity().clone();
+            let deferred_focus_entity = input_entity.clone();
+            let observer_input_entity = input_entity.clone();
+            let observer_view = view.clone();
             let subscription = window.subscribe(
                 input.entity(),
                 cx,
@@ -119,8 +149,24 @@ impl EditorInteractionState {
                     });
                 },
             );
+            let observer = window.observe(input.entity(), cx, move |_, window, cx| {
+                let _ = observer_view.update(cx, |this, cx| {
+                    this.handle_observed_input_state_change(&observer_input_entity, window, cx);
+                });
+            });
             self.active_session = Some(ActiveBlockSession::new(block_id, input));
             self.input_subscription = Some(subscription);
+            self.input_observer = Some(observer);
+            window.defer(cx, move |window, cx| {
+                let _ = input_entity.update(cx, |input, cx| {
+                    input.focus(window, cx);
+                });
+            });
+            window.on_next_frame(move |window, cx| {
+                let _ = deferred_focus_entity.update(cx, |input, cx| {
+                    input.focus(window, cx);
+                });
+            });
         }
 
         let desired_cursor = active_selection
@@ -138,6 +184,38 @@ impl EditorInteractionState {
 
     pub(crate) fn autosave_generation(&self) -> u64 {
         self.autosave_generation
+    }
+
+    pub(crate) fn set_pending_enter_intent(&mut self, block_id: u64, secondary: bool) {
+        self.pending_enter_intent = Some(PendingEnterIntent {
+            block_id,
+            secondary,
+        });
+    }
+
+    pub(crate) fn clear_pending_enter_intent(&mut self) {
+        self.pending_enter_intent = None;
+    }
+
+    pub(crate) fn set_pending_enter_change(
+        &mut self,
+        block_id: u64,
+        text: String,
+        cursor_offset: usize,
+    ) {
+        self.pending_enter_change = Some(PendingEnterChange {
+            block_id,
+            text,
+            cursor_offset,
+        });
+    }
+
+    pub(crate) fn take_pending_enter_change(&mut self) -> Option<PendingEnterChange> {
+        self.pending_enter_change.take()
+    }
+
+    pub(crate) fn clear_pending_enter_change(&mut self) {
+        self.pending_enter_change = None;
     }
 
     pub(crate) fn navigation_target_for_direction(

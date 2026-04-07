@@ -1,4 +1,32 @@
-use std::cmp;
+use std::{cmp, ops::Range};
+
+use super::document::BlockKind;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SemanticEnterTransform {
+    pub(crate) replacement: String,
+    pub(crate) cursor_offset: usize,
+}
+
+#[derive(Debug, Clone)]
+struct EditedText {
+    text: String,
+    cursor_offset: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ListLineInfo {
+    current_prefix_end: usize,
+    continuation_prefix: String,
+    is_empty: bool,
+}
+
+#[derive(Debug, Clone)]
+struct QuoteLineInfo {
+    current_prefix_end: usize,
+    continuation_prefix: String,
+    is_empty: bool,
+}
 
 pub(crate) fn count_document_words(text: &str) -> usize {
     let mut count = 0usize;
@@ -61,7 +89,9 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     }
 
     let list_markers = ["- ", "* ", "+ ", "- [ ] ", "- [x] ", "* [ ] ", "* [x] "];
-    if list_markers.iter().any(|marker| trimmed.starts_with(marker))
+    if list_markers
+        .iter()
+        .any(|marker| trimmed.starts_with(marker))
         || trimmed
             .split_once(". ")
             .map(|(n, _)| n.chars().all(|ch| ch.is_ascii_digit()))
@@ -90,7 +120,43 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     }
 }
 
-pub(crate) fn byte_offset_for_line_column(text: &str, target_line: usize, target_column: usize) -> usize {
+pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::Raw
+            | BlockKind::Paragraph
+            | BlockKind::Heading { .. }
+            | BlockKind::List
+            | BlockKind::Blockquote
+    )
+}
+
+pub(crate) fn semantic_enter_transform(
+    kind: &BlockKind,
+    text: &str,
+    selection: Option<Range<usize>>,
+    cursor_offset: usize,
+) -> Option<SemanticEnterTransform> {
+    if !supports_semantic_enter(kind) {
+        return None;
+    }
+
+    let edited = apply_selection(text, selection, cursor_offset);
+    match kind {
+        BlockKind::Raw | BlockKind::Paragraph | BlockKind::Heading { .. } => {
+            Some(split_block_transform(&edited.text, edited.cursor_offset))
+        }
+        BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
+        BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
+        _ => None,
+    }
+}
+
+pub(crate) fn byte_offset_for_line_column(
+    text: &str,
+    target_line: usize,
+    target_column: usize,
+) -> usize {
     let mut offset = 0usize;
 
     for (line_ix, segment) in text.split('\n').enumerate() {
@@ -112,6 +178,229 @@ fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
         Some((offset, _)) => offset,
         None => text.len(),
     }
+}
+
+fn split_block_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
+    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let before = &text[..cursor_offset];
+    let after = &text[cursor_offset..];
+    SemanticEnterTransform {
+        replacement: format!("{before}\n\n{after}"),
+        cursor_offset: before.len() + 2,
+    }
+}
+
+fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let (line_start, line_end) = line_bounds(text, cursor_offset);
+    let line = &text[line_start..line_end];
+    let info = parse_list_line(line)?;
+
+    if info.is_empty {
+        return Some(exit_structured_line(text, line_start, line_end));
+    }
+
+    let split_offset = cursor_offset.max(line_start + info.current_prefix_end);
+    let local_split = split_offset - line_start;
+    let current_line = &line[..local_split];
+    let moved_suffix = &line[local_split..];
+    let before = &text[..line_start];
+    let after = &text[line_end..];
+    let replacement = format!(
+        "{before}{current_line}\n{}{}{after}",
+        info.continuation_prefix, moved_suffix
+    );
+    let cursor_offset = before.len() + current_line.len() + 1 + info.continuation_prefix.len();
+
+    Some(SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    })
+}
+
+fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let (line_start, line_end) = line_bounds(text, cursor_offset);
+    let line = &text[line_start..line_end];
+    let info = parse_blockquote_line(line)?;
+
+    if info.is_empty {
+        return Some(exit_structured_line(text, line_start, line_end));
+    }
+
+    let split_offset = cursor_offset.max(line_start + info.current_prefix_end);
+    let local_split = split_offset - line_start;
+    let current_line = &line[..local_split];
+    let moved_suffix = &line[local_split..];
+    let before = &text[..line_start];
+    let after = &text[line_end..];
+    let replacement = format!(
+        "{before}{current_line}\n{}{}{after}",
+        info.continuation_prefix, moved_suffix
+    );
+    let cursor_offset = before.len() + current_line.len() + 1 + info.continuation_prefix.len();
+
+    Some(SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    })
+}
+
+fn exit_structured_line(text: &str, line_start: usize, line_end: usize) -> SemanticEnterTransform {
+    let before = trim_trailing_newlines(&text[..line_start]);
+    let after = trim_leading_newlines(&text[line_end..]);
+
+    let (replacement, cursor_offset) = match (before.is_empty(), after.is_empty()) {
+        (true, true) => (String::new(), 0),
+        (true, false) => (after.to_string(), 0),
+        (false, true) => (format!("{before}\n\n"), before.len() + 2),
+        (false, false) => (format!("{before}\n\n{after}"), before.len() + 2),
+    };
+
+    SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    }
+}
+
+fn apply_selection(
+    text: &str,
+    selection: Option<Range<usize>>,
+    cursor_offset: usize,
+) -> EditedText {
+    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let Some(selection) = selection.filter(|selection| !selection.is_empty()) else {
+        return EditedText {
+            text: text.to_string(),
+            cursor_offset,
+        };
+    };
+
+    let start = clamp_offset_to_boundary(text, selection.start);
+    let end = clamp_offset_to_boundary(text, selection.end.max(start));
+    let replacement = format!("{}{}", &text[..start], &text[end..]);
+
+    EditedText {
+        text: replacement,
+        cursor_offset: start,
+    }
+}
+
+fn line_bounds(text: &str, cursor_offset: usize) -> (usize, usize) {
+    let line_start = text[..cursor_offset]
+        .rfind('\n')
+        .map(|ix| ix + 1)
+        .unwrap_or(0);
+    let line_end = text[cursor_offset..]
+        .find('\n')
+        .map(|ix| cursor_offset + ix)
+        .unwrap_or(text.len());
+    (line_start, line_end)
+}
+
+fn parse_list_line(line: &str) -> Option<ListLineInfo> {
+    let indent_end = line
+        .bytes()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    let indent = &line[..indent_end];
+    let trimmed = &line[indent_end..];
+
+    for marker in [
+        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
+    ] {
+        if trimmed.starts_with(marker) {
+            let bullet = &marker[..1];
+            let current_prefix_end = indent_end + marker.len();
+            let continuation_prefix = format!("{indent}{bullet} [ ] ");
+            let is_empty = line[current_prefix_end..].trim().is_empty();
+            return Some(ListLineInfo {
+                current_prefix_end,
+                continuation_prefix,
+                is_empty,
+            });
+        }
+    }
+
+    for marker in ["- ", "* ", "+ "] {
+        if trimmed.starts_with(marker) {
+            let current_prefix_end = indent_end + marker.len();
+            let continuation_prefix = format!("{indent}{marker}");
+            let is_empty = line[current_prefix_end..].trim().is_empty();
+            return Some(ListLineInfo {
+                current_prefix_end,
+                continuation_prefix,
+                is_empty,
+            });
+        }
+    }
+
+    if let Some((number, _)) = trimmed.split_once(". ")
+        && !number.is_empty()
+        && number.chars().all(|ch| ch.is_ascii_digit())
+    {
+        let current_prefix_end = indent_end + number.len() + 2;
+        let next_number = number.parse::<usize>().unwrap_or(1).saturating_add(1);
+        let continuation_prefix = format!("{indent}{next_number}. ");
+        let is_empty = line[current_prefix_end..].trim().is_empty();
+        return Some(ListLineInfo {
+            current_prefix_end,
+            continuation_prefix,
+            is_empty,
+        });
+    }
+
+    None
+}
+
+fn parse_blockquote_line(line: &str) -> Option<QuoteLineInfo> {
+    let bytes = line.as_bytes();
+    let mut ix = 0usize;
+    while ix < bytes.len() && matches!(bytes[ix], b' ' | b'\t') {
+        ix += 1;
+    }
+
+    let mut saw_marker = false;
+    while ix < bytes.len() && bytes[ix] == b'>' {
+        saw_marker = true;
+        ix += 1;
+        while ix < bytes.len() && matches!(bytes[ix], b' ' | b'\t') {
+            ix += 1;
+        }
+    }
+
+    if !saw_marker {
+        return None;
+    }
+
+    let current_prefix_end = ix;
+    let mut continuation_prefix = line[..current_prefix_end].to_string();
+    if !continuation_prefix.ends_with(' ') {
+        continuation_prefix.push(' ');
+    }
+    let is_empty = line[current_prefix_end..].trim().is_empty();
+
+    Some(QuoteLineInfo {
+        current_prefix_end,
+        continuation_prefix,
+        is_empty,
+    })
+}
+
+fn clamp_offset_to_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn trim_leading_newlines(text: &str) -> &str {
+    text.trim_start_matches(['\r', '\n'])
+}
+
+fn trim_trailing_newlines(text: &str) -> &str {
+    text.trim_end_matches(['\r', '\n'])
 }
 
 fn is_cjk_character(ch: char) -> bool {
@@ -161,5 +450,77 @@ mod tests {
         assert_eq!(byte_offset_for_line_column("abc\ndef", 0, 2), 2);
         assert_eq!(byte_offset_for_line_column("abc\ndef", 1, 1), 5);
         assert_eq!(byte_offset_for_line_column("a\nworld", 1, 3), 5);
+    }
+
+    #[test]
+    fn splits_paragraph_on_semantic_enter() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Paragraph, "alpha beta", None, 5).unwrap();
+
+        assert_eq!(transform.replacement, "alpha\n\n beta");
+        assert_eq!(transform.cursor_offset, 7);
+    }
+
+    #[test]
+    fn splits_heading_into_following_paragraph() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Heading { depth: 1 }, "# Title", None, 3).unwrap();
+
+        assert_eq!(transform.replacement, "# T\n\nitle");
+        assert_eq!(transform.cursor_offset, 5);
+    }
+
+    #[test]
+    fn continues_list_item_and_moves_remainder() {
+        let transform = semantic_enter_transform(&BlockKind::List, "- item", None, 3).unwrap();
+
+        assert_eq!(transform.replacement, "- i\n- tem");
+        assert_eq!(transform.cursor_offset, 6);
+    }
+
+    #[test]
+    fn exits_empty_task_list_item() {
+        let transform =
+            semantic_enter_transform(&BlockKind::List, "- one\n- [ ] ", None, 11).unwrap();
+
+        assert_eq!(transform.replacement, "- one\n\n");
+        assert_eq!(transform.cursor_offset, 7);
+    }
+
+    #[test]
+    fn continues_blockquote_line() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Blockquote, "> quoted", None, 5).unwrap();
+
+        assert_eq!(transform.replacement, "> quo\n> ted");
+        assert_eq!(transform.cursor_offset, 8);
+    }
+
+    #[test]
+    fn exits_empty_blockquote_line() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Blockquote, "> keep\n> ", None, 9).unwrap();
+
+        assert_eq!(transform.replacement, "> keep\n\n");
+        assert_eq!(transform.cursor_offset, 8);
+    }
+
+    #[test]
+    fn semantic_enter_replaces_selection_before_splitting() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Paragraph, "alpha beta", Some(2..7), 7).unwrap();
+
+        assert_eq!(transform.replacement, "al\n\neta");
+        assert_eq!(transform.cursor_offset, 4);
+    }
+
+    #[test]
+    fn semantic_enter_only_targets_supported_body_blocks() {
+        assert!(supports_semantic_enter(&BlockKind::Paragraph));
+        assert!(supports_semantic_enter(&BlockKind::List));
+        assert!(!supports_semantic_enter(&BlockKind::Table));
+        assert!(!supports_semantic_enter(&BlockKind::CodeFence {
+            language: Some("rust".to_string()),
+        }));
     }
 }
