@@ -7,8 +7,10 @@ edition = "2024"
 anyhow = "1.0"
 gpui = "0.2.2"
 gpui-component = "0.5.1"
-markdown = "1.0.0"
 ropey = "1.6"
+tree-sitter = "0.25.10"
+tree-sitter-md = "0.5.3"
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+markdown = "1.0.0"

@@ -1445,6 +1445,43 @@ mod tests {
     }
 
     #[test]
+    fn undo_redo_restores_incremental_semantic_enter() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 0,
+            cursor_offset: Some(6),
+        });
+        controller.dispatch(EditCommand::SemanticEnter {
+            selection: None,
+            cursor_offset: 6,
+        });
+
+        let after_enter = controller.snapshot();
+        assert_eq!(after_enter.blocks.len(), 1);
+        assert_eq!(after_enter.blocks[0].text, "- item\n- ");
+
+        controller.dispatch(EditCommand::Undo);
+        let undone = controller.snapshot();
+        assert_eq!(undone.blocks.len(), 1);
+        assert_eq!(undone.blocks[0].text, "- item");
+
+        controller.dispatch(EditCommand::Redo);
+        let redone = controller.snapshot();
+        assert_eq!(redone.blocks.len(), 1);
+        assert_eq!(redone.blocks[0].text, "- item\n- ");
+        assert_eq!(redone.active_block_id, Some(redone.blocks[0].id));
+    }
+
+    #[test]
     fn semantic_enter_replaces_selection_before_splitting() {
         let mut controller = EditorController::new(
             DocumentSource::Text {

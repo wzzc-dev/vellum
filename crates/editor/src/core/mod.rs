@@ -1,5 +1,6 @@
 pub(crate) mod controller;
 pub(crate) mod document;
+pub(crate) mod syntax;
 pub(crate) mod text_ops;
 
 pub use controller::{
