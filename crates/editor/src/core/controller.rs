@@ -151,6 +151,7 @@ pub enum EditCommand {
         direction: isize,
         preferred_column: Option<usize>,
     },
+    BackspaceAtBlockStart,
     ExitEditMode,
     Undo,
     Redo,
@@ -504,6 +505,7 @@ impl EditorController {
                 direction,
                 preferred_column,
             } => self.focus_adjacent_block(direction, preferred_column),
+            EditCommand::BackspaceAtBlockStart => self.backspace_at_block_start(),
             EditCommand::ExitEditMode => self.exit_edit_mode(),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
@@ -764,6 +766,53 @@ impl EditorController {
         self.activate_block(next, cursor_offset)
     }
 
+    fn backspace_at_block_start(&mut self) -> EditorEffects {
+        let Some(current) = self.active_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if !self.selection.is_collapsed() || self.selection.cursor() != current.content_range.start {
+            return EditorEffects::default();
+        }
+        if !supports_empty_boundary_backspace_kind(&current.kind)
+            || !self.document.block_text(&current).is_empty()
+        {
+            return EditorEffects::default();
+        }
+
+        let Some(current_index) = self.document.block_index_by_id(current.id) else {
+            return EditorEffects::default();
+        };
+        if current_index == 0 {
+            return EditorEffects::default();
+        }
+
+        let Some(previous) = self.document.blocks().get(current_index - 1).cloned() else {
+            return EditorEffects::default();
+        };
+        if !supports_boundary_backspace_target_kind(&previous.kind) {
+            return EditorEffects::default();
+        }
+
+        let deletion_range = if current_index + 1 < self.document.blocks().len()
+            && !current.byte_range.is_empty()
+        {
+            current.byte_range.clone()
+        } else {
+            previous.content_range.end..previous.byte_range.end
+        };
+        if deletion_range.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let selection_after = SelectionState::collapsed(previous.content_range.end);
+        self.apply_edit(
+            deletion_range,
+            String::new(),
+            selection_after,
+            "Deleted empty block",
+        )
+    }
+
     fn exit_edit_mode(&mut self) -> EditorEffects {
         if self.active_block_id.is_none() {
             return EditorEffects::default();
@@ -933,6 +982,17 @@ fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize)
         text.lines().count().saturating_sub(1)
     };
     byte_offset_for_line_column(text, target_line, preferred_column)
+}
+
+fn supports_empty_boundary_backspace_kind(kind: &BlockKind) -> bool {
+    matches!(kind, BlockKind::Raw | BlockKind::Paragraph)
+}
+
+fn supports_boundary_backspace_target_kind(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::Raw | BlockKind::Paragraph | BlockKind::Heading { .. }
+    )
 }
 
 #[cfg(test)]
@@ -1211,6 +1271,117 @@ mod tests {
                 "source: {text:?}"
             );
             assert_eq!(snapshot.active_cursor_offset, Some(0), "source: {text:?}");
+        }
+    }
+
+    #[test]
+    fn backspace_at_start_of_trailing_empty_block_removes_separator() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 1,
+            cursor_offset: Some(0),
+        });
+        controller.dispatch(EditCommand::BackspaceAtBlockStart);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(controller.document.text(), "First");
+        assert_eq!(snapshot.blocks.len(), 1);
+        assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(snapshot.blocks[0].text, "First");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(5));
+    }
+
+    #[test]
+    fn backspace_at_start_of_intermediate_empty_block_restores_standard_separator() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First\n\n\n\nSecond".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 1,
+            cursor_offset: Some(0),
+        });
+        controller.dispatch(EditCommand::BackspaceAtBlockStart);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(controller.document.text(), "First\n\nSecond");
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(snapshot.blocks[0].text, "First");
+        assert_eq!(snapshot.blocks[1].kind, BlockKind::Paragraph);
+        assert_eq!(snapshot.blocks[1].text, "Second");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(5));
+    }
+
+    #[test]
+    fn backspace_at_start_of_empty_block_allows_previous_heading() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title\n\n\n\nSecond".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::ActivateBlock {
+            index: 1,
+            cursor_offset: Some(0),
+        });
+        controller.dispatch(EditCommand::BackspaceAtBlockStart);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(controller.document.text(), "# Title\n\nSecond");
+        assert_eq!(snapshot.blocks.len(), 2);
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            BlockKind::Heading { depth: 1 }
+        ));
+        assert_eq!(snapshot.blocks[0].text, "# Title");
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(7));
+    }
+
+    #[test]
+    fn backspace_at_start_of_empty_block_ignores_unsupported_previous_block() {
+        for text in ["- item\n\n\n\nSecond", "> quote\n\n\n\nSecond"] {
+            let mut controller = EditorController::new(
+                DocumentSource::Text {
+                    path: None,
+                    suggested_path: None,
+                    text: text.to_string(),
+                    modified_at: None,
+                },
+                SyncPolicy::default(),
+            );
+
+            controller.dispatch(EditCommand::ActivateBlock {
+                index: 1,
+                cursor_offset: Some(0),
+            });
+            let effects = controller.dispatch(EditCommand::BackspaceAtBlockStart);
+
+            assert!(!effects.changed, "source: {text:?}");
+            assert!(!effects.active_block_changed, "source: {text:?}");
+            assert_eq!(controller.document.text(), text, "source: {text:?}");
         }
     }
 

@@ -162,6 +162,80 @@ mod tests {
     }
 
     #[gpui::test]
+    fn bare_backspace_with_text_stays_within_same_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First", 0, Some(5));
+        let initial_active = active_block_id(&view, cx);
+
+        cx.simulate_keystrokes("backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.blocks.len(), 1);
+        assert_eq!(snapshot.blocks[0].text, "Firs");
+        assert_eq!(snapshot.active_block_id, initial_active);
+        assert_eq!(snapshot.active_cursor_offset, Some(4));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
+    fn bare_backspace_moves_from_trailing_empty_block_to_previous_block_end(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\n", 1, Some(0));
+
+        cx.simulate_keystrokes("backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(block_texts(&snapshot), vec!["First".to_string()]);
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(5));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
+    fn bare_backspace_moves_from_materialized_middle_empty_block_to_previous_block_end(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\n\n\nSecond", 1, Some(0));
+
+        cx.simulate_keystrokes("backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(
+            block_texts(&snapshot),
+            vec!["First".to_string(), "Second".to_string()]
+        );
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(5));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
+    fn deleting_block_to_empty_then_backspace_crosses_into_previous_block(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\nSecond", 1, Some(6));
+        let input = active_input(&view, cx).expect("active input");
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_value("", window, cx);
+        });
+        cx.run_until_parked();
+        assert!(active_input_has_focus(&view, cx));
+
+        cx.simulate_keystrokes("backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(block_texts(&snapshot), vec!["First".to_string()]);
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(5));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
     fn shift_enter_keeps_editing_inside_body_block(cx: &mut TestAppContext) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, "Alpha beta", 0, Some(5));

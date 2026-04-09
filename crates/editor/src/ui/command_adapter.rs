@@ -59,6 +59,10 @@ impl EditorCommandAdapter {
         }
     }
 
+    pub(crate) fn backspace_at_block_start() -> EditCommand {
+        EditCommand::BackspaceAtBlockStart
+    }
+
     pub(crate) fn stop_block_edit() -> EditCommand {
         EditCommand::ExitEditMode
     }

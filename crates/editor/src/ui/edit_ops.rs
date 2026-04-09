@@ -3,7 +3,7 @@ use std::ops::Range;
 use gpui::{ClickEvent, Context, Entity, KeyDownEvent, VisualContext, Window};
 use gpui_component::input::InputState;
 
-use crate::core::text_ops::supports_semantic_enter;
+use crate::{BlockKind, core::text_ops::supports_semantic_enter};
 
 use super::{
     command_adapter::EditorCommandAdapter, component_ui::InputEvent, view::MarkdownEditor,
@@ -29,6 +29,9 @@ impl MarkdownEditor {
                 debug_enter(format!("press-enter secondary={secondary}"));
                 self.interaction.clear_pending_enter_intent();
                 if self.flush_pending_enter_change(Some(*secondary), window, cx) {
+                    return;
+                }
+                if self.reconcile_active_input_after_enter(*secondary, window, cx) {
                     return;
                 }
             }
@@ -271,6 +274,56 @@ impl MarkdownEditor {
         true
     }
 
+    pub(super) fn handle_active_boundary_backspace_action(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(session) = self.interaction.active_session() else {
+            return false;
+        };
+        if !session.input.contains_focus(window, cx) {
+            return false;
+        }
+
+        let Some(current_block) = self.snapshot.block_by_id(session.block_id) else {
+            return false;
+        };
+        if !matches!(current_block.kind, BlockKind::Raw | BlockKind::Paragraph) {
+            return false;
+        }
+        let Some(current_index) = self.snapshot.block_index_by_id(session.block_id) else {
+            return false;
+        };
+        if current_index == 0 {
+            return false;
+        }
+        let previous_block = &self.snapshot.blocks[current_index - 1];
+        if !matches!(
+            previous_block.kind,
+            BlockKind::Raw | BlockKind::Paragraph | BlockKind::Heading { .. }
+        ) {
+            return false;
+        }
+
+        let (selection, cursor_offset) = session.input.selection_and_cursor(window, cx);
+        let (text, _) = session.input.text_and_cursor(cx);
+        if selection.is_some() || cursor_offset != 0 || !text.is_empty() {
+            return false;
+        }
+
+        let effects = self
+            .controller
+            .dispatch(EditorCommandAdapter::backspace_at_block_start());
+        if !effects.changed && !effects.active_block_changed {
+            return false;
+        }
+
+        self.apply_effects(window, cx, effects);
+        self.schedule_autosave(window, cx);
+        true
+    }
+
     pub(super) fn handle_active_semantic_enter_action(
         &mut self,
         secondary: bool,
@@ -458,6 +511,66 @@ impl MarkdownEditor {
 
         debug_enter(format!(
             "flush-enter-change applied changed={} active_block_changed={}",
+            effects.changed, effects.active_block_changed
+        ));
+        self.apply_effects(window, cx, effects);
+        self.schedule_autosave(window, cx);
+        true
+    }
+
+    fn reconcile_active_input_after_enter(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(session) = self.interaction.active_session().cloned() else {
+            debug_enter("reconcile-enter no active session");
+            return false;
+        };
+        if !session.input.contains_focus(window, cx) {
+            debug_enter("reconcile-enter ignored because active input is unfocused");
+            return false;
+        }
+
+        let Some(block) = self.snapshot.block_by_id(session.block_id) else {
+            debug_enter("reconcile-enter ignored because active block is missing");
+            return false;
+        };
+        let (text, cursor_offset) = session.input.text_and_cursor(cx);
+        if block.text == text {
+            debug_enter("reconcile-enter ignored because input already matches snapshot");
+            return false;
+        }
+
+        let effects = if !secondary {
+            debug_enter(format!(
+                "reconcile-enter semantic block_id={} cursor={cursor_offset}",
+                session.block_id
+            ));
+            self.semantic_enter_effects_from_input_change(session.block_id, &text)
+                .unwrap_or_else(|| {
+                    debug_enter("reconcile-enter semantic match failed, falling back to sync");
+                    self.controller
+                        .dispatch(EditorCommandAdapter::sync_active_text(text.clone(), cursor_offset))
+                })
+        } else {
+            debug_enter(format!(
+                "reconcile-enter plain-sync block_id={} cursor={cursor_offset}",
+                session.block_id
+            ));
+            self.controller
+                .dispatch(EditorCommandAdapter::sync_active_text(text, cursor_offset))
+        };
+
+        if !effects.changed && !effects.active_block_changed {
+            debug_enter("reconcile-enter produced no effects");
+            return false;
+        }
+
+        self.interaction.clear_pending_enter_change();
+        debug_enter(format!(
+            "reconcile-enter applied changed={} active_block_changed={}",
             effects.changed, effects.active_block_changed
         ));
         self.apply_effects(window, cx, effects);
