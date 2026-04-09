@@ -339,9 +339,48 @@ fn parse_blocks(source: &str) -> Vec<BlockProjection> {
         });
     }
 
+    materialize_inter_block_empty_blocks(&mut blocks, source);
     materialize_trailing_empty_block(&mut blocks, source);
 
     blocks
+}
+
+fn materialize_inter_block_empty_blocks(blocks: &mut Vec<BlockProjection>, source: &str) {
+    if blocks.len() < 2 {
+        return;
+    }
+
+    let mut materialized = Vec::with_capacity(blocks.len());
+    for (index, block) in blocks.iter().cloned().enumerate() {
+        materialized.push(block.clone());
+
+        let Some(next) = blocks.get(index + 1) else {
+            continue;
+        };
+        if block.kind == BlockKind::Raw || next.kind == BlockKind::Raw {
+            continue;
+        }
+
+        let Some(extra_separator) = inter_block_extra_separator_range(source, &block, next) else {
+            continue;
+        };
+
+        materialized
+            .last_mut()
+            .expect("current block should exist before materializing separator")
+            .byte_range
+            .end = extra_separator.start;
+        materialized.push(BlockProjection {
+            id: 0,
+            kind: BlockKind::Raw,
+            byte_range: extra_separator.clone(),
+            content_range: extra_separator.start..extra_separator.start,
+            cursor_anchor_policy: CursorAnchorPolicy::Clamp,
+            can_code_edit: false,
+        });
+    }
+
+    *blocks = materialized;
 }
 
 fn materialize_trailing_empty_block(blocks: &mut Vec<BlockProjection>, source: &str) {
@@ -374,6 +413,37 @@ fn materialize_trailing_empty_block(blocks: &mut Vec<BlockProjection>, source: &
         cursor_anchor_policy: CursorAnchorPolicy::Clamp,
         can_code_edit: false,
     });
+}
+
+fn inter_block_extra_separator_range(
+    source: &str,
+    previous: &BlockProjection,
+    next: &BlockProjection,
+) -> Option<Range<usize>> {
+    let separator_end = cmp::min(previous.byte_range.end, next.byte_range.start);
+    if previous.content_range.end >= separator_end {
+        return None;
+    }
+
+    let separator_range = previous.content_range.end..separator_end;
+    let separator_text = source_text(source, separator_range.clone());
+    if separator_text.is_empty()
+        || !separator_text
+            .trim_matches([' ', '\t', '\r', '\n'])
+            .is_empty()
+    {
+        return None;
+    }
+
+    let structural_len = structural_separator_len(
+        source_text(source, previous.content_range.clone()),
+        separator_text,
+    )?;
+    if structural_len >= separator_text.len() {
+        return None;
+    }
+
+    Some(separator_range.start + structural_len..separator_range.end)
 }
 
 fn assign_block_ids(
@@ -444,6 +514,26 @@ fn same_block_signature(
 
 fn source_text(source: &str, range: Range<usize>) -> &str {
     source.get(range).unwrap_or_default()
+}
+
+fn structural_separator_len(previous_text: &str, separator_text: &str) -> Option<usize> {
+    let mut required_newlines = 2usize.saturating_sub(trailing_newline_count(previous_text));
+    if required_newlines == 0 {
+        return Some(0);
+    }
+
+    let mut consumed = 0usize;
+    for byte in separator_text.bytes() {
+        consumed += 1;
+        if byte == b'\n' {
+            required_newlines -= 1;
+            if required_newlines == 0 {
+                return Some(consumed);
+            }
+        }
+    }
+
+    None
 }
 
 fn is_trailing_block_separator(previous_text: &str, trailing_text: &str) -> bool {
@@ -558,6 +648,33 @@ mod tests {
         let doc = DocumentBuffer::from_text("First\n\nSecond\n");
         assert_eq!(doc.block_text(&doc.blocks[0]), "First");
         assert_eq!(doc.block_trailing_text(&doc.blocks[0]), "\n\n");
+    }
+
+    #[test]
+    fn materializes_editable_inter_block_empty_block_after_extra_separator() {
+        let doc = DocumentBuffer::from_text("First\n\n\n\nSecond");
+
+        assert_eq!(doc.blocks.len(), 3);
+        assert_eq!(doc.blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(doc.blocks[0].byte_range, 0..7);
+        assert_eq!(doc.block_trailing_text(&doc.blocks[0]), "\n\n");
+        assert_eq!(doc.blocks[1].kind, BlockKind::Raw);
+        assert_eq!(doc.blocks[1].byte_range, 7..9);
+        assert_eq!(doc.blocks[1].content_range, 7..7);
+        assert_eq!(doc.block_text(&doc.blocks[1]), "");
+        assert_eq!(doc.block_span_text(&doc.blocks[1]), "\n\n");
+        assert_eq!(doc.block_trailing_text(&doc.blocks[1]), "\n\n");
+        assert_eq!(doc.blocks[2].kind, BlockKind::Paragraph);
+        assert_eq!(doc.block_text(&doc.blocks[2]), "Second");
+    }
+
+    #[test]
+    fn does_not_materialize_inter_block_empty_block_for_standard_separator() {
+        let doc = DocumentBuffer::from_text("- item\n\nNext");
+
+        assert_eq!(doc.blocks.len(), 2);
+        assert_eq!(doc.blocks[0].kind, BlockKind::List);
+        assert_eq!(doc.blocks[1].kind, BlockKind::Paragraph);
     }
 
     #[test]

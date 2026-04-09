@@ -141,6 +141,27 @@ mod tests {
     }
 
     #[gpui::test]
+    fn bare_enter_between_blocks_focuses_materialized_empty_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First\n\nSecond", 0, Some(5));
+
+        cx.simulate_keystrokes("enter");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(
+            block_texts(&snapshot),
+            vec![
+                "First".to_string(),
+                "".to_string(),
+                "Second".to_string()
+            ]
+        );
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
     fn shift_enter_keeps_editing_inside_body_block(cx: &mut TestAppContext) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, "Alpha beta", 0, Some(5));
@@ -213,6 +234,31 @@ mod tests {
             );
         });
         cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_input_event(&InputEvent::PressEnter { secondary: false }, window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(
+            block_texts(&snapshot),
+            vec!["First".to_string(), "".to_string()]
+        );
+        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
+        assert_eq!(snapshot.active_cursor_offset, Some(0));
+        assert!(active_input_has_focus(&view, cx));
+    }
+
+    #[gpui::test]
+    fn press_enter_recovers_when_pending_change_was_lost(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "First", 0, Some(5));
+        let input = active_input(&view, cx).expect("active input");
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.insert("\n", window, cx);
+        });
+        cx.update_window_entity(&view, |editor, window, cx| {
+            editor.interaction.clear_pending_enter_change();
             editor.handle_input_event(&InputEvent::PressEnter { secondary: false }, window, cx);
         });
         cx.run_until_parked();

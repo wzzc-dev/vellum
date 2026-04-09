@@ -1170,6 +1170,51 @@ mod tests {
     }
 
     #[test]
+    fn semantic_enter_before_following_block_focuses_materialized_empty_block() {
+        for (text, expected_next_kind, expected_next_text) in [
+            ("First\n\nSecond", BlockKind::Paragraph, "Second"),
+            ("First\n\n# Title", BlockKind::Heading { depth: 1 }, "# Title"),
+            ("First\n\n- item", BlockKind::List, "- item"),
+            ("First\n\n> quote", BlockKind::Blockquote, "> quote"),
+        ] {
+            let mut controller = EditorController::new(
+                DocumentSource::Text {
+                    path: None,
+                    suggested_path: None,
+                    text: text.to_string(),
+                    modified_at: None,
+                },
+                SyncPolicy::default(),
+            );
+
+            controller.dispatch(EditCommand::ActivateBlock {
+                index: 0,
+                cursor_offset: Some(5),
+            });
+            controller.dispatch(EditCommand::SemanticEnter {
+                selection: None,
+                cursor_offset: 5,
+            });
+
+            let snapshot = controller.snapshot();
+            assert_eq!(controller.document.text(), text.replacen("\n\n", "\n\n\n\n", 1));
+            assert_eq!(snapshot.blocks.len(), 3, "source: {text:?}");
+            assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph, "source: {text:?}");
+            assert_eq!(snapshot.blocks[0].text, "First", "source: {text:?}");
+            assert_eq!(snapshot.blocks[1].kind, BlockKind::Raw, "source: {text:?}");
+            assert_eq!(snapshot.blocks[1].text, "", "source: {text:?}");
+            assert_eq!(snapshot.blocks[2].kind, expected_next_kind, "source: {text:?}");
+            assert_eq!(snapshot.blocks[2].text, expected_next_text, "source: {text:?}");
+            assert_eq!(
+                snapshot.active_block_id,
+                Some(snapshot.blocks[1].id),
+                "source: {text:?}"
+            );
+            assert_eq!(snapshot.active_cursor_offset, Some(0), "source: {text:?}");
+        }
+    }
+
+    #[test]
     fn semantic_enter_continues_unordered_list_item() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
