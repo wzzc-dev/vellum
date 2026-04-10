@@ -1,36 +1,39 @@
 # Vellum
 
-Vellum 是一个基于 Rust 和 `gpui` 的桌面 Markdown 编辑器。
-## 当前功能
+[简体中文](./README.zh-CN.md)
 
-- 打开 Markdown 文件或文件夹
-- 块级预览与编辑切换
-- 自动保存
-- 工作区侧边栏
-- 监听文件外部变更、删除、重命名
-- 冲突提示与处理
-- 启动时恢复上次打开的文件
+Vellum is a desktop Markdown editor built with Rust and `gpui`.
 
-## 技术栈
+## Current Features
+
+- WYSIWYG
+- Open a Markdown file or folder
+- Switch between block-level preview and editing
+- Auto save
+- Workspace sidebar
+- Watch for external file changes, deletions, and renames
+- Conflict detection and handling
+- Restore the last opened file on startup
+
+## Tech Stack
 
 - [Rust](https://www.rust-lang.org/)
 - [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui)
 - [gpui-components](https://github.com/longbridge/gpui-component)
 
+## Project Structure
 
-## 项目结构
+- `crates/vellum`: app entry point, window layout, menus, and file operations
+- `crates/editor`: editor core, block parsing, interactions, auto save, and conflict handling
+- `crates/workspace`: workspace tree and file watching
 
-- `crates/vellum`：应用入口、窗口布局、菜单、文件操作
-- `crates/editor`：编辑器核心、块解析、交互、自动保存、冲突处理
-- `crates/workspace`：工作区树和文件监听
-
-## 运行
+## Run
 
 ```bash
 cargo run
 ```
 
-## 测试
+## Test
 
 ```bash
 cargo check
@@ -38,9 +41,9 @@ cargo test -p editor
 cargo test -p workspace
 ```
 
-## 说明
+## Notes
 
-- 侧边栏目前只显示 `.md`、`.markdown`、`.mdown`
-- `Enter` 会对段落、列表、引用等块执行语义化换行
-- 代码块保持普通多行编辑
-- 当前是单窗口、单文档模型
+- The sidebar currently shows only `.md`, `.markdown`, and `.mdown`
+- `Enter` performs semantic line breaks for paragraphs, lists, blockquotes, and similar blocks
+- Code blocks keep normal multi-line editing behavior
+- The current model is single-window and single-document
