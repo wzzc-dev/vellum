@@ -126,17 +126,13 @@ impl MarkdownEditor {
                 .child("Start writing...")
                 .into_any_element()
         } else {
-            div()
-                .text_size(px(presentation.font_size))
-                .line_height(px(presentation.line_height))
-                .child(render_markdown_preview(
-                    block.id,
-                    &block.kind,
-                    block.text,
-                    window,
-                    cx,
-                ))
-                .into_any_element()
+            render_markdown_preview(
+                &block.kind,
+                self.controller.preview_for_block_id(block.id),
+                &block.text,
+                window,
+                cx,
+            )
         };
 
         let content = div()

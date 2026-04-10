@@ -1,13 +1,13 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EntityInputHandler as _, Focusable, IntoElement,
-    ParentElement, StyleRefinement, Styled, Window, div, px, rems,
+    AnyElement, App, AppContext, Context, Entity, EntityInputHandler as _, Focusable, FontStyle,
+    FontWeight, IntoElement, ParentElement, StrikethroughStyle, Styled, StyledText, TextStyle,
+    UnderlineStyle, WhiteSpace, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme,
     input::{Input, InputState, Position},
-    text::{TextView, TextViewStyle},
 };
 
 pub(crate) use gpui_component::{
@@ -16,6 +16,9 @@ pub(crate) use gpui_component::{
 };
 
 use crate::core::document::BlockKind;
+use crate::core::syntax::{
+    InlineSegment, InlineStyle, PreviewBlock, PreviewListItem, PreviewListMarker,
+};
 
 use super::layout::{EditableSurfaceKind, block_presentation, position_for_byte_offset};
 
@@ -158,15 +161,15 @@ impl BlockInput {
 }
 
 pub(crate) fn render_markdown_preview<V>(
-    block_id: u64,
     kind: &BlockKind,
-    text: String,
+    preview: Option<&PreviewBlock>,
+    text: &str,
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    TextView::markdown(("preview", block_id), text, window, cx)
-        .style(markdown_preview_style(kind, cx))
-        .into_any_element()
+    preview
+        .map(|preview| render_preview_block(preview, window, cx))
+        .unwrap_or_else(|| render_plain_text_block(kind, text.to_string(), window, cx))
 }
 
 pub(crate) fn render_block_list(items: impl IntoIterator<Item = AnyElement>) -> AnyElement {
@@ -177,22 +180,327 @@ pub(crate) fn render_block_list(items: impl IntoIterator<Item = AnyElement>) -> 
     list.into_any_element()
 }
 
-fn markdown_preview_style<V>(kind: &BlockKind, cx: &Context<V>) -> TextViewStyle {
+fn render_preview_block<V>(
+    preview: &PreviewBlock,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    match preview {
+        PreviewBlock::Paragraph { content } => {
+            render_inline_block(&BlockKind::Paragraph, content, FontWeight::NORMAL, window, cx)
+        }
+        PreviewBlock::Heading { depth, content } => render_inline_block(
+            &BlockKind::Heading { depth: *depth },
+            content,
+            FontWeight::SEMIBOLD,
+            window,
+            cx,
+        ),
+        PreviewBlock::List { items } => render_list_preview(items, window, cx),
+        PreviewBlock::Blockquote { blocks } => render_blockquote_preview(blocks, window, cx),
+        PreviewBlock::Table { header, rows } => render_table_preview(header, rows, window, cx),
+        PreviewBlock::CodeFence { language, text } => {
+            render_code_preview(language.as_deref(), text, window, cx)
+        }
+        PreviewBlock::ThematicBreak => div()
+            .w_full()
+            .h(px(1.))
+            .bg(cx.theme().foreground.opacity(0.14))
+            .into_any_element(),
+        PreviewBlock::Html { text } => {
+            render_plain_text_block(&BlockKind::Html, text.clone(), window, cx)
+        }
+        PreviewBlock::Raw { text } => {
+            render_plain_text_block(&BlockKind::Raw, text.clone(), window, cx)
+        }
+        PreviewBlock::Unknown { text } => {
+            render_plain_text_block(&BlockKind::Unknown, text.clone(), window, cx)
+        }
+    }
+}
+
+fn render_plain_text_block<V>(
+    kind: &BlockKind,
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    render_inline_block(
+        kind,
+        &[InlineSegment {
+            text,
+            style: InlineStyle::default(),
+        }],
+        FontWeight::NORMAL,
+        window,
+        cx,
+    )
+}
+
+fn render_inline_block<V>(
+    kind: &BlockKind,
+    segments: &[InlineSegment],
+    base_weight: FontWeight,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
     let presentation = block_presentation(kind);
-    let code_presentation = block_presentation(&BlockKind::CodeFence { language: None });
-    TextViewStyle::default()
-        .paragraph_gap(rems(presentation.preview_paragraph_gap_rem))
-        .heading_font_size(|level, _| match level {
-            1..=6 => px(block_presentation(&BlockKind::Heading { depth: level }).font_size),
-            _ => px(block_presentation(&BlockKind::Paragraph).font_size),
-        })
-        .code_block(
-            StyleRefinement::default()
-                .bg(cx.theme().transparent)
-                .p_0()
-                .text_size(px(code_presentation.font_size))
-                .line_height(px(code_presentation.line_height)),
+    let mut line = div()
+        .w_full()
+        .min_h(px(presentation.line_height))
+        .text_size(px(presentation.font_size))
+        .line_height(px(presentation.line_height))
+        .text_color(cx.theme().foreground);
+    if base_weight != FontWeight::NORMAL {
+        line = line.font_weight(base_weight);
+    }
+
+    line.child(styled_text_for_segments(
+        segments,
+        preview_text_style(base_weight, window, cx),
+        cx,
+    ))
+    .into_any_element()
+}
+
+fn render_list_preview<V>(
+    items: &[PreviewListItem],
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let mut list = div().w_full().flex().flex_col().gap_2();
+    for item in items {
+        let marker = match &item.marker {
+            PreviewListMarker::Bullet => "•".to_string(),
+            PreviewListMarker::Ordered(marker) => marker.trim().to_string(),
+            PreviewListMarker::Task { checked } => {
+                if *checked {
+                    "[x]".to_string()
+                } else {
+                    "[ ]".to_string()
+                }
+            }
+        };
+
+        let mut blocks = div().flex_1().min_w(px(0.)).flex().flex_col().gap_1();
+        for block in &item.blocks {
+            blocks = blocks.child(render_preview_block(block, window, cx));
+        }
+
+        list = list.child(
+            div()
+                .w_full()
+                .flex()
+                .gap_3()
+                .child(
+                    div()
+                        .min_w(px(28.))
+                        .text_color(cx.theme().muted_foreground)
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(marker),
+                )
+                .child(blocks),
+        );
+    }
+    list.into_any_element()
+}
+
+fn render_blockquote_preview<V>(
+    blocks: &[PreviewBlock],
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let mut content = div().flex_1().min_w(px(0.)).flex().flex_col().gap_2();
+    for block in blocks {
+        content = content.child(render_preview_block(block, window, cx));
+    }
+
+    div()
+        .w_full()
+        .flex()
+        .gap_3()
+        .child(
+            div()
+                .w(px(3.))
+                .bg(cx.theme().foreground.opacity(0.18))
+                .rounded(px(999.)),
         )
+        .child(content)
+        .into_any_element()
+}
+
+fn render_table_preview<V>(
+    header: &[Vec<InlineSegment>],
+    rows: &[Vec<Vec<InlineSegment>>],
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let mut table = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(cx.theme().foreground.opacity(0.12))
+        .bg(cx.theme().foreground.opacity(0.03))
+        .p_2();
+
+    if !header.is_empty() {
+        table = table.child(render_table_row(header, true, window, cx));
+    }
+    for row in rows {
+        table = table.child(render_table_row(row, false, window, cx));
+    }
+
+    table.into_any_element()
+}
+
+fn render_table_row<V>(
+    cells: &[Vec<InlineSegment>],
+    is_header: bool,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let mut row = div().w_full().flex().gap_2();
+    for cell in cells {
+        row = row.child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .rounded(px(6.))
+                .bg(
+                    if is_header {
+                        cx.theme().foreground.opacity(0.06)
+                    } else {
+                        cx.theme().transparent
+                    },
+                )
+                .px_2()
+                .py_1()
+                .child(render_inline_block(
+                    &BlockKind::Paragraph,
+                    cell,
+                    if is_header {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    },
+                    window,
+                    cx,
+                )),
+        );
+    }
+    row.into_any_element()
+}
+
+fn render_code_preview<V>(
+    language: Option<&str>,
+    text: &str,
+    _window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let kind = BlockKind::CodeFence {
+        language: language.map(str::to_string),
+    };
+    let presentation = block_presentation(&kind);
+    let mut content = div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(cx.theme().foreground.opacity(0.12))
+        .bg(cx.theme().foreground.opacity(0.04))
+        .px_3()
+        .py_2()
+        .text_size(px(presentation.font_size))
+        .line_height(px(presentation.line_height))
+        .text_color(cx.theme().foreground)
+        .child(
+            div()
+                .w_full()
+                .text_color(cx.theme().foreground)
+                .child(text.to_string()),
+        );
+
+    if let Some(language) = language.filter(|language| !language.is_empty()) {
+        content = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().muted_foreground)
+                    .child(language.to_string()),
+            )
+            .child(content);
+    }
+
+    content.into_any_element()
+}
+
+fn preview_text_style<V>(base_weight: FontWeight, window: &Window, cx: &Context<V>) -> TextStyle {
+    let mut style = window.text_style().clone();
+    style.color = cx.theme().foreground;
+    style.font_weight = base_weight;
+    style.font_style = FontStyle::Normal;
+    style.background_color = None;
+    style.underline = None;
+    style.strikethrough = None;
+    style.white_space = WhiteSpace::Normal;
+    style
+}
+
+fn styled_text_for_segments<V>(
+    segments: &[InlineSegment],
+    base_style: TextStyle,
+    cx: &Context<V>,
+) -> StyledText {
+    let mut text = String::new();
+    let mut runs = Vec::new();
+
+    for segment in segments.iter().filter(|segment| !segment.text.is_empty()) {
+        let mut style = base_style.clone();
+        apply_inline_style(&mut style, &segment.style, cx);
+        text.push_str(&segment.text);
+        runs.push(style.to_run(segment.text.len()));
+    }
+
+    if runs.is_empty() {
+        StyledText::new(String::new())
+    } else {
+        StyledText::new(text).with_runs(runs)
+    }
+}
+
+fn apply_inline_style<V>(style: &mut TextStyle, inline: &InlineStyle, cx: &Context<V>) {
+    if inline.strong {
+        style.font_weight = FontWeight::BOLD;
+    }
+    if inline.emphasis {
+        style.font_style = FontStyle::Italic;
+    }
+    if inline.strikethrough {
+        style.strikethrough = Some(StrikethroughStyle {
+            thickness: px(1.),
+            color: Some(cx.theme().foreground.opacity(0.68)),
+        });
+    }
+    if inline.link {
+        style.underline = Some(UnderlineStyle {
+            thickness: px(1.),
+            color: Some(cx.theme().foreground.opacity(0.7)),
+            wavy: false,
+        });
+    }
+    if inline.code {
+        if !inline.strong {
+            style.font_weight = FontWeight::MEDIUM;
+        }
+        style.background_color = Some(cx.theme().foreground.opacity(0.08));
+    }
 }
 
 fn code_editor_language(kind: &BlockKind) -> String {

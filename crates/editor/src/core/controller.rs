@@ -9,6 +9,7 @@ use anyhow::{Context as _, Result};
 
 use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
+    syntax::PreviewBlock,
     text_ops::{
         adjust_block_markup, byte_offset_for_line_column, count_document_words,
         semantic_enter_transform,
@@ -374,6 +375,10 @@ impl EditorController {
 
     pub fn autosave_delay(&self) -> Duration {
         self.sync_policy.autosave_delay
+    }
+
+    pub(crate) fn preview_for_block_id(&self, block_id: u64) -> Option<&PreviewBlock> {
+        self.document.preview_for_block_id(block_id)
     }
 
     pub fn snapshot(&self) -> EditorSnapshot {

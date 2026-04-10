@@ -9,7 +9,8 @@ use std::{
 use ropey::Rope;
 
 use super::syntax::{
-    SyntaxState, input_edit_for_splice, looks_like_blockquote_block, looks_like_list_block,
+    PreviewBlock, SyntaxState, input_edit_for_splice, looks_like_blockquote_block,
+    looks_like_list_block,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +183,15 @@ impl DocumentBuffer {
         self.blocks.iter().find(|block| block.id == block_id)
     }
 
+    pub(crate) fn preview_for_block(&self, block: &BlockProjection) -> Option<&PreviewBlock> {
+        self.syntax.preview_for_content_range(&block.content_range)
+    }
+
+    pub(crate) fn preview_for_block_id(&self, block_id: u64) -> Option<&PreviewBlock> {
+        let block = self.block_by_id(block_id)?;
+        self.preview_for_block(block)
+    }
+
     pub fn block_index_at_offset(&self, offset: usize) -> usize {
         if self.blocks.is_empty() {
             return 0;
@@ -262,10 +272,10 @@ impl DocumentBuffer {
 
     fn rebuild_blocks(&mut self, previous_signatures: &[BlockSignature]) {
         self.parse_version = self.parse_version.wrapping_add(1);
-        let mut parsed = parse_blocks(&self.source, &self.syntax);
+        let mut parsed = parse_blocks(&self.source, &mut self.syntax);
         if !projection_invariants_hold(&parsed, &self.source) {
             self.syntax = SyntaxState::from_source(&self.source);
-            parsed = parse_blocks(&self.source, &self.syntax);
+            parsed = parse_blocks(&self.source, &mut self.syntax);
             debug_assert!(
                 projection_invariants_hold(&parsed, &self.source),
                 "full tree-sitter reparse should restore projection invariants"
@@ -298,7 +308,7 @@ impl DocumentBuffer {
     }
 }
 
-fn parse_blocks(source: &Rope, syntax: &SyntaxState) -> Vec<BlockProjection> {
+fn parse_blocks(source: &Rope, syntax: &mut SyntaxState) -> Vec<BlockProjection> {
     if source.len_bytes() == 0 {
         return vec![BlockProjection {
             id: 0,
