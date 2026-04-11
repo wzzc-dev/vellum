@@ -196,7 +196,7 @@ pub(crate) fn byte_offset_for_line_column(
 }
 
 pub(crate) fn line_column_for_byte_offset(text: &str, target_offset: usize) -> (usize, usize) {
-    let offset = clamp_offset_to_boundary(text, target_offset);
+    let offset = clamp_to_char_boundary(text, target_offset);
     let prefix = &text[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
     let column = prefix
@@ -207,6 +207,41 @@ pub(crate) fn line_column_for_byte_offset(text: &str, target_offset: usize) -> (
     (line, column)
 }
 
+pub(crate) fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+pub(crate) fn compute_document_diff(old: &str, new: &str) -> Option<(Range<usize>, String)> {
+    if old == new {
+        return None;
+    }
+
+    let mut prefix = common_prefix_len(old.as_bytes(), new.as_bytes());
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+
+    let old_remaining = &old.as_bytes()[prefix..];
+    let new_remaining = &new.as_bytes()[prefix..];
+    let mut suffix = common_suffix_len(old_remaining, new_remaining);
+    while suffix > 0 {
+        let old_start = old.len().saturating_sub(suffix);
+        let new_start = new.len().saturating_sub(suffix);
+        if old.is_char_boundary(old_start) && new.is_char_boundary(new_start) {
+            break;
+        }
+        suffix -= 1;
+    }
+
+    let old_end = old.len().saturating_sub(suffix);
+    let new_end = new.len().saturating_sub(suffix);
+    Some((prefix..old_end, new[prefix..new_end].to_string()))
+}
+
 fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
     match text.char_indices().nth(target_column) {
         Some((offset, _)) => offset,
@@ -215,7 +250,7 @@ fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
 }
 
 fn split_block_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
-    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
     let before = &text[..cursor_offset];
     let after = &text[cursor_offset..];
     SemanticEnterTransform {
@@ -225,7 +260,7 @@ fn split_block_transform(text: &str, cursor_offset: usize) -> SemanticEnterTrans
 }
 
 fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
-    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
     let (line_start, line_end) = line_bounds(text, cursor_offset);
     let line = &text[line_start..line_end];
     let info = parse_list_line(line)?;
@@ -253,7 +288,7 @@ fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnte
 }
 
 fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
-    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
     let (line_start, line_end) = line_bounds(text, cursor_offset);
     let line = &text[line_start..line_end];
     let info = parse_blockquote_line(line)?;
@@ -302,7 +337,7 @@ fn apply_selection(
     selection: Option<Range<usize>>,
     cursor_offset: usize,
 ) -> EditedText {
-    let cursor_offset = clamp_offset_to_boundary(text, cursor_offset);
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
     let Some(selection) = selection.filter(|selection| !selection.is_empty()) else {
         return EditedText {
             text: text.to_string(),
@@ -310,8 +345,8 @@ fn apply_selection(
         };
     };
 
-    let start = clamp_offset_to_boundary(text, selection.start);
-    let end = clamp_offset_to_boundary(text, selection.end.max(start));
+    let start = clamp_to_char_boundary(text, selection.start);
+    let end = clamp_to_char_boundary(text, selection.end.max(start));
     let replacement = format!("{}{}", &text[..start], &text[end..]);
 
     EditedText {
@@ -421,14 +456,6 @@ fn parse_blockquote_line(line: &str) -> Option<QuoteLineInfo> {
     })
 }
 
-fn clamp_offset_to_boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while offset > 0 && !text.is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
-}
-
 fn trim_leading_newlines(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n'])
 }
@@ -446,6 +473,21 @@ fn is_cjk_character(ch: char) -> bool {
             | 0x31F0..=0x31FF
             | 0xAC00..=0xD7AF
     )
+}
+
+fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .zip(right.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn common_suffix_len(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .rev()
+        .zip(right.iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count()
 }
 
 #[cfg(test)]
@@ -492,6 +534,14 @@ mod tests {
         assert_eq!(line_column_for_byte_offset("abc\ndef", 2), (0, 2));
         assert_eq!(line_column_for_byte_offset("abc\ndef", 4), (1, 0));
         assert_eq!(line_column_for_byte_offset("abc\ndef", 7), (1, 3));
+    }
+
+    #[test]
+    fn compute_document_diff_preserves_utf8_boundaries() {
+        let diff = compute_document_diff("A🙂中B", "A🙂文B").unwrap();
+
+        assert_eq!(diff.0, "A🙂".len().."A🙂中".len());
+        assert_eq!(diff.1, "文");
     }
 
     #[test]

@@ -59,7 +59,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.apply_markup("**", "**", "bold text", window, cx);
+        self.apply_markup("**", "**", window, cx);
     }
 
     pub(crate) fn on_italic_selection(
@@ -68,7 +68,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.apply_markup("*", "*", "italic text", window, cx);
+        self.apply_markup("*", "*", window, cx);
     }
 
     pub(crate) fn on_link_selection(
@@ -77,7 +77,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.apply_markup("[", "](https://)", "link text", window, cx);
+        self.apply_markup("[", "](https://)", window, cx);
     }
 
     pub(crate) fn on_promote_block(

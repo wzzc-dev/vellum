@@ -1,9 +1,7 @@
 use std::ops::Range;
 
 use super::{
-    document::{
-        BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel,
-    },
+    document::{BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel},
     syntax::InlineStyle,
 };
 
@@ -203,8 +201,8 @@ impl DisplayMap {
                 }
 
                 if source_offset <= span.source_range.end {
-                    let is_hidden_syntax =
-                        span.hidden || (span.visible_range.is_empty() && span.source_range.is_empty());
+                    let is_hidden_syntax = span.hidden
+                        || (span.visible_range.is_empty() && span.source_range.is_empty());
                     return HitTestResult {
                         source_offset,
                         visible_offset,
@@ -241,7 +239,8 @@ impl DisplayMap {
     pub fn source_selection_to_visible(&self, selection: &SelectionModel) -> SelectionModel {
         let (anchor_affinity, head_affinity) = source_selection_affinities(selection);
         SelectionModel {
-            anchor_byte: self.source_to_visible_with_affinity(selection.anchor_byte, anchor_affinity),
+            anchor_byte: self
+                .source_to_visible_with_affinity(selection.anchor_byte, anchor_affinity),
             head_byte: self.source_to_visible_with_affinity(selection.head_byte, head_affinity),
             preferred_column: selection.preferred_column,
             affinity: selection.affinity,
@@ -780,6 +779,7 @@ impl<'a> BlockBuilder<'a> {
             self.block.kind,
             BlockKind::Heading { .. } | BlockKind::Blockquote | BlockKind::List
         ) && cursor == source_range.end
+            && selection.affinity == SelectionAffinity::Upstream
     }
 }
 
@@ -1078,6 +1078,15 @@ mod tests {
     use super::*;
     use crate::core::document::DocumentBuffer;
 
+    fn revealed_boundary_selection(offset: usize) -> SelectionModel {
+        SelectionModel {
+            anchor_byte: offset,
+            head_byte: offset,
+            preferred_column: None,
+            affinity: SelectionAffinity::Upstream,
+        }
+    }
+
     #[test]
     fn heading_display_map_hides_prefix_until_selection_reaches_marker() {
         let doc = DocumentBuffer::from_text("# Heading");
@@ -1086,7 +1095,7 @@ mod tests {
 
         let revealed = DisplayMap::from_document(
             &doc,
-            Some(&SelectionModel::collapsed(1)),
+            Some(&revealed_boundary_selection(1)),
             HiddenSyntaxPolicy::SelectionAware,
         );
         assert_eq!(revealed.visible_text, "# Heading");
@@ -1216,12 +1225,14 @@ mod tests {
 
         let revealed = DisplayMap::from_document(
             &doc,
-            Some(&SelectionModel::collapsed(2)),
+            Some(&revealed_boundary_selection(2)),
             HiddenSyntaxPolicy::SelectionAware,
         );
         assert_eq!(revealed.visible_text, "- item");
         assert_eq!(
-            revealed.source_selection_to_visible(&SelectionModel::collapsed(2)).cursor(),
+            revealed
+                .source_selection_to_visible(&revealed_boundary_selection(2))
+                .cursor(),
             2
         );
     }
@@ -1234,12 +1245,14 @@ mod tests {
 
         let revealed = DisplayMap::from_document(
             &doc,
-            Some(&SelectionModel::collapsed(2)),
+            Some(&revealed_boundary_selection(2)),
             HiddenSyntaxPolicy::SelectionAware,
         );
         assert_eq!(revealed.visible_text, "> quote");
         assert_eq!(
-            revealed.source_selection_to_visible(&SelectionModel::collapsed(2)).cursor(),
+            revealed
+                .source_selection_to_visible(&revealed_boundary_selection(2))
+                .cursor(),
             2
         );
     }
@@ -1250,14 +1263,18 @@ mod tests {
         let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
 
         assert_eq!(map.visible_text, "docs and code");
-        assert!(map.blocks[0]
-            .spans
-            .iter()
-            .any(|span| span.hidden && span.source_text == "("));
-        assert!(map.blocks[0]
-            .spans
-            .iter()
-            .any(|span| span.hidden && span.source_text == "`"));
+        assert!(
+            map.blocks[0]
+                .spans
+                .iter()
+                .any(|span| span.hidden && span.source_text == "(")
+        );
+        assert!(
+            map.blocks[0]
+                .spans
+                .iter()
+                .any(|span| span.hidden && span.source_text == "`")
+        );
     }
 
     #[test]

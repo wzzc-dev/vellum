@@ -1,6 +1,8 @@
 mod commands;
 mod file_ops;
+mod input_bridge;
 mod layout;
+mod surface;
 mod view;
 
 pub use commands::bind_keys;

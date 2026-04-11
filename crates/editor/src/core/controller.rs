@@ -9,12 +9,11 @@ use anyhow::{Context as _, Result};
 
 use super::{
     display_map::DisplayMap,
-    document::{
-        BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionState, Transaction,
-    },
+    document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
     text_ops::{
-        adjust_block_markup, byte_offset_for_line_column, count_document_words,
-        line_column_for_byte_offset, semantic_enter_transform,
+        adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
+        compute_document_diff, count_document_words, line_column_for_byte_offset,
+        semantic_enter_transform,
     },
 };
 
@@ -110,8 +109,6 @@ pub struct EditorSnapshot {
     pub visible_caret_position: CaretPosition,
     pub display_map: DisplayMap,
     pub blocks: Vec<BlockSnapshot>,
-    pub active_block_id: Option<u64>,
-    pub active_cursor_offset: Option<usize>,
 }
 
 impl EditorSnapshot {
@@ -158,7 +155,6 @@ pub enum EditCommand {
     ToggleInlineMarkup {
         before: String,
         after: String,
-        placeholder: String,
     },
     Indent,
     Outdent,
@@ -168,34 +164,6 @@ pub enum EditCommand {
     },
     DeleteBackward,
     DeleteForward,
-    ActivateBlock {
-        index: usize,
-        cursor_offset: Option<usize>,
-    },
-    ReplaceActiveBlock {
-        text: String,
-        cursor_offset: usize,
-    },
-    WrapActiveSelection {
-        selection: Option<Range<usize>>,
-        cursor_offset: usize,
-        before: String,
-        after: String,
-        placeholder: String,
-    },
-    SemanticEnter {
-        selection: Option<Range<usize>>,
-        cursor_offset: usize,
-    },
-    AdjustActiveBlock {
-        deepen: bool,
-    },
-    FocusAdjacentBlock {
-        direction: isize,
-        preferred_column: Option<usize>,
-    },
-    BackspaceAtBlockStart,
-    ExitEditMode,
     Undo,
     Redo,
     ReloadConflict,
@@ -442,20 +410,6 @@ impl EditorController {
                 can_code_edit: block.can_code_edit,
             })
             .collect::<Vec<_>>();
-        let active_block = self.current_block();
-        let active_block_id = active_block.map(|block| block.id);
-        let active_cursor_offset = active_block.map(|block| {
-            selection
-                .cursor()
-                .saturating_sub(block.content_range.start)
-                .min(
-                    block
-                        .content_range
-                        .end
-                        .saturating_sub(block.content_range.start),
-                )
-        });
-
         EditorSnapshot {
             path: self.sync.path.clone(),
             suggested_path: self.sync.suggested_path.clone(),
@@ -482,8 +436,6 @@ impl EditorController {
             },
             display_map,
             blocks,
-            active_block_id,
-            active_cursor_offset,
         }
     }
 
@@ -562,11 +514,9 @@ impl EditorController {
                 self.replace_selection_with_text(text, None, "Edited document")
             }
             EditCommand::InsertBreak { plain } => self.insert_break(plain),
-            EditCommand::ToggleInlineMarkup {
-                before,
-                after,
-                placeholder,
-            } => self.toggle_inline_markup(before, after, placeholder),
+            EditCommand::ToggleInlineMarkup { before, after } => {
+                self.toggle_inline_markup(before, after)
+            }
             EditCommand::Indent => self.adjust_current_block(true),
             EditCommand::Outdent => self.adjust_current_block(false),
             EditCommand::MoveCaret {
@@ -575,32 +525,6 @@ impl EditorController {
             } => self.move_caret_to_adjacent_block(direction, preferred_column),
             EditCommand::DeleteBackward => self.delete_backward(),
             EditCommand::DeleteForward => self.delete_forward(),
-            EditCommand::ActivateBlock {
-                index,
-                cursor_offset,
-            } => self.activate_block(index, cursor_offset),
-            EditCommand::ReplaceActiveBlock {
-                text,
-                cursor_offset,
-            } => self.replace_active_block(text, cursor_offset),
-            EditCommand::WrapActiveSelection {
-                selection,
-                cursor_offset,
-                before,
-                after,
-                placeholder,
-            } => self.wrap_active_selection(selection, cursor_offset, before, after, placeholder),
-            EditCommand::SemanticEnter {
-                selection,
-                cursor_offset,
-            } => self.semantic_enter_active_block(selection, cursor_offset),
-            EditCommand::AdjustActiveBlock { deepen } => self.adjust_current_block(deepen),
-            EditCommand::FocusAdjacentBlock {
-                direction,
-                preferred_column,
-            } => self.move_caret_to_adjacent_block(direction, preferred_column),
-            EditCommand::BackspaceAtBlockStart => self.delete_backward(),
-            EditCommand::ExitEditMode => EditorEffects::default(),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
             EditCommand::ReloadConflict => self.reload_conflict_from_disk(),
@@ -742,108 +666,6 @@ impl EditorController {
         }
     }
 
-    fn activate_block(&mut self, index: usize, cursor_offset: Option<usize>) -> EditorEffects {
-        let Some(block) = self.document.blocks().get(index).cloned() else {
-            return EditorEffects::default();
-        };
-        let text = self.document.block_text(&block);
-        let cursor_offset = cursor_offset
-            .map(|offset| cmp::min(offset, text.len()))
-            .unwrap_or_else(|| activation_cursor_offset(&text));
-        let cursor = block.content_range.start + cursor_offset;
-        let mut selection = SelectionState::collapsed(cursor);
-        selection.preferred_column =
-            Some(line_column_for_byte_offset(&self.document.text(), cursor).1);
-        self.update_selection(selection)
-    }
-
-    fn replace_active_block(&mut self, text: String, cursor_offset: usize) -> EditorEffects {
-        let Some(block) = self.current_block().cloned() else {
-            return EditorEffects::default();
-        };
-        let cursor_offset = cmp::min(cursor_offset, text.len());
-        let trailing = self.document.block_trailing_text(&block);
-        let replacement = format!("{text}{trailing}");
-        let selection_after = SelectionState::collapsed(block.content_range.start + cursor_offset);
-        self.apply_edit(
-            block.byte_range,
-            replacement,
-            selection_after,
-            "Edited block",
-        )
-    }
-
-    fn wrap_active_selection(
-        &mut self,
-        selection: Option<Range<usize>>,
-        cursor_offset: usize,
-        before: String,
-        after: String,
-        placeholder: String,
-    ) -> EditorEffects {
-        let Some(block) = self.current_block().cloned() else {
-            return EditorEffects::default();
-        };
-        let block_text = self.document.block_text(&block);
-        let local_range = selection
-            .filter(|range| !range.is_empty())
-            .unwrap_or_else(|| {
-                let clipped = cmp::min(cursor_offset, block_text.len());
-                clipped..clipped
-            });
-        let selected_text = block_text
-            .get(local_range.clone())
-            .unwrap_or_default()
-            .to_string();
-        let inner_text = if local_range.is_empty() {
-            placeholder
-        } else {
-            selected_text
-        };
-        let insertion = format!("{before}{inner_text}{after}");
-        let global_range = block.content_range.start + local_range.start
-            ..block.content_range.start + local_range.end;
-        let selection_after = SelectionState {
-            anchor_byte: global_range.start + before.len(),
-            head_byte: global_range.start + before.len() + inner_text.len(),
-            preferred_column: None,
-            affinity: SelectionAffinity::Downstream,
-        };
-        self.apply_edit(
-            global_range,
-            insertion,
-            selection_after,
-            "Updated formatting",
-        )
-    }
-
-    fn semantic_enter_active_block(
-        &mut self,
-        selection: Option<Range<usize>>,
-        cursor_offset: usize,
-    ) -> EditorEffects {
-        let Some(block) = self.current_block().cloned() else {
-            return EditorEffects::default();
-        };
-        let block_text = self.document.block_text(&block);
-        let Some(transform) =
-            semantic_enter_transform(&block.kind, &block_text, selection, cursor_offset)
-        else {
-            return EditorEffects::default();
-        };
-        let trailing = self.document.block_trailing_text(&block);
-        let replacement = format!("{}{}", transform.replacement, trailing);
-        let selection_after =
-            SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
-
-        self.apply_edit(
-            block.byte_range,
-            replacement,
-            selection_after,
-            "Updated block structure",
-        )
-    }
-
     fn insert_break(&mut self, plain: bool) -> EditorEffects {
         if plain {
             let start = self.selection.range().start;
@@ -909,27 +731,24 @@ impl EditorController {
         )
     }
 
-    fn toggle_inline_markup(
-        &mut self,
-        before: String,
-        after: String,
-        placeholder: String,
-    ) -> EditorEffects {
+    fn toggle_inline_markup(&mut self, before: String, after: String) -> EditorEffects {
         let range = self.selection.range();
         let selected_text = self.document.text_for_range(range.clone());
-        let inner_text = if selected_text.is_empty() {
-            placeholder
+        let (replacement, cursor) = if selected_text.is_empty() {
+            let replacement = format!("{before}{after}");
+            let cursor = range.start + before.len();
+            (replacement, cursor)
         } else {
-            selected_text
+            let replacement = format!("{before}{selected_text}{after}");
+            let cursor = range.start + replacement.len();
+            (replacement, cursor)
         };
-        let replacement = format!("{before}{inner_text}{after}");
-        let selection_after = SelectionState {
-            anchor_byte: range.start + before.len(),
-            head_byte: range.start + before.len() + inner_text.len(),
-            preferred_column: None,
-            affinity: SelectionAffinity::Downstream,
-        };
-        self.apply_edit(range, replacement, selection_after, "Updated formatting")
+        self.apply_edit(
+            range,
+            replacement,
+            SelectionState::collapsed(cursor),
+            "Updated formatting",
+        )
     }
 
     fn adjust_current_block(&mut self, deepen: bool) -> EditorEffects {
@@ -1257,10 +1076,6 @@ fn file_modified_at(path: &Path) -> Option<SystemTime> {
         .and_then(|meta| meta.modified().ok())
 }
 
-fn activation_cursor_offset(text: &str) -> usize {
-    text.trim_end_matches(['\r', '\n']).len()
-}
-
 fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize) -> usize {
     let target_line = if direction >= 0 {
         0
@@ -1281,48 +1096,6 @@ fn supports_boundary_backspace_target_kind(kind: &BlockKind) -> bool {
     )
 }
 
-fn compute_document_diff(old: &str, new: &str) -> Option<(Range<usize>, String)> {
-    if old == new {
-        return None;
-    }
-
-    let mut prefix = common_prefix_len(old.as_bytes(), new.as_bytes());
-    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
-        prefix -= 1;
-    }
-
-    let old_remaining = &old.as_bytes()[prefix..];
-    let new_remaining = &new.as_bytes()[prefix..];
-    let mut suffix = common_suffix_len(old_remaining, new_remaining);
-    while suffix > 0 {
-        let old_start = old.len().saturating_sub(suffix);
-        let new_start = new.len().saturating_sub(suffix);
-        if old.is_char_boundary(old_start) && new.is_char_boundary(new_start) {
-            break;
-        }
-        suffix -= 1;
-    }
-
-    let old_end = old.len().saturating_sub(suffix);
-    let new_end = new.len().saturating_sub(suffix);
-    Some((prefix..old_end, new[prefix..new_end].to_string()))
-}
-
-fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
-    left.iter()
-        .zip(right.iter())
-        .take_while(|(left, right)| left == right)
-        .count()
-}
-
-fn common_suffix_len(left: &[u8], right: &[u8]) -> usize {
-    left.iter()
-        .rev()
-        .zip(right.iter().rev())
-        .take_while(|(left, right)| left == right)
-        .count()
-}
-
 fn clamp_selection_to_text(text: &str, selection: SelectionState) -> SelectionState {
     let anchor = clamp_to_char_boundary(text, selection.anchor_byte);
     let head = clamp_to_char_boundary(text, selection.head_byte);
@@ -1332,14 +1105,6 @@ fn clamp_selection_to_text(text: &str, selection: SelectionState) -> SelectionSt
         preferred_column: selection.preferred_column,
         affinity: selection.affinity,
     }
-}
-
-fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while offset > 0 && !text.is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
 }
 
 fn previous_char_boundary(text: &str, offset: usize) -> usize {
@@ -1509,19 +1274,49 @@ mod tests {
                 anchor_byte: 0,
                 head_byte: 5,
                 preferred_column: None,
-                affinity: SelectionAffinity::Downstream,
+                affinity: crate::SelectionAffinity::Downstream,
             },
         });
 
         controller.dispatch(EditCommand::ToggleInlineMarkup {
             before: "**".to_string(),
             after: "**".to_string(),
-            placeholder: "bold text".to_string(),
         });
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "**hello**");
-        assert_eq!(snapshot.selection.range(), 2..7);
+        assert_eq!(snapshot.selection.cursor(), 9);
+        assert!(snapshot.selection.is_collapsed());
+        assert_eq!(snapshot.visible_selection.cursor(), 5);
+        assert!(snapshot.visible_selection.is_collapsed());
+    }
+
+    #[test]
+    fn toggle_inline_markup_inserts_paired_markup_for_collapsed_selection() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "**".to_string(),
+            after: "**".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "hello****");
+        assert_eq!(snapshot.selection.cursor(), 7);
+        assert!(snapshot.selection.is_collapsed());
+        assert_eq!(snapshot.visible_selection.cursor(), 5);
+        assert!(snapshot.visible_selection.is_collapsed());
     }
 
     #[test]
