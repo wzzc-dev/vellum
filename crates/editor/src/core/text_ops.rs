@@ -113,6 +113,28 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
         return Some(updated);
     }
 
+    if trimmed.starts_with('>') {
+        let updated = text
+            .lines()
+            .map(|line| {
+                let line_trimmed = line.trim_start();
+                let line_indent = &line[..line.len().saturating_sub(line_trimmed.len())];
+
+                if deepen {
+                    format!("{line_indent}> {line_trimmed}")
+                } else {
+                    let stripped = line_trimmed
+                        .strip_prefix("> ")
+                        .or_else(|| line_trimmed.strip_prefix('>'))
+                        .unwrap_or(line_trimmed);
+                    format!("{line_indent}{stripped}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Some(updated);
+    }
+
     if deepen {
         Some(format!("# {text}"))
     } else {
@@ -171,6 +193,18 @@ pub(crate) fn byte_offset_for_line_column(
     }
 
     text.len()
+}
+
+pub(crate) fn line_column_for_byte_offset(text: &str, target_offset: usize) -> (usize, usize) {
+    let offset = clamp_offset_to_boundary(text, target_offset);
+    let prefix = &text[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
+    let column = prefix
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.chars().count())
+        .unwrap_or_else(|| prefix.chars().count());
+
+    (line, column)
 }
 
 fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
@@ -453,6 +487,14 @@ mod tests {
     }
 
     #[test]
+    fn maps_utf8_offset_back_to_line_and_column() {
+        assert_eq!(line_column_for_byte_offset("abc\ndef", 0), (0, 0));
+        assert_eq!(line_column_for_byte_offset("abc\ndef", 2), (0, 2));
+        assert_eq!(line_column_for_byte_offset("abc\ndef", 4), (1, 0));
+        assert_eq!(line_column_for_byte_offset("abc\ndef", 7), (1, 3));
+    }
+
+    #[test]
     fn splits_paragraph_on_semantic_enter() {
         let transform =
             semantic_enter_transform(&BlockKind::Paragraph, "alpha beta", None, 5).unwrap();
@@ -522,5 +564,17 @@ mod tests {
         assert!(!supports_semantic_enter(&BlockKind::CodeFence {
             language: Some("rust".to_string()),
         }));
+    }
+
+    #[test]
+    fn adjusts_blockquote_markup() {
+        assert_eq!(
+            adjust_block_markup("> Quote", false),
+            Some("Quote".to_string())
+        );
+        assert_eq!(
+            adjust_block_markup("> Quote", true),
+            Some("> > Quote".to_string())
+        );
     }
 }

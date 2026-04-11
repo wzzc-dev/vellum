@@ -44,19 +44,37 @@ pub(crate) struct PreviewListItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PreviewBlock {
-    Paragraph { content: Vec<InlineSegment> },
-    Heading { depth: u8, content: Vec<InlineSegment> },
-    List { items: Vec<PreviewListItem> },
-    Blockquote { blocks: Vec<PreviewBlock> },
+    Paragraph {
+        content: Vec<InlineSegment>,
+    },
+    Heading {
+        depth: u8,
+        content: Vec<InlineSegment>,
+    },
+    List {
+        items: Vec<PreviewListItem>,
+    },
+    Blockquote {
+        blocks: Vec<PreviewBlock>,
+    },
     Table {
         header: Vec<Vec<InlineSegment>>,
         rows: Vec<Vec<Vec<InlineSegment>>>,
     },
-    CodeFence { language: Option<String>, text: String },
+    CodeFence {
+        language: Option<String>,
+        text: String,
+    },
     ThematicBreak,
-    Html { text: String },
-    Raw { text: String },
-    Unknown { text: String },
+    Html {
+        text: String,
+    },
+    Raw {
+        text: String,
+    },
+    Unknown {
+        text: String,
+    },
 }
 
 struct MarkdownParser {
@@ -150,9 +168,9 @@ impl SyntaxState {
         seeds
     }
 
+    #[cfg(test)]
     pub(crate) fn preview_for_content_range(&self, range: &Range<usize>) -> Option<&PreviewBlock> {
-        self.preview_by_content_range
-            .get(&(range.start, range.end))
+        self.preview_by_content_range.get(&(range.start, range.end))
     }
 }
 
@@ -256,12 +274,13 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
         ),
         "thematic_break" => (BlockKind::ThematicBreak, CursorAnchorPolicy::Clamp, false),
         "html_block" => (BlockKind::Html, CursorAnchorPolicy::Clamp, false),
-        "minus_metadata" | "plus_metadata" => {
-            (BlockKind::Raw, CursorAnchorPolicy::Clamp, false)
-        }
+        "minus_metadata" | "plus_metadata" => (BlockKind::Raw, CursorAnchorPolicy::Clamp, false),
         "link_reference_definition" => (BlockKind::Unknown, CursorAnchorPolicy::Clamp, false),
-        _ => recover_block_shape(source, start_byte, node.end_byte())
-            .unwrap_or((BlockKind::Unknown, CursorAnchorPolicy::Clamp, false)),
+        _ => recover_block_shape(source, start_byte, node.end_byte()).unwrap_or((
+            BlockKind::Unknown,
+            CursorAnchorPolicy::Clamp,
+            false,
+        )),
     };
 
     Some(BlockSeed {
@@ -302,16 +321,28 @@ fn preview_from_node(node: Node<'_>, tree: &MarkdownTree, source: &Rope) -> Opti
         },
         "thematic_break" => PreviewBlock::ThematicBreak,
         "html_block" => PreviewBlock::Html {
-            text: source_text(source, node.start_byte()..content_end_for_node(source, node)),
+            text: source_text(
+                source,
+                node.start_byte()..content_end_for_node(source, node),
+            ),
         },
         "minus_metadata" | "plus_metadata" => PreviewBlock::Raw {
-            text: source_text(source, node.start_byte()..content_end_for_node(source, node)),
+            text: source_text(
+                source,
+                node.start_byte()..content_end_for_node(source, node),
+            ),
         },
         "link_reference_definition" => PreviewBlock::Unknown {
-            text: source_text(source, node.start_byte()..content_end_for_node(source, node)),
+            text: source_text(
+                source,
+                node.start_byte()..content_end_for_node(source, node),
+            ),
         },
         _ => PreviewBlock::Unknown {
-            text: source_text(source, node.start_byte()..content_end_for_node(source, node)),
+            text: source_text(
+                source,
+                node.start_byte()..content_end_for_node(source, node),
+            ),
         },
     };
 
@@ -376,11 +407,7 @@ fn is_structural_child_kind(kind: &str) -> bool {
     )
 }
 
-fn preview_list_items(
-    node: Node<'_>,
-    _tree: &MarkdownTree,
-    source: &Rope,
-) -> Vec<PreviewListItem> {
+fn preview_list_items(node: Node<'_>, _tree: &MarkdownTree, source: &Rope) -> Vec<PreviewListItem> {
     let mut items = Vec::new();
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -427,10 +454,13 @@ fn preview_list_marker(node: Node<'_>, source: &Rope) -> PreviewListMarker {
 }
 
 fn list_item_body_text(node: Node<'_>, source: &Rope) -> String {
-    let mut lines = source_text(source, node.start_byte()..content_end_for_node(source, node))
-        .lines()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    let mut lines = source_text(
+        source,
+        node.start_byte()..content_end_for_node(source, node),
+    )
+    .lines()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
     if lines.is_empty() {
         return String::new();
     }
@@ -455,7 +485,10 @@ fn list_item_body_text(node: Node<'_>, source: &Rope) -> String {
 }
 
 fn strip_ordered_list_marker(text: &str) -> Option<&str> {
-    let digit_len = text.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+    let digit_len = text
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
     if digit_len == 0 {
         return None;
     }
@@ -530,7 +563,9 @@ fn inline_segments_from_heading(
     source: &Rope,
 ) -> Vec<InlineSegment> {
     node.child_by_field_name("heading_content")
-        .map(|inline| parse_inline_segments(&source_text(source, inline.start_byte()..inline.end_byte())))
+        .map(|inline| {
+            parse_inline_segments(&source_text(source, inline.start_byte()..inline.end_byte()))
+        })
         .unwrap_or_default()
 }
 
@@ -555,11 +590,7 @@ fn parse_inline_segments(text: &str) -> Vec<InlineSegment> {
     segments
 }
 
-fn parse_inline_segments_into(
-    text: &str,
-    style: &InlineStyle,
-    segments: &mut Vec<InlineSegment>,
-) {
+fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Vec<InlineSegment>) {
     let mut offset = 0usize;
     while offset < text.len() {
         let rest = &text[offset..];
@@ -672,7 +703,8 @@ fn push_inline_text(segments: &mut Vec<InlineSegment>, text: String, style: &Inl
 
 fn find_child_by_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
     let mut cursor = node.walk();
-    node.named_children(&mut cursor).find(|child| child.kind() == kind)
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == kind)
 }
 
 fn fenced_code_text(node: Node<'_>, source: &Rope) -> String {
@@ -686,7 +718,10 @@ fn fenced_code_text(node: Node<'_>, source: &Rope) -> String {
 }
 
 fn indented_code_text(node: Node<'_>, source: &Rope) -> String {
-    let text = source_text(source, node.start_byte()..content_end_for_node(source, node));
+    let text = source_text(
+        source,
+        node.start_byte()..content_end_for_node(source, node),
+    );
     text.lines()
         .map(|line| {
             line.strip_prefix("    ")
@@ -765,7 +800,11 @@ fn recover_block_shape(
 ) -> Option<(BlockKind, CursorAnchorPolicy, bool)> {
     let text = source_text(source, start..end);
     if let Some(depth) = atx_heading_depth_from_text(&text) {
-        return Some((BlockKind::Heading { depth }, CursorAnchorPolicy::Clamp, false));
+        return Some((
+            BlockKind::Heading { depth },
+            CursorAnchorPolicy::Clamp,
+            false,
+        ));
     }
 
     if looks_like_list_block(&text) {
@@ -819,7 +858,10 @@ fn is_list_item_line(line: &str) -> bool {
         return rest.is_empty() || matches!(rest.chars().next(), Some(' ' | '\t'));
     }
 
-    let digit_len = line.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+    let digit_len = line
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
     if digit_len == 0 {
         return false;
     }
@@ -958,7 +1000,11 @@ mod tests {
         let mut syntax = SyntaxState::from_source(&source);
         let seeds = syntax.block_seeds(&source);
 
-        assert!(seeds.iter().any(|seed| matches!(seed.kind, BlockKind::Heading { depth: 1 })));
+        assert!(
+            seeds
+                .iter()
+                .any(|seed| matches!(seed.kind, BlockKind::Heading { depth: 1 }))
+        );
         assert!(seeds.iter().any(|seed| seed.kind == BlockKind::List));
         assert!(seeds.iter().any(|seed| seed.kind == BlockKind::Blockquote));
         assert!(seeds.iter().any(|seed| seed.kind == BlockKind::Table));

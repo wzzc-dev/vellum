@@ -8,9 +8,11 @@ use std::{
 
 use ropey::Rope;
 
-use super::syntax::{
-    PreviewBlock, SyntaxState, input_edit_for_splice, looks_like_blockquote_block,
-    looks_like_list_block,
+use super::{
+    display_map::{DisplayMap, HiddenSyntaxPolicy},
+    syntax::{
+        SyntaxState, input_edit_for_splice, looks_like_blockquote_block, looks_like_list_block,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,34 +46,44 @@ pub struct BlockProjection {
     pub can_code_edit: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectionState {
-    pub anchor: usize,
-    pub head: usize,
-    pub preferred_column: Option<usize>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionAffinity {
+    Upstream,
+    Downstream,
 }
 
-impl SelectionState {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionModel {
+    pub anchor_byte: usize,
+    pub head_byte: usize,
+    pub preferred_column: Option<usize>,
+    pub affinity: SelectionAffinity,
+}
+
+impl SelectionModel {
     pub fn collapsed(offset: usize) -> Self {
         Self {
-            anchor: offset,
-            head: offset,
+            anchor_byte: offset,
+            head_byte: offset,
             preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
         }
     }
 
     pub fn range(&self) -> Range<usize> {
-        cmp::min(self.anchor, self.head)..cmp::max(self.anchor, self.head)
+        cmp::min(self.anchor_byte, self.head_byte)..cmp::max(self.anchor_byte, self.head_byte)
     }
 
     pub fn cursor(&self) -> usize {
-        self.head
+        self.head_byte
     }
 
     pub fn is_collapsed(&self) -> bool {
-        self.anchor == self.head
+        self.anchor_byte == self.head_byte
     }
 }
+
+pub type SelectionState = SelectionModel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transaction {
@@ -183,13 +195,8 @@ impl DocumentBuffer {
         self.blocks.iter().find(|block| block.id == block_id)
     }
 
-    pub(crate) fn preview_for_block(&self, block: &BlockProjection) -> Option<&PreviewBlock> {
-        self.syntax.preview_for_content_range(&block.content_range)
-    }
-
-    pub(crate) fn preview_for_block_id(&self, block_id: u64) -> Option<&PreviewBlock> {
-        let block = self.block_by_id(block_id)?;
-        self.preview_for_block(block)
+    pub fn display_map(&self, selection: Option<&SelectionModel>) -> DisplayMap {
+        DisplayMap::from_document(self, selection, HiddenSyntaxPolicy::SelectionAware)
     }
 
     pub fn block_index_at_offset(&self, offset: usize) -> usize {
@@ -406,7 +413,9 @@ fn merge_structured_continuations(blocks: &mut Vec<BlockProjection>, source: &Ro
         let mut current = blocks[index].clone();
         index += 1;
 
-        while index < blocks.len() && can_merge_structured_continuation(source, &current, &blocks[index]) {
+        while index < blocks.len()
+            && can_merge_structured_continuation(source, &current, &blocks[index])
+        {
             let next = &blocks[index];
             current.byte_range.end = next.byte_range.end;
             current.content_range.end = next.content_range.end;
@@ -432,12 +441,16 @@ fn can_merge_structured_continuation(
     let next_text = source_text(source, next.content_range.clone());
     match current.kind {
         BlockKind::List => {
-            matches!(next.kind, BlockKind::List | BlockKind::Unknown | BlockKind::Raw)
-                && looks_like_list_block(&next_text)
+            matches!(
+                next.kind,
+                BlockKind::List | BlockKind::Unknown | BlockKind::Raw
+            ) && looks_like_list_block(&next_text)
         }
         BlockKind::Blockquote => {
-            matches!(next.kind, BlockKind::Blockquote | BlockKind::Unknown | BlockKind::Raw)
-                && looks_like_blockquote_block(&next_text)
+            matches!(
+                next.kind,
+                BlockKind::Blockquote | BlockKind::Unknown | BlockKind::Raw
+            ) && looks_like_blockquote_block(&next_text)
         }
         _ => false,
     }
@@ -537,8 +550,10 @@ fn inter_block_extra_separator_range(
         return None;
     }
 
-    let structural_len =
-        structural_separator_len(&source_text(source, previous.content_range.clone()), &separator_text)?;
+    let structural_len = structural_separator_len(
+        &source_text(source, previous.content_range.clone()),
+        &separator_text,
+    )?;
     if structural_len >= separator_text.len() {
         return None;
     }
@@ -868,7 +883,8 @@ mod tests {
 
     #[test]
     fn preserves_neighbor_ids_for_single_character_edit_inside_paragraph() {
-        let mut doc = DocumentBuffer::from_text("# Title\n\nAlpha beta\n\n```rs\nfn main() {}\n```\n");
+        let mut doc =
+            DocumentBuffer::from_text("# Title\n\nAlpha beta\n\n```rs\nfn main() {}\n```\n");
         let heading = doc.blocks[0].clone();
         let paragraph = doc.blocks[1].clone();
         let code = doc.blocks[2].clone();
@@ -1015,7 +1031,10 @@ mod tests {
         let doc = DocumentBuffer::from_text("# Title");
 
         assert_eq!(doc.blocks.len(), 1);
-        assert!(matches!(doc.blocks[0].kind, BlockKind::Heading { depth: 1 }));
+        assert!(matches!(
+            doc.blocks[0].kind,
+            BlockKind::Heading { depth: 1 }
+        ));
         assert_eq!(doc.block_text(&doc.blocks[0]), "# Title");
     }
 
@@ -1330,5 +1349,4 @@ mod tests {
             CursorAnchorPolicy::Clamp
         }
     }
-
 }

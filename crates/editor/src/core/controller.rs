@@ -8,11 +8,13 @@ use std::{
 use anyhow::{Context as _, Result};
 
 use super::{
-    document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
-    syntax::PreviewBlock,
+    display_map::DisplayMap,
+    document::{
+        BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionState, Transaction,
+    },
     text_ops::{
         adjust_block_markup, byte_offset_for_line_column, count_document_words,
-        semantic_enter_transform,
+        line_column_for_byte_offset, semantic_enter_transform,
     },
 };
 
@@ -82,6 +84,13 @@ pub struct BlockSnapshot {
     pub can_code_edit: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaretPosition {
+    pub byte: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct EditorSnapshot {
     pub path: Option<PathBuf>,
@@ -94,6 +103,12 @@ pub struct EditorSnapshot {
     pub is_missing: bool,
     pub word_count: usize,
     pub status_message: String,
+    pub document_text: String,
+    pub selection: SelectionState,
+    pub caret_position: CaretPosition,
+    pub visible_selection: SelectionState,
+    pub visible_caret_position: CaretPosition,
+    pub display_map: DisplayMap,
     pub blocks: Vec<BlockSnapshot>,
     pub active_block_id: Option<u64>,
     pub active_cursor_offset: Option<usize>,
@@ -112,6 +127,7 @@ impl EditorSnapshot {
 #[derive(Debug, Clone, Default)]
 pub struct EditorEffects {
     pub changed: bool,
+    pub selection_changed: bool,
     pub active_block_changed: bool,
     pub reload_path: Option<PathBuf>,
 }
@@ -126,6 +142,32 @@ pub enum FileSyncEvent {
 
 #[derive(Debug, Clone)]
 pub enum EditCommand {
+    SyncDocumentState {
+        text: String,
+        selection: SelectionState,
+    },
+    SetSelection {
+        selection: SelectionState,
+    },
+    ReplaceSelection {
+        text: String,
+    },
+    InsertBreak {
+        plain: bool,
+    },
+    ToggleInlineMarkup {
+        before: String,
+        after: String,
+        placeholder: String,
+    },
+    Indent,
+    Outdent,
+    MoveCaret {
+        direction: isize,
+        preferred_column: Option<usize>,
+    },
+    DeleteBackward,
+    DeleteForward,
     ActivateBlock {
         index: usize,
         cursor_offset: Option<usize>,
@@ -333,7 +375,6 @@ pub struct EditorController {
     document: DocumentBuffer,
     sync: FileSyncCoordinator,
     selection: SelectionState,
-    active_block_id: Option<u64>,
     status_message: String,
     undo_stack: Vec<EditHistoryEntry>,
     redo_stack: Vec<EditHistoryEntry>,
@@ -362,7 +403,6 @@ impl EditorController {
             document,
             sync,
             selection: SelectionState::collapsed(0),
-            active_block_id: None,
             status_message: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -376,12 +416,21 @@ impl EditorController {
     pub fn autosave_delay(&self) -> Duration {
         self.sync_policy.autosave_delay
     }
+}
 
-    pub(crate) fn preview_for_block_id(&self, block_id: u64) -> Option<&PreviewBlock> {
-        self.document.preview_for_block_id(block_id)
-    }
-
+impl EditorController {
     pub fn snapshot(&self) -> EditorSnapshot {
+        let document_text = self.document.text();
+        let selection = clamp_selection_to_text(&document_text, self.selection.clone());
+        let caret_byte = selection.cursor().min(document_text.len());
+        let (line, column) = line_column_for_byte_offset(&document_text, caret_byte);
+        let display_map = self.document.display_map(Some(&selection));
+        let mut visible_selection = display_map.source_selection_to_visible(&selection);
+        let visible_text = display_map.visible_text.clone();
+        let visible_caret_byte = visible_selection.cursor().min(visible_text.len());
+        let (visible_line, visible_column) =
+            line_column_for_byte_offset(&visible_text, visible_caret_byte);
+        visible_selection.preferred_column = Some(visible_column);
         let blocks = self
             .document
             .blocks()
@@ -393,8 +442,10 @@ impl EditorController {
                 can_code_edit: block.can_code_edit,
             })
             .collect::<Vec<_>>();
-        let active_cursor_offset = self.active_block().map(|block| {
-            self.selection
+        let active_block = self.current_block();
+        let active_block_id = active_block.map(|block| block.id);
+        let active_cursor_offset = active_block.map(|block| {
+            selection
                 .cursor()
                 .saturating_sub(block.content_range.start)
                 .min(
@@ -414,10 +465,24 @@ impl EditorController {
             saving: self.sync.saving,
             has_conflict: matches!(self.sync.conflict, ConflictState::Conflict { .. }),
             is_missing: self.sync.missing_on_disk,
-            word_count: count_document_words(&self.document.text()),
+            word_count: count_document_words(&document_text),
             status_message: self.status_message.clone(),
+            document_text,
+            selection,
+            caret_position: CaretPosition {
+                byte: caret_byte,
+                line,
+                column,
+            },
+            visible_selection,
+            visible_caret_position: CaretPosition {
+                byte: visible_caret_byte,
+                line: visible_line,
+                column: visible_column,
+            },
+            display_map,
             blocks,
-            active_block_id: self.active_block_id,
+            active_block_id,
             active_cursor_offset,
         }
     }
@@ -436,6 +501,7 @@ impl EditorController {
         self.status_message = format!("Opened {}", path.display());
         Ok(EditorEffects {
             changed: true,
+            selection_changed: true,
             active_block_changed: true,
             reload_path: None,
         })
@@ -448,6 +514,7 @@ impl EditorController {
         self.status_message = "New file".to_string();
         EditorEffects {
             changed: true,
+            selection_changed: true,
             active_block_changed: true,
             reload_path: None,
         }
@@ -474,6 +541,7 @@ impl EditorController {
         self.status_message = format!("Saved {}", path.display());
         Ok(EditorEffects {
             changed: true,
+            selection_changed: false,
             active_block_changed: false,
             reload_path: None,
         })
@@ -486,6 +554,27 @@ impl EditorController {
 
     pub fn dispatch(&mut self, command: EditCommand) -> EditorEffects {
         match command {
+            EditCommand::SyncDocumentState { text, selection } => {
+                self.sync_document_state(text, selection)
+            }
+            EditCommand::SetSelection { selection } => self.update_selection(selection),
+            EditCommand::ReplaceSelection { text } => {
+                self.replace_selection_with_text(text, None, "Edited document")
+            }
+            EditCommand::InsertBreak { plain } => self.insert_break(plain),
+            EditCommand::ToggleInlineMarkup {
+                before,
+                after,
+                placeholder,
+            } => self.toggle_inline_markup(before, after, placeholder),
+            EditCommand::Indent => self.adjust_current_block(true),
+            EditCommand::Outdent => self.adjust_current_block(false),
+            EditCommand::MoveCaret {
+                direction,
+                preferred_column,
+            } => self.move_caret_to_adjacent_block(direction, preferred_column),
+            EditCommand::DeleteBackward => self.delete_backward(),
+            EditCommand::DeleteForward => self.delete_forward(),
             EditCommand::ActivateBlock {
                 index,
                 cursor_offset,
@@ -505,13 +594,13 @@ impl EditorController {
                 selection,
                 cursor_offset,
             } => self.semantic_enter_active_block(selection, cursor_offset),
-            EditCommand::AdjustActiveBlock { deepen } => self.adjust_active_block(deepen),
+            EditCommand::AdjustActiveBlock { deepen } => self.adjust_current_block(deepen),
             EditCommand::FocusAdjacentBlock {
                 direction,
                 preferred_column,
-            } => self.focus_adjacent_block(direction, preferred_column),
-            EditCommand::BackspaceAtBlockStart => self.backspace_at_block_start(),
-            EditCommand::ExitEditMode => self.exit_edit_mode(),
+            } => self.move_caret_to_adjacent_block(direction, preferred_column),
+            EditCommand::BackspaceAtBlockStart => self.delete_backward(),
+            EditCommand::ExitEditMode => EditorEffects::default(),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
             EditCommand::ReloadConflict => self.reload_conflict_from_disk(),
@@ -528,6 +617,7 @@ impl EditorController {
                 {
                     EditorEffects {
                         changed: false,
+                        selection_changed: false,
                         active_block_changed: false,
                         reload_path: Some(path),
                     }
@@ -541,6 +631,7 @@ impl EditorController {
                     self.status_message = format!("File removed: {}", path.display());
                     EditorEffects {
                         changed: true,
+                        selection_changed: false,
                         active_block_changed: false,
                         reload_path: None,
                     }
@@ -554,6 +645,7 @@ impl EditorController {
                     self.status_message = format!("File moved to {}", to.display());
                     EditorEffects {
                         changed: true,
+                        selection_changed: false,
                         active_block_changed: false,
                         reload_path: Some(to),
                     }
@@ -585,6 +677,7 @@ impl EditorController {
             self.status_message = "External changes detected".to_string();
             return EditorEffects {
                 changed: true,
+                selection_changed: false,
                 active_block_changed: false,
                 reload_path: None,
             };
@@ -596,17 +689,16 @@ impl EditorController {
             return EditorEffects::default();
         }
 
-        self.document = DocumentBuffer::from_text(disk_text.clone());
+        self.replace_document_from_text(disk_text.clone(), SelectionState::collapsed(0));
         self.sync
             .mark_loaded_from_disk(path.clone(), disk_text, modified_at);
-        self.selection = SelectionState::collapsed(0);
-        self.active_block_id = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.status_message = format!("Reloaded {}", path.display());
 
         EditorEffects {
             changed: true,
+            selection_changed: true,
             active_block_changed: true,
             reload_path: None,
         }
@@ -614,6 +706,40 @@ impl EditorController {
 
     fn replace_source(&mut self, source: DocumentSource) {
         *self = Self::new(source, self.sync_policy);
+    }
+}
+
+impl EditorController {
+    fn sync_document_state(&mut self, text: String, selection: SelectionState) -> EditorEffects {
+        let selection = clamp_selection_to_text(&text, selection);
+        let current_text = self.document.text();
+        if current_text == text {
+            return self.update_selection(selection);
+        }
+
+        let Some((range, replacement)) = compute_document_diff(&current_text, &text) else {
+            return self.update_selection(selection);
+        };
+
+        self.apply_edit(range, replacement, selection, "Edited document")
+    }
+
+    fn update_selection(&mut self, selection: SelectionState) -> EditorEffects {
+        let current_text = self.document.text();
+        let selection = clamp_selection_to_text(&current_text, selection);
+        if self.selection == selection {
+            return EditorEffects::default();
+        }
+
+        let previous_block_id = self.selected_block_id();
+        self.selection = selection;
+        let next_block_id = self.selected_block_id();
+        EditorEffects {
+            changed: false,
+            selection_changed: true,
+            active_block_changed: previous_block_id != next_block_id,
+            reload_path: None,
+        }
     }
 
     fn activate_block(&mut self, index: usize, cursor_offset: Option<usize>) -> EditorEffects {
@@ -624,18 +750,15 @@ impl EditorController {
         let cursor_offset = cursor_offset
             .map(|offset| cmp::min(offset, text.len()))
             .unwrap_or_else(|| activation_cursor_offset(&text));
-        self.active_block_id = Some(block.id);
-        self.selection = SelectionState::collapsed(block.content_range.start + cursor_offset);
-        self.status_message = format!("Editing block {}", index + 1);
-        EditorEffects {
-            changed: true,
-            active_block_changed: true,
-            reload_path: None,
-        }
+        let cursor = block.content_range.start + cursor_offset;
+        let mut selection = SelectionState::collapsed(cursor);
+        selection.preferred_column =
+            Some(line_column_for_byte_offset(&self.document.text(), cursor).1);
+        self.update_selection(selection)
     }
 
     fn replace_active_block(&mut self, text: String, cursor_offset: usize) -> EditorEffects {
-        let Some(block) = self.active_block().cloned() else {
+        let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let cursor_offset = cmp::min(cursor_offset, text.len());
@@ -658,7 +781,7 @@ impl EditorController {
         after: String,
         placeholder: String,
     ) -> EditorEffects {
-        let Some(block) = self.active_block().cloned() else {
+        let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let block_text = self.document.block_text(&block);
@@ -672,18 +795,24 @@ impl EditorController {
             .get(local_range.clone())
             .unwrap_or_default()
             .to_string();
-        let insertion = if local_range.is_empty() {
-            format!("{before}{placeholder}{after}")
+        let inner_text = if local_range.is_empty() {
+            placeholder
         } else {
-            format!("{before}{selected_text}{after}")
+            selected_text
         };
+        let insertion = format!("{before}{inner_text}{after}");
         let global_range = block.content_range.start + local_range.start
             ..block.content_range.start + local_range.end;
-        let new_cursor = global_range.start + insertion.len();
+        let selection_after = SelectionState {
+            anchor_byte: global_range.start + before.len(),
+            head_byte: global_range.start + before.len() + inner_text.len(),
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
         self.apply_edit(
             global_range,
             insertion,
-            SelectionState::collapsed(new_cursor),
+            selection_after,
             "Updated formatting",
         )
     }
@@ -693,7 +822,7 @@ impl EditorController {
         selection: Option<Range<usize>>,
         cursor_offset: usize,
     ) -> EditorEffects {
-        let Some(block) = self.active_block().cloned() else {
+        let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let block_text = self.document.block_text(&block);
@@ -715,8 +844,96 @@ impl EditorController {
         )
     }
 
-    fn adjust_active_block(&mut self, deepen: bool) -> EditorEffects {
-        let Some(block) = self.active_block().cloned() else {
+    fn insert_break(&mut self, plain: bool) -> EditorEffects {
+        if plain {
+            let start = self.selection.range().start;
+            let selection_after = SelectionState::collapsed(start + 1);
+            return self.replace_selection_with_text(
+                "\n".to_string(),
+                Some(selection_after),
+                "Inserted line break",
+            );
+        }
+
+        let range = self.selection.range();
+        if selection_spans_multiple_blocks(&self.document, &range) {
+            let selection_after = SelectionState::collapsed(range.start + 1);
+            return self.replace_selection_with_text(
+                "\n".to_string(),
+                Some(selection_after),
+                "Inserted line break",
+            );
+        }
+
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if range.start < block.content_range.start || range.end > block.content_range.end {
+            let selection_after = SelectionState::collapsed(range.start + 1);
+            return self.replace_selection_with_text(
+                "\n".to_string(),
+                Some(selection_after),
+                "Inserted line break",
+            );
+        }
+
+        let block_text = self.document.block_text(&block);
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let local_selection = (!range.is_empty()).then_some(
+            range.start.saturating_sub(block.content_range.start)
+                ..range.end.saturating_sub(block.content_range.start),
+        );
+        let Some(transform) =
+            semantic_enter_transform(&block.kind, &block_text, local_selection, local_cursor)
+        else {
+            let selection_after = SelectionState::collapsed(range.start + 1);
+            return self.replace_selection_with_text(
+                "\n".to_string(),
+                Some(selection_after),
+                "Inserted line break",
+            );
+        };
+
+        let trailing = self.document.block_trailing_text(&block);
+        let replacement = format!("{}{}", transform.replacement, trailing);
+        let selection_after =
+            SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
+        self.apply_edit(
+            block.byte_range,
+            replacement,
+            selection_after,
+            "Updated block structure",
+        )
+    }
+
+    fn toggle_inline_markup(
+        &mut self,
+        before: String,
+        after: String,
+        placeholder: String,
+    ) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        let inner_text = if selected_text.is_empty() {
+            placeholder
+        } else {
+            selected_text
+        };
+        let replacement = format!("{before}{inner_text}{after}");
+        let selection_after = SelectionState {
+            anchor_byte: range.start + before.len(),
+            head_byte: range.start + before.len() + inner_text.len(),
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+        self.apply_edit(range, replacement, selection_after, "Updated formatting")
+    }
+
+    fn adjust_current_block(&mut self, deepen: bool) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let current = self.document.block_text(&block);
@@ -736,7 +953,7 @@ impl EditorController {
         )
     }
 
-    fn focus_adjacent_block(
+    fn move_caret_to_adjacent_block(
         &mut self,
         direction: isize,
         preferred_column: Option<usize>,
@@ -745,14 +962,7 @@ impl EditorController {
             return EditorEffects::default();
         }
 
-        let current = self
-            .active_block_id
-            .and_then(|block_id| self.document.block_index_by_id(block_id))
-            .unwrap_or(if direction >= 0 {
-                0
-            } else {
-                self.document.blocks().len().saturating_sub(1)
-            });
+        let current = self.document.block_index_at_offset(self.selection.cursor());
         let next = if direction >= 0 {
             cmp::min(current + 1, self.document.blocks().len().saturating_sub(1))
         } else {
@@ -762,73 +972,143 @@ impl EditorController {
             return EditorEffects::default();
         }
 
-        let cursor_offset = preferred_column.and_then(|column| {
-            let block = self.document.blocks().get(next)?;
-            let text = self.document.block_text(block);
-            Some(boundary_cursor_offset(&text, direction, column))
-        });
-
-        self.activate_block(next, cursor_offset)
+        let column = preferred_column
+            .or(self.selection.preferred_column)
+            .unwrap_or_else(|| self.snapshot().caret_position.column);
+        let Some(block) = self.document.blocks().get(next) else {
+            return EditorEffects::default();
+        };
+        let text = self.document.block_text(block);
+        let local_cursor = boundary_cursor_offset(&text, direction, column);
+        let mut selection = SelectionState::collapsed(block.content_range.start + local_cursor);
+        selection.preferred_column = Some(column);
+        self.update_selection(selection)
     }
 
-    fn backspace_at_block_start(&mut self) -> EditorEffects {
-        let Some(current) = self.active_block().cloned() else {
-            return EditorEffects::default();
-        };
-        if !self.selection.is_collapsed() || self.selection.cursor() != current.content_range.start {
-            return EditorEffects::default();
+    fn delete_backward(&mut self) -> EditorEffects {
+        if !self.selection.is_collapsed() {
+            let selection_after = SelectionState::collapsed(self.selection.range().start);
+            return self.replace_selection_with_text(
+                String::new(),
+                Some(selection_after),
+                "Deleted selection",
+            );
         }
-        if !supports_empty_boundary_backspace_kind(&current.kind)
-            || !self.document.block_text(&current).is_empty()
-        {
+
+        if let Some(effect) = self.delete_backward_structural() {
+            return effect;
+        }
+
+        let text = self.document.text();
+        let cursor = self.selection.cursor();
+        if cursor == 0 {
             return EditorEffects::default();
         }
 
-        let Some(current_index) = self.document.block_index_by_id(current.id) else {
-            return EditorEffects::default();
-        };
-        if current_index == 0 {
-            return EditorEffects::default();
-        }
-
-        let Some(previous) = self.document.blocks().get(current_index - 1).cloned() else {
-            return EditorEffects::default();
-        };
-        if !supports_boundary_backspace_target_kind(&previous.kind) {
-            return EditorEffects::default();
-        }
-
-        let deletion_range = if current_index + 1 < self.document.blocks().len()
-            && !current.byte_range.is_empty()
-        {
-            current.byte_range.clone()
-        } else {
-            previous.content_range.end..previous.byte_range.end
-        };
-        if deletion_range.is_empty() {
-            return EditorEffects::default();
-        }
-
-        let selection_after = SelectionState::collapsed(previous.content_range.end);
+        let start = previous_char_boundary(&text, cursor);
         self.apply_edit(
-            deletion_range,
+            start..cursor,
             String::new(),
-            selection_after,
-            "Deleted empty block",
+            SelectionState::collapsed(start),
+            "Deleted text",
         )
     }
 
-    fn exit_edit_mode(&mut self) -> EditorEffects {
-        if self.active_block_id.is_none() {
+    fn delete_forward(&mut self) -> EditorEffects {
+        if !self.selection.is_collapsed() {
+            let selection_after = SelectionState::collapsed(self.selection.range().start);
+            return self.replace_selection_with_text(
+                String::new(),
+                Some(selection_after),
+                "Deleted selection",
+            );
+        }
+
+        let text = self.document.text();
+        let cursor = self.selection.cursor();
+        if cursor >= text.len() {
             return EditorEffects::default();
         }
-        self.active_block_id = None;
-        self.status_message = "Selection cleared".to_string();
-        EditorEffects {
-            changed: true,
-            active_block_changed: true,
-            reload_path: None,
+
+        let end = next_char_boundary(&text, cursor);
+        self.apply_edit(
+            cursor..end,
+            String::new(),
+            SelectionState::collapsed(cursor),
+            "Deleted text",
+        )
+    }
+}
+
+impl EditorController {
+    fn delete_backward_structural(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.content_range.start {
+            return None;
         }
+
+        let current_text = self.document.block_text(&current);
+        if current_text.is_empty() && supports_empty_boundary_backspace_kind(&current.kind) {
+            let current_index = self.document.block_index_by_id(current.id)?;
+            if current_index == 0 {
+                return None;
+            }
+
+            let previous = self.document.blocks().get(current_index - 1)?.clone();
+            if !supports_boundary_backspace_target_kind(&previous.kind) {
+                return None;
+            }
+
+            let deletion_range = if current_index + 1 < self.document.blocks().len()
+                && !current.byte_range.is_empty()
+            {
+                current.byte_range.clone()
+            } else {
+                previous.content_range.end..previous.byte_range.end
+            };
+            if deletion_range.is_empty() {
+                return None;
+            }
+
+            let selection_after = SelectionState::collapsed(previous.content_range.end);
+            return Some(self.apply_edit(
+                deletion_range,
+                String::new(),
+                selection_after,
+                "Deleted empty block",
+            ));
+        }
+
+        if matches!(
+            current.kind,
+            BlockKind::Heading { .. } | BlockKind::List | BlockKind::Blockquote
+        ) {
+            let updated = adjust_block_markup(&current_text, false)?;
+            if updated == current_text {
+                return None;
+            }
+            let content_range = current.content_range.clone();
+            return Some(self.apply_edit(
+                content_range.clone(),
+                updated,
+                SelectionState::collapsed(content_range.start),
+                "Adjusted block structure",
+            ));
+        }
+
+        None
+    }
+
+    fn replace_selection_with_text(
+        &mut self,
+        replacement: String,
+        selection_after: Option<SelectionState>,
+        status_message: &str,
+    ) -> EditorEffects {
+        let range = self.selection.range();
+        let selection_after = selection_after
+            .unwrap_or_else(|| SelectionState::collapsed(range.start + replacement.len()));
+        self.apply_edit(range, replacement, selection_after, status_message)
     }
 
     fn undo(&mut self) -> EditorEffects {
@@ -836,22 +1116,21 @@ impl EditorController {
             return EditorEffects::default();
         };
 
+        let previous_block_id = self.selected_block_id();
         self.document.apply_transaction(Transaction::Replace {
             range: entry.after_range.clone(),
             replacement: entry.before_text.clone(),
         });
-        self.selection = entry.selection_before.clone();
-        self.active_block_id = self
-            .document
-            .blocks()
-            .get(self.document.block_index_at_offset(self.selection.cursor()))
-            .map(|block| block.id);
+        self.selection =
+            clamp_selection_to_text(&self.document.text(), entry.selection_before.clone());
         self.sync.mark_document_changed(&self.document.text());
         self.redo_stack.push(entry);
         self.status_message = "Undo".to_string();
+
         EditorEffects {
             changed: true,
-            active_block_changed: true,
+            selection_changed: true,
+            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
@@ -861,22 +1140,21 @@ impl EditorController {
             return EditorEffects::default();
         };
 
+        let previous_block_id = self.selected_block_id();
         self.document.apply_transaction(Transaction::Replace {
             range: entry.before_range.clone(),
             replacement: entry.after_text.clone(),
         });
-        self.selection = entry.selection_after.clone();
-        self.active_block_id = self
-            .document
-            .blocks()
-            .get(self.document.block_index_at_offset(self.selection.cursor()))
-            .map(|block| block.id);
+        self.selection =
+            clamp_selection_to_text(&self.document.text(), entry.selection_after.clone());
         self.sync.mark_document_changed(&self.document.text());
         self.undo_stack.push(entry);
         self.status_message = "Redo".to_string();
+
         EditorEffects {
             changed: true,
-            active_block_changed: true,
+            selection_changed: true,
+            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
@@ -892,17 +1170,16 @@ impl EditorController {
         };
         let modified_at = file_modified_at(&path);
 
-        self.document = DocumentBuffer::from_text(disk_text.clone());
+        self.replace_document_from_text(disk_text.clone(), SelectionState::collapsed(0));
         self.sync
             .mark_loaded_from_disk(path, disk_text, modified_at);
-        self.selection = SelectionState::collapsed(0);
-        self.active_block_id = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.status_message = "Reloaded disk version".to_string();
 
         EditorEffects {
             changed: true,
+            selection_changed: true,
             active_block_changed: true,
             reload_path: None,
         }
@@ -917,6 +1194,7 @@ impl EditorController {
         self.status_message = "Keeping current changes".to_string();
         EditorEffects {
             changed: true,
+            selection_changed: false,
             active_block_changed: false,
             reload_path: None,
         }
@@ -930,9 +1208,11 @@ impl EditorController {
         status_message: &str,
     ) -> EditorEffects {
         let selection_before = self.selection.clone();
+        let previous_block_id = self.selected_block_id();
         let applied = self
             .document
             .apply_transaction(Transaction::Replace { range, replacement });
+        let selection_after = clamp_selection_to_text(&self.document.text(), selection_after);
 
         self.undo_stack.push(EditHistoryEntry {
             before_range: applied.before_range.clone(),
@@ -944,29 +1224,30 @@ impl EditorController {
         });
         self.redo_stack.clear();
         self.selection = selection_after;
-        self.active_block_id = self
-            .document
-            .blocks()
-            .get(self.document.block_index_at_offset(self.selection.cursor()))
-            .map(|block| block.id);
         self.sync.mark_document_changed(&self.document.text());
         self.status_message = status_message.to_string();
 
         EditorEffects {
             changed: true,
-            active_block_changed: true,
+            selection_changed: true,
+            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
 
-    fn active_block(&self) -> Option<&BlockProjection> {
-        self.active_block_id
-            .and_then(|block_id| self.document.block_by_id(block_id))
-            .or_else(|| {
-                self.document
-                    .blocks()
-                    .get(self.document.block_index_at_offset(self.selection.cursor()))
-            })
+    fn replace_document_from_text(&mut self, text: String, selection: SelectionState) {
+        self.document = DocumentBuffer::from_text(text.clone());
+        self.selection = clamp_selection_to_text(&text, selection);
+    }
+
+    fn current_block(&self) -> Option<&BlockProjection> {
+        self.document
+            .blocks()
+            .get(self.document.block_index_at_offset(self.selection.cursor()))
+    }
+
+    fn selected_block_id(&self) -> Option<u64> {
+        self.current_block().map(|block| block.id)
     }
 }
 
@@ -1000,37 +1281,145 @@ fn supports_boundary_backspace_target_kind(kind: &BlockKind) -> bool {
     )
 }
 
+fn compute_document_diff(old: &str, new: &str) -> Option<(Range<usize>, String)> {
+    if old == new {
+        return None;
+    }
+
+    let mut prefix = common_prefix_len(old.as_bytes(), new.as_bytes());
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+
+    let old_remaining = &old.as_bytes()[prefix..];
+    let new_remaining = &new.as_bytes()[prefix..];
+    let mut suffix = common_suffix_len(old_remaining, new_remaining);
+    while suffix > 0 {
+        let old_start = old.len().saturating_sub(suffix);
+        let new_start = new.len().saturating_sub(suffix);
+        if old.is_char_boundary(old_start) && new.is_char_boundary(new_start) {
+            break;
+        }
+        suffix -= 1;
+    }
+
+    let old_end = old.len().saturating_sub(suffix);
+    let new_end = new.len().saturating_sub(suffix);
+    Some((prefix..old_end, new[prefix..new_end].to_string()))
+}
+
+fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .zip(right.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn common_suffix_len(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .rev()
+        .zip(right.iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn clamp_selection_to_text(text: &str, selection: SelectionState) -> SelectionState {
+    let anchor = clamp_to_char_boundary(text, selection.anchor_byte);
+    let head = clamp_to_char_boundary(text, selection.head_byte);
+    SelectionState {
+        anchor_byte: anchor,
+        head_byte: head,
+        preferred_column: selection.preferred_column,
+        affinity: selection.affinity,
+    }
+}
+
+fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn previous_char_boundary(text: &str, offset: usize) -> usize {
+    let mut cursor = clamp_to_char_boundary(text, offset);
+    if cursor == 0 {
+        return 0;
+    }
+    cursor -= 1;
+    while cursor > 0 && !text.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    cursor
+}
+
+fn next_char_boundary(text: &str, offset: usize) -> usize {
+    let mut cursor = clamp_to_char_boundary(text, offset).saturating_add(1);
+    while cursor < text.len() && !text.is_char_boundary(cursor) {
+        cursor += 1;
+    }
+    cursor.min(text.len())
+}
+
+fn selection_spans_multiple_blocks(document: &DocumentBuffer, range: &Range<usize>) -> bool {
+    let start_block = document.block_index_at_offset(range.start);
+    let end_probe = if range.is_empty() {
+        range.end
+    } else {
+        range.end.saturating_sub(1)
+    };
+    start_block != document.block_index_at_offset(end_probe)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn snapshot_reflects_document_state() {
-        let mut controller = EditorController::new(
+        let controller = EditorController::new(
             DocumentSource::Text {
                 path: Some(PathBuf::from("note.md")),
                 suggested_path: Some(PathBuf::from("note.md")),
-                text: "hello world".to_string(),
+                text: "# Title".to_string(),
                 modified_at: None,
             },
             SyncPolicy::default(),
         );
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: None,
-        });
-        controller.status_message = "Testing".to_string();
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.path, Some(PathBuf::from("note.md")));
         assert_eq!(snapshot.display_name, "note.md");
-        assert_eq!(snapshot.word_count, 2);
-        assert_eq!(snapshot.status_message, "Testing");
-        assert!(snapshot.active_block_id.is_some());
+        assert_eq!(snapshot.word_count, 1);
+        assert_eq!(snapshot.document_text, "# Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
+        assert_eq!(snapshot.visible_selection.cursor(), 0);
+        assert_eq!(snapshot.visible_selection.preferred_column, Some(0));
+        assert_eq!(snapshot.display_map.visible_text, "Title");
+        assert_eq!(snapshot.visible_caret_position.byte, 0);
     }
 
     #[test]
-    fn replace_command_updates_dirty_state_and_history() {
+    fn snapshot_hides_generic_list_prefix_in_visible_text() {
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.display_map.visible_text, "item");
+        assert_eq!(snapshot.visible_selection.cursor(), 0);
+        assert_eq!(snapshot.visible_selection.preferred_column, Some(0));
+    }
+
+    #[test]
+    fn sync_document_state_updates_dirty_state_and_history() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -1041,59 +1430,98 @@ mod tests {
             SyncPolicy::default(),
         );
 
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: None,
-        });
-        let active_before = controller.snapshot().active_block_id;
-        controller.dispatch(EditCommand::ReplaceActiveBlock {
+        controller.dispatch(EditCommand::SyncDocumentState {
             text: "Updated title\n".to_string(),
-            cursor_offset: 7,
+            selection: SelectionState::collapsed(7),
         });
 
         let snapshot = controller.snapshot();
         assert!(snapshot.dirty);
-        assert_eq!(snapshot.blocks[0].text, "Updated title");
-        assert_eq!(snapshot.active_block_id, active_before);
+        assert_eq!(snapshot.document_text, "Updated title\n");
+        assert_eq!(snapshot.selection.cursor(), 7);
 
         controller.dispatch(EditCommand::Undo);
-        let undo_snapshot = controller.snapshot();
-        assert_eq!(undo_snapshot.blocks[0].text, "Title");
-        assert_eq!(undo_snapshot.active_block_id, active_before);
+        assert_eq!(controller.snapshot().document_text, "Title\n");
 
         controller.dispatch(EditCommand::Redo);
-        let redo_snapshot = controller.snapshot();
-        assert_eq!(redo_snapshot.blocks[0].text, "Updated title");
-        assert_eq!(redo_snapshot.active_block_id, active_before);
+        assert_eq!(controller.snapshot().document_text, "Updated title\n");
     }
 
     #[test]
-    fn adjust_command_preserves_active_block_id_when_kind_changes() {
+    fn insert_break_splits_paragraph_and_moves_selection() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
                 suggested_path: None,
-                text: "Title\n".to_string(),
+                text: "First".to_string(),
                 modified_at: None,
             },
             SyncPolicy::default(),
         );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(3),
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
         });
-        let active_before = controller.snapshot().active_block_id;
 
-        controller.dispatch(EditCommand::AdjustActiveBlock { deepen: true });
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.active_block_id, active_before);
-        assert!(matches!(
-            snapshot.blocks[0].kind,
-            BlockKind::Heading { depth: 1 }
-        ));
-        assert_eq!(snapshot.blocks[0].text, "# Title");
+        assert_eq!(snapshot.document_text, "Fi\n\nrst");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(4));
+        assert_eq!(snapshot.blocks.len(), 2);
+    }
+
+    #[test]
+    fn delete_backward_merges_trailing_empty_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(7),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "First");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(5));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn toggle_inline_markup_wraps_current_selection() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: 5,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "**".to_string(),
+            after: "**".to_string(),
+            placeholder: "bold text".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "**hello**");
+        assert_eq!(snapshot.selection.range(), 2..7);
     }
 
     #[test]
@@ -1108,13 +1536,9 @@ mod tests {
             SyncPolicy::default(),
         );
 
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: None,
-        });
-        controller.dispatch(EditCommand::ReplaceActiveBlock {
+        controller.dispatch(EditCommand::SyncDocumentState {
             text: "draft\n".to_string(),
-            cursor_offset: 5,
+            selection: SelectionState::collapsed(5),
         });
         controller.apply_disk_state(
             PathBuf::from("note.md"),
@@ -1123,395 +1547,5 @@ mod tests {
         );
 
         assert!(controller.snapshot().has_conflict);
-    }
-
-    #[test]
-    fn workspace_relocation_requests_reload_for_current_document() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: Some(PathBuf::from("old.md")),
-                suggested_path: Some(PathBuf::from("old.md")),
-                text: "hello\n".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        let effects = controller.apply_file_event(FileSyncEvent::Relocated {
-            from: PathBuf::from("old.md"),
-            to: PathBuf::from("new.md"),
-        });
-
-        assert_eq!(effects.reload_path, Some(PathBuf::from("new.md")));
-        assert_eq!(controller.snapshot().path, Some(PathBuf::from("new.md")));
-    }
-
-    #[test]
-    fn editing_preserves_separator_between_blocks() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "First\n\nSecond\n".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(2),
-        });
-        controller.dispatch(EditCommand::ReplaceActiveBlock {
-            text: "Changed".to_string(),
-            cursor_offset: 3,
-        });
-
-        assert_eq!(controller.snapshot().blocks[0].text, "Changed");
-        assert_eq!(controller.document.text(), "Changed\n\nSecond\n");
-    }
-
-    #[test]
-    fn semantic_enter_splits_paragraph_and_focuses_new_block() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "First".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(2),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: None,
-            cursor_offset: 2,
-        });
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert_eq!(snapshot.blocks[0].text, "Fi");
-        assert_eq!(snapshot.blocks[1].text, "rst");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(0));
-    }
-
-    #[test]
-    fn semantic_enter_at_end_creates_editable_empty_block() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "# Title".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(7),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: None,
-            cursor_offset: 7,
-        });
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert!(matches!(
-            snapshot.blocks[0].kind,
-            BlockKind::Heading { depth: 1 }
-        ));
-        assert_eq!(snapshot.blocks[0].text, "# Title");
-        assert_eq!(snapshot.blocks[1].kind, BlockKind::Raw);
-        assert_eq!(snapshot.blocks[1].text, "");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(0));
-    }
-
-    #[test]
-    fn semantic_enter_before_following_block_focuses_materialized_empty_block() {
-        for (text, expected_next_kind, expected_next_text) in [
-            ("First\n\nSecond", BlockKind::Paragraph, "Second"),
-            ("First\n\n# Title", BlockKind::Heading { depth: 1 }, "# Title"),
-            ("First\n\n- item", BlockKind::List, "- item"),
-            ("First\n\n> quote", BlockKind::Blockquote, "> quote"),
-        ] {
-            let mut controller = EditorController::new(
-                DocumentSource::Text {
-                    path: None,
-                    suggested_path: None,
-                    text: text.to_string(),
-                    modified_at: None,
-                },
-                SyncPolicy::default(),
-            );
-
-            controller.dispatch(EditCommand::ActivateBlock {
-                index: 0,
-                cursor_offset: Some(5),
-            });
-            controller.dispatch(EditCommand::SemanticEnter {
-                selection: None,
-                cursor_offset: 5,
-            });
-
-            let snapshot = controller.snapshot();
-            assert_eq!(controller.document.text(), text.replacen("\n\n", "\n\n\n\n", 1));
-            assert_eq!(snapshot.blocks.len(), 3, "source: {text:?}");
-            assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph, "source: {text:?}");
-            assert_eq!(snapshot.blocks[0].text, "First", "source: {text:?}");
-            assert_eq!(snapshot.blocks[1].kind, BlockKind::Raw, "source: {text:?}");
-            assert_eq!(snapshot.blocks[1].text, "", "source: {text:?}");
-            assert_eq!(snapshot.blocks[2].kind, expected_next_kind, "source: {text:?}");
-            assert_eq!(snapshot.blocks[2].text, expected_next_text, "source: {text:?}");
-            assert_eq!(
-                snapshot.active_block_id,
-                Some(snapshot.blocks[1].id),
-                "source: {text:?}"
-            );
-            assert_eq!(snapshot.active_cursor_offset, Some(0), "source: {text:?}");
-        }
-    }
-
-    #[test]
-    fn backspace_at_start_of_trailing_empty_block_removes_separator() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "First\n\n".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 1,
-            cursor_offset: Some(0),
-        });
-        controller.dispatch(EditCommand::BackspaceAtBlockStart);
-
-        let snapshot = controller.snapshot();
-        assert_eq!(controller.document.text(), "First");
-        assert_eq!(snapshot.blocks.len(), 1);
-        assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph);
-        assert_eq!(snapshot.blocks[0].text, "First");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(5));
-    }
-
-    #[test]
-    fn backspace_at_start_of_intermediate_empty_block_restores_standard_separator() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "First\n\n\n\nSecond".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 1,
-            cursor_offset: Some(0),
-        });
-        controller.dispatch(EditCommand::BackspaceAtBlockStart);
-
-        let snapshot = controller.snapshot();
-        assert_eq!(controller.document.text(), "First\n\nSecond");
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert_eq!(snapshot.blocks[0].kind, BlockKind::Paragraph);
-        assert_eq!(snapshot.blocks[0].text, "First");
-        assert_eq!(snapshot.blocks[1].kind, BlockKind::Paragraph);
-        assert_eq!(snapshot.blocks[1].text, "Second");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(5));
-    }
-
-    #[test]
-    fn backspace_at_start_of_empty_block_allows_previous_heading() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "# Title\n\n\n\nSecond".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 1,
-            cursor_offset: Some(0),
-        });
-        controller.dispatch(EditCommand::BackspaceAtBlockStart);
-
-        let snapshot = controller.snapshot();
-        assert_eq!(controller.document.text(), "# Title\n\nSecond");
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert!(matches!(
-            snapshot.blocks[0].kind,
-            BlockKind::Heading { depth: 1 }
-        ));
-        assert_eq!(snapshot.blocks[0].text, "# Title");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(7));
-    }
-
-    #[test]
-    fn backspace_at_start_of_empty_block_ignores_unsupported_previous_block() {
-        for text in ["- item\n\n\n\nSecond", "> quote\n\n\n\nSecond"] {
-            let mut controller = EditorController::new(
-                DocumentSource::Text {
-                    path: None,
-                    suggested_path: None,
-                    text: text.to_string(),
-                    modified_at: None,
-                },
-                SyncPolicy::default(),
-            );
-
-            controller.dispatch(EditCommand::ActivateBlock {
-                index: 1,
-                cursor_offset: Some(0),
-            });
-            let effects = controller.dispatch(EditCommand::BackspaceAtBlockStart);
-
-            assert!(!effects.changed, "source: {text:?}");
-            assert!(!effects.active_block_changed, "source: {text:?}");
-            assert_eq!(controller.document.text(), text, "source: {text:?}");
-        }
-    }
-
-    #[test]
-    fn semantic_enter_continues_unordered_list_item() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "- item".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(6),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: None,
-            cursor_offset: 6,
-        });
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.blocks.len(), 1);
-        assert_eq!(snapshot.blocks[0].kind, BlockKind::List);
-        assert_eq!(snapshot.blocks[0].text, "- item\n- ");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[0].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(9));
-    }
-
-    #[test]
-    fn semantic_enter_exits_empty_list_item_into_empty_block() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "- item\n- ".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(9),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: None,
-            cursor_offset: 9,
-        });
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert_eq!(snapshot.blocks[0].kind, BlockKind::List);
-        assert_eq!(snapshot.blocks[0].text, "- item\n");
-        assert_eq!(snapshot.blocks[1].text, "");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(0));
-    }
-
-    #[test]
-    fn undo_redo_restores_incremental_semantic_enter() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "- item".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(6),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: None,
-            cursor_offset: 6,
-        });
-
-        let after_enter = controller.snapshot();
-        assert_eq!(after_enter.blocks.len(), 1);
-        assert_eq!(after_enter.blocks[0].text, "- item\n- ");
-
-        controller.dispatch(EditCommand::Undo);
-        let undone = controller.snapshot();
-        assert_eq!(undone.blocks.len(), 1);
-        assert_eq!(undone.blocks[0].text, "- item");
-
-        controller.dispatch(EditCommand::Redo);
-        let redone = controller.snapshot();
-        assert_eq!(redone.blocks.len(), 1);
-        assert_eq!(redone.blocks[0].text, "- item\n- ");
-        assert_eq!(redone.active_block_id, Some(redone.blocks[0].id));
-    }
-
-    #[test]
-    fn semantic_enter_replaces_selection_before_splitting() {
-        let mut controller = EditorController::new(
-            DocumentSource::Text {
-                path: None,
-                suggested_path: None,
-                text: "alpha beta".to_string(),
-                modified_at: None,
-            },
-            SyncPolicy::default(),
-        );
-
-        controller.dispatch(EditCommand::ActivateBlock {
-            index: 0,
-            cursor_offset: Some(7),
-        });
-        controller.dispatch(EditCommand::SemanticEnter {
-            selection: Some(2..7),
-            cursor_offset: 7,
-        });
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.blocks.len(), 2);
-        assert_eq!(snapshot.blocks[0].text, "al");
-        assert_eq!(snapshot.blocks[1].text, "eta");
-        assert_eq!(snapshot.active_block_id, Some(snapshot.blocks[1].id));
-        assert_eq!(snapshot.active_cursor_offset, Some(0));
     }
 }

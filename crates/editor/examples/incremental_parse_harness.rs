@@ -8,10 +8,7 @@ const ITERATIONS: usize = 2_000;
 fn main() {
     let sample = build_sample(SECTIONS);
     let marker = format!("section-{}/middle-anchor", SECTIONS / 2);
-    let mut cursor = sample
-        .find(&marker)
-        .expect("sample marker should exist")
-        + marker.len();
+    let mut cursor = sample.find(&marker).expect("sample marker should exist") + marker.len();
     let mut document = DocumentBuffer::from_text(&sample);
 
     let start = Instant::now();

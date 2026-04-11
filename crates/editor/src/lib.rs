@@ -20,8 +20,10 @@ actions!(
 );
 
 pub use core::{
-    BlockKind, BlockProjection, BlockSnapshot, BlockSpan, ConflictState, CursorAnchorPolicy,
-    DocumentBuffer, DocumentSource, DocumentState, EditCommand, EditorController, EditorEffects,
-    EditorSnapshot, FileSyncEvent, SelectionState, SyncPolicy, SyncState, Transaction,
+    BlockKind, BlockProjection, BlockSnapshot, BlockSpan, CaretPosition, ConflictState,
+    CursorAnchorPolicy, DisplayMap, DocumentBuffer, DocumentSource, DocumentState, EditCommand,
+    EditorController, EditorEffects, EditorSnapshot, EmbeddedNodeKind, FileSyncEvent,
+    HiddenSyntaxPolicy, HitTestResult, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
+    SelectionAffinity, SelectionModel, SelectionState, SyncPolicy, SyncState, Transaction,
 };
 pub use ui::{EditorEvent, MarkdownEditor, bind_keys};

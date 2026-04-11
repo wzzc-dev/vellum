@@ -1,7 +1,7 @@
 use gpui::{App, Context, KeyBinding, Window};
 use gpui_component::input::Enter as InputEnter;
 
-use super::{EDITOR_CONTEXT, INPUT_CONTEXT, view::MarkdownEditor};
+use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
     LinkSelection, PromoteBlock, RedoEdit, UndoEdit,
@@ -22,16 +22,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-z", UndoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
-        KeyBinding::new("ctrl-b", BoldSelection, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-i", ItalicSelection, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-k", LinkSelection, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-[", PromoteBlock, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-]", DemoteBlock, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-up", FocusPrevBlock, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-down", FocusNextBlock, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-z", UndoEdit, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-shift-z", RedoEdit, Some(INPUT_CONTEXT)),
-        KeyBinding::new("ctrl-y", RedoEdit, Some(INPUT_CONTEXT)),
         KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new(
             "ctrl-i",
