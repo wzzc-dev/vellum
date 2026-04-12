@@ -88,7 +88,7 @@ impl MarkdownEditor {
     ) {
         self.snapshot = self.controller.snapshot();
         self.sync_input_from_snapshot(window, cx);
-        if effects.changed || effects.selection_changed || effects.active_block_changed {
+        if effects.changed || effects.selection_changed {
             self.emit_changed(cx);
         }
     }

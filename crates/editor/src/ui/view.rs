@@ -406,8 +406,9 @@ mod tests {
 
     use super::*;
     use crate::ui::surface::{
-        caret_visual_offset_for_block, rendered_text_for_block, rendered_visible_end,
-        rendered_visible_len, shape_block_lines, text_content_x_offset,
+        caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
+        rendered_visible_end, rendered_visible_len, shape_block_lines,
+        surface_empty_block_line_count, text_content_x_offset,
     };
     use crate::{BlockKind, RenderSpanKind, SelectionAffinity};
 
@@ -461,6 +462,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn inter_block_extra_blank_lines_keep_mapping_but_collapse_visually() {
+        let snapshot = snapshot_for_text_with_selection("A\n\n\n\nB", 1);
+        let blocks = &snapshot.display_map.blocks;
+
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(rendered_empty_block_line_count(&blocks[1]), Some(3));
+        assert_eq!(surface_empty_block_line_count(blocks, 1), Some(1));
+    }
+
     #[gpui::test]
     fn two_headings_separated_by_single_empty_paragraph_render_single_visual_gap(
         cx: &mut TestAppContext,
@@ -478,6 +489,81 @@ mod tests {
 
         assert_eq!(first_lines, 1);
         assert_eq!(second_lines, 1);
+    }
+
+    #[gpui::test]
+    fn multiple_blank_lines_between_paragraphs_render_single_visual_gap(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+
+        let (raw_line_count, surface_line_count) =
+            cx.update_window_entity(&view, |editor, _, _| {
+                let blocks = editor.snapshot.display_map.blocks.clone();
+                (
+                    rendered_empty_block_line_count(&blocks[1]).unwrap_or(0),
+                    surface_empty_block_line_count(&blocks, 1).unwrap_or(0),
+                )
+            });
+
+        assert_eq!(raw_line_count, 3);
+        assert_eq!(surface_line_count, 1);
+    }
+
+    #[gpui::test]
+    fn moving_down_across_collapsed_inter_block_gap_uses_single_visual_blank_line(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let blank_snapshot = snapshot(&view, cx);
+        let (blank_cursor, blank_position) = cx.update_window_entity(&input, |input, _, _| {
+            (input.cursor(), input.cursor_position())
+        });
+        assert_eq!(blank_snapshot.selection.cursor(), 3);
+        assert_eq!(blank_cursor, 4);
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: blank_position.line + 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let final_snapshot = snapshot(&view, cx);
+        let final_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(final_snapshot.selection.cursor(), 5);
+        assert!(final_cursor > blank_cursor);
     }
 
     #[gpui::test]
@@ -782,8 +868,266 @@ mod tests {
         cx.simulate_keystrokes("enter");
 
         let snapshot = snapshot(&view, cx);
-        assert_eq!(snapshot.document_text, "First\n\n");
+        assert_eq!(snapshot.document_text, "First\n\n\n");
         assert_eq!(snapshot.selection.cursor(), 7);
+    }
+
+    #[gpui::test]
+    fn repeated_enter_after_heading_creates_visible_empty_rows(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# A");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter enter");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "# A\n\n\n\n");
+        assert_eq!(snapshot.selection.cursor(), 6);
+        assert_eq!(snapshot.display_map.blocks.len(), 2);
+
+        let line_count = cx.update_window_entity(&view, |editor, _, _| {
+            rendered_empty_block_line_count(&editor.snapshot.display_map.blocks[1]).unwrap_or(0)
+        });
+        assert_eq!(line_count, 3);
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &snapshot.display_map.blocks,
+                1,
+                snapshot.visible_selection.cursor(),
+            ),
+            Some(1)
+        );
+    }
+
+    #[gpui::test]
+    fn typing_after_single_enter_lands_on_typora_third_markdown_line(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("x");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\n\nx\n");
+    }
+
+    #[gpui::test]
+    fn typing_after_double_enter_stays_on_current_empty_line(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter enter");
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("x");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\n\n\nx\n");
+    }
+
+    #[gpui::test]
+    fn typing_into_collapsed_inter_block_gap_normalizes_to_single_paragraph_between_blocks(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let blank_snapshot = snapshot(&view, cx);
+        assert_eq!(blank_snapshot.selection.cursor(), 3);
+
+        cx.simulate_keystrokes("x");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\n\nx\n\nB");
+    }
+
+    #[gpui::test]
+    fn backspace_on_collapsed_inter_block_gap_removes_visible_empty_paragraph(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\nB");
+        assert_eq!(snapshot.selection.cursor(), 1);
+    }
+
+    #[gpui::test]
+    fn delete_on_collapsed_inter_block_gap_removes_visible_empty_paragraph(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("delete");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\nB");
+        assert_eq!(snapshot.selection.cursor(), 1);
+    }
+
+    #[gpui::test]
+    fn shift_selection_across_collapsed_inter_block_gap_survives_snapshot_sync(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("shift-down");
+        let selected_snapshot = snapshot(&view, cx);
+        let input_selection = cx.update_window_entity(&input, |input, window, cx| {
+            input
+                .selected_text_range(true, window, cx)
+                .map(|selection| selection.range)
+        });
+
+        assert!(!selected_snapshot.selection.is_collapsed());
+        assert!(!selected_snapshot.visible_selection.is_collapsed());
+        assert_eq!(selected_snapshot.selection.range(), 1..3);
+        assert_eq!(selected_snapshot.visible_selection.range(), 1..3);
+        assert_eq!(input_selection, Some(1..3));
+    }
+
+    #[gpui::test]
+    fn shift_selection_survives_snapshot_sync_on_plain_multiline_text(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("shift-down");
+
+        let selected_snapshot = snapshot(&view, cx);
+        let input_selection = cx.update_window_entity(&input, |input, window, cx| {
+            input
+                .selected_text_range(true, window, cx)
+                .map(|selection| selection.range)
+        });
+
+        assert!(!selected_snapshot.selection.is_collapsed());
+        assert!(!selected_snapshot.visible_selection.is_collapsed());
+        assert!(input_selection.is_some());
+        assert!(!input_selection.unwrap_or_default().is_empty());
+    }
+
+    #[gpui::test]
+    fn empty_document_double_enter_matches_typora_blank_line_count(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter enter");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "\n\n\n\n");
+        assert_eq!(snapshot.selection.cursor(), 2);
     }
 
     #[gpui::test]

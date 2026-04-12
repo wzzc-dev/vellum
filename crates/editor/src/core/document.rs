@@ -515,7 +515,10 @@ fn materialize_trailing_empty_block(blocks: &mut Vec<BlockProjection>, source: &
         return;
     }
 
-    let separator_end = trailing.byte_range.end;
+    let Some(structural_len) = structural_separator_len(&previous_text, &trailing_text) else {
+        return;
+    };
+    let separator_end = trailing.byte_range.start + structural_len;
     blocks.pop();
     if let Some(previous) = blocks.last_mut() {
         previous.byte_range.end = separator_end;
@@ -523,8 +526,8 @@ fn materialize_trailing_empty_block(blocks: &mut Vec<BlockProjection>, source: &
     blocks.push(BlockProjection {
         id: 0,
         kind: BlockKind::Raw,
-        byte_range: source.len_bytes()..source.len_bytes(),
-        content_range: source.len_bytes()..source.len_bytes(),
+        byte_range: separator_end..source.len_bytes(),
+        content_range: separator_end..separator_end,
         cursor_anchor_policy: CursorAnchorPolicy::Clamp,
         can_code_edit: false,
     });
@@ -1024,6 +1027,20 @@ mod tests {
         assert_eq!(doc.blocks[1].kind, BlockKind::Raw);
         assert_eq!(doc.block_text(&doc.blocks[1]), "");
         assert_eq!(doc.blocks[1].byte_range, 7..7);
+    }
+
+    #[test]
+    fn materializes_extra_trailing_separator_into_editable_empty_block() {
+        let doc = DocumentBuffer::from_text("First\n\n\n");
+
+        assert_eq!(doc.blocks.len(), 2);
+        assert_eq!(doc.blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(doc.block_trailing_text(&doc.blocks[0]), "\n\n");
+        assert_eq!(doc.blocks[1].kind, BlockKind::Raw);
+        assert_eq!(doc.blocks[1].content_range, 7..7);
+        assert_eq!(doc.blocks[1].byte_range, 7..8);
+        assert_eq!(doc.block_span_text(&doc.blocks[1]), "\n");
+        assert_eq!(doc.block_trailing_text(&doc.blocks[1]), "\n");
     }
 
     #[test]

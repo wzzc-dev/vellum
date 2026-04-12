@@ -5,11 +5,20 @@ use crate::{
     BlockKind, EditCommand, RenderSpanKind, SelectionAffinity, SelectionState,
     core::{
         controller::EditorSnapshot,
-        text_ops::{clamp_to_char_boundary, compute_document_diff, line_column_for_byte_offset},
+        text_ops::{
+            clamp_to_char_boundary, compute_document_diff, line_column_for_byte_offset,
+            utf16_range_to_byte_range,
+        },
     },
 };
 
-use super::view::MarkdownEditor;
+use super::{
+    surface::{
+        caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_visible_end,
+        rendered_visible_len, surface_empty_block_line_count,
+    },
+    view::MarkdownEditor,
+};
 
 pub(super) fn build_document_input(
     text: &str,
@@ -34,15 +43,15 @@ impl MarkdownEditor {
                 input.set_value(snapshot.display_map.visible_text.clone(), window, cx);
             }
 
-            if input.cursor() != snapshot.visible_selection.cursor() {
-                input.set_cursor_position(
-                    Position {
-                        line: snapshot.visible_caret_position.line as u32,
-                        character: snapshot.visible_caret_position.column as u32,
-                    },
-                    window,
-                    cx,
-                );
+            if snapshot.visible_selection.is_collapsed() {
+                let synced_selection = synced_input_selection(&snapshot);
+                let has_range_selection = input
+                    .selected_text_range(true, window, cx)
+                    .map(|selection| !selection.range.is_empty())
+                    .unwrap_or(false);
+                if has_range_selection || input.cursor() != synced_selection.cursor() {
+                    input.set_cursor_position(input_cursor_position(&snapshot), window, cx);
+                }
             }
         });
         self.syncing_input = false;
@@ -95,6 +104,7 @@ impl MarkdownEditor {
         let Some((visible_text, visible_selection)) = self.read_input_state(window, cx) else {
             return;
         };
+        let mirrored_selection = mirrored_input_selection(&self.snapshot);
 
         let effects = if visible_text != self.snapshot.display_map.visible_text {
             let Some((text, selection)) =
@@ -104,7 +114,7 @@ impl MarkdownEditor {
             };
             self.controller
                 .dispatch(EditCommand::SyncDocumentState { text, selection })
-        } else if visible_selection != self.snapshot.visible_selection {
+        } else if visible_selection != mirrored_selection {
             let selection = selection_from_visible_input(&self.snapshot, &visible_selection);
             self.controller
                 .dispatch(EditCommand::SetSelection { selection })
@@ -158,7 +168,7 @@ fn selection_from_visible_input(
     snapshot: &EditorSnapshot,
     visible_selection: &SelectionState,
 ) -> SelectionState {
-    let visible_selection = normalize_vertical_gap_selection(snapshot, visible_selection);
+    let visible_selection = input_selection_to_display_selection(snapshot, visible_selection);
     if !visible_selection.is_collapsed() {
         return snapshot
             .display_map
@@ -192,90 +202,249 @@ fn selection_from_visible_input(
     source_selection
 }
 
-fn normalize_vertical_gap_selection(
-    snapshot: &EditorSnapshot,
-    visible_selection: &SelectionState,
-) -> SelectionState {
-    if !visible_selection.is_collapsed() || !snapshot.visible_selection.is_collapsed() {
-        return visible_selection.clone();
+fn input_cursor_position(snapshot: &EditorSnapshot) -> Position {
+    let offset = input_cursor_offset(snapshot);
+    let (line, column) = line_column_for_byte_offset(&snapshot.display_map.visible_text, offset);
+    Position {
+        line: line as u32,
+        character: column as u32,
     }
-
-    let visible_text = &snapshot.display_map.visible_text;
-    let previous_cursor = clamp_to_char_boundary(visible_text, snapshot.visible_selection.cursor());
-    let next_cursor = clamp_to_char_boundary(visible_text, visible_selection.cursor());
-    if next_cursor == previous_cursor {
-        return visible_selection.clone();
-    }
-
-    let (previous_line, _) = line_column_for_byte_offset(visible_text, previous_cursor);
-    let (next_line, _) = line_column_for_byte_offset(visible_text, next_cursor);
-    if previous_line == next_line {
-        return visible_selection.clone();
-    }
-
-    let Some(adjusted_cursor) = adjusted_cursor_for_hidden_vertical_gap(
-        &snapshot.display_map.blocks,
-        previous_cursor,
-        next_cursor,
-    ) else {
-        return visible_selection.clone();
-    };
-
-    let mut adjusted = visible_selection.clone();
-    adjusted.anchor_byte = adjusted_cursor;
-    adjusted.head_byte = adjusted_cursor;
-    adjusted
 }
 
-fn adjusted_cursor_for_hidden_vertical_gap(
-    blocks: &[crate::RenderBlock],
-    previous_cursor: usize,
-    next_cursor: usize,
-) -> Option<usize> {
-    let moving_down = next_cursor > previous_cursor;
+fn synced_input_selection(snapshot: &EditorSnapshot) -> SelectionState {
+    let offset = input_cursor_offset(snapshot);
+    let (_, column) = line_column_for_byte_offset(&snapshot.display_map.visible_text, offset);
+    let mut selection = SelectionState::collapsed(offset);
+    selection.preferred_column = Some(column);
+    selection
+}
 
-    for window in blocks.windows(2) {
-        let previous_block = &window[0];
-        let next_block = &window[1];
-        if block_has_rendered_text(previous_block) {
-            continue;
-        }
+fn mirrored_input_selection(snapshot: &EditorSnapshot) -> SelectionState {
+    if snapshot.visible_selection.is_collapsed() {
+        synced_input_selection(snapshot)
+    } else {
+        snapshot.visible_selection.clone()
+    }
+}
 
-        let empty_block_start = previous_block.visible_range.start;
-        let next_block_start = next_block.visible_range.start;
-        if next_block_start <= empty_block_start {
-            continue;
-        }
+fn input_cursor_offset(snapshot: &EditorSnapshot) -> usize {
+    compressed_surface_cursor_offset(snapshot).unwrap_or(snapshot.visible_selection.cursor())
+}
 
-        if moving_down
-            && previous_cursor >= empty_block_start
-            && previous_cursor < next_block_start
-            && next_cursor >= empty_block_start
-            && next_cursor < next_block_start
+fn compressed_surface_cursor_offset(snapshot: &EditorSnapshot) -> Option<usize> {
+    let blocks = &snapshot.display_map.blocks;
+    let cursor = snapshot.visible_selection.cursor();
+    let source_cursor = snapshot.selection.cursor();
+
+    for (block_index, block) in blocks.iter().enumerate() {
+        if let Some(local_cursor) = caret_visual_offset_for_block(blocks, block_index, cursor)
+            && block_uses_compressed_surface_cursor(blocks, block_index)
+            && source_cursor_owned_by_block_for_input_cursor(block, source_cursor)
         {
-            return Some(next_block_start);
-        }
-
-        if !moving_down
-            && previous_cursor >= next_block_start
-            && next_cursor >= empty_block_start
-            && next_cursor < next_block_start
-        {
-            return Some(empty_block_start);
+            let visible_offset =
+                block.visible_range.start + local_cursor.min(rendered_visible_len(block));
+            return Some(clamp_to_char_boundary(
+                &snapshot.display_map.visible_text,
+                visible_offset,
+            ));
         }
     }
 
     None
 }
 
-fn block_has_rendered_text(block: &crate::RenderBlock) -> bool {
-    block.spans.iter().any(|span| {
-        !span.visible_text.is_empty()
-            && !matches!(
-                span.kind,
-                RenderSpanKind::LineBreak | RenderSpanKind::HiddenSyntax
-            )
-    })
+fn source_cursor_owned_by_block_for_input_cursor(
+    block: &crate::RenderBlock,
+    source_cursor: usize,
+) -> bool {
+    source_cursor >= block.source_range.start && source_cursor < block.source_range.end
+}
+
+fn block_uses_compressed_surface_cursor(blocks: &[crate::RenderBlock], block_index: usize) -> bool {
+    let Some(block) = blocks.get(block_index) else {
+        return false;
+    };
+
+    surface_empty_block_line_count(blocks, block_index).is_some()
+        || rendered_visible_len(block) == 0
+}
+
+fn input_selection_to_display_selection(
+    snapshot: &EditorSnapshot,
+    input_selection: &SelectionState,
+) -> SelectionState {
+    if !input_selection.is_collapsed() {
+        let mut adjusted = input_selection.clone();
+        adjusted.anchor_byte =
+            canonical_display_offset_for_input_offset(snapshot, input_selection.anchor_byte);
+        adjusted.head_byte =
+            canonical_display_offset_for_input_offset(snapshot, input_selection.head_byte);
+        return adjusted;
+    }
+
+    let mut adjusted = input_selection.clone();
+    adjusted.anchor_byte = normalized_display_cursor_from_input(
+        snapshot,
+        mirrored_input_selection(snapshot).cursor(),
+        input_selection.cursor(),
+    );
+    adjusted.head_byte = adjusted.anchor_byte;
+    adjusted
+}
+
+fn normalized_display_cursor_from_input(
+    snapshot: &EditorSnapshot,
+    previous_input_cursor: usize,
+    next_input_cursor: usize,
+) -> usize {
+    let visible_text = &snapshot.display_map.visible_text;
+    let previous_cursor = clamp_to_char_boundary(visible_text, previous_input_cursor);
+    let next_cursor = clamp_to_char_boundary(visible_text, next_input_cursor);
+    if next_cursor == previous_cursor {
+        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+    }
+
+    let (previous_line, _) = line_column_for_byte_offset(visible_text, previous_cursor);
+    let (next_line, _) = line_column_for_byte_offset(visible_text, next_cursor);
+    if previous_line == next_line {
+        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+    }
+
+    let Some(adjusted_cursor) =
+        adjusted_cursor_for_hidden_vertical_gap(snapshot, previous_cursor, next_cursor)
+    else {
+        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+    };
+
+    adjusted_cursor
+}
+
+fn adjusted_cursor_for_hidden_vertical_gap(
+    snapshot: &EditorSnapshot,
+    previous_cursor: usize,
+    next_cursor: usize,
+) -> Option<usize> {
+    let moving_down = next_cursor > previous_cursor;
+
+    for gap in compressed_gap_regions(snapshot) {
+        if moving_down
+            && previous_cursor < gap.input_blank_start
+            && next_cursor >= gap.input_blank_start
+            && next_cursor < gap.next_block_input_start
+        {
+            return Some(gap.display_blank_offset);
+        }
+
+        if moving_down
+            && previous_cursor >= gap.input_blank_start
+            && previous_cursor < gap.next_block_input_start
+            && next_cursor >= gap.input_blank_start
+            && next_cursor < gap.next_block_input_start
+        {
+            return Some(gap.next_block_display_start);
+        }
+
+        if !moving_down
+            && previous_cursor >= gap.next_block_input_start
+            && next_cursor >= gap.input_blank_start
+            && next_cursor < gap.next_block_input_start
+        {
+            return Some(gap.display_blank_offset);
+        }
+
+        if !moving_down
+            && previous_cursor >= gap.input_blank_start
+            && previous_cursor < gap.next_block_input_start
+            && next_cursor < gap.input_blank_start
+        {
+            return Some(gap.previous_display_end);
+        }
+    }
+
+    None
+}
+
+fn canonical_display_offset_for_input_offset(
+    snapshot: &EditorSnapshot,
+    input_offset: usize,
+) -> usize {
+    let input_offset = clamp_to_char_boundary(&snapshot.display_map.visible_text, input_offset);
+    for gap in compressed_gap_regions(snapshot) {
+        if input_offset == gap.input_blank_start {
+            return gap.display_blank_offset;
+        }
+        if input_offset > gap.input_blank_start && input_offset < gap.next_block_input_start {
+            return gap.display_blank_offset;
+        }
+    }
+
+    input_offset
+}
+
+fn block_has_compressed_vertical_gap(blocks: &[crate::RenderBlock], block_index: usize) -> bool {
+    let Some(block) = blocks.get(block_index) else {
+        return false;
+    };
+    if rendered_visible_len(block) == 0 {
+        return true;
+    }
+
+    let Some(raw_line_count) = rendered_empty_block_line_count(block) else {
+        return false;
+    };
+    let Some(surface_line_count) = surface_empty_block_line_count(blocks, block_index) else {
+        return false;
+    };
+
+    surface_line_count < raw_line_count
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompressedGapRegion {
+    input_blank_start: usize,
+    next_block_input_start: usize,
+    display_blank_offset: usize,
+    previous_display_end: usize,
+    next_block_display_start: usize,
+}
+
+fn compressed_gap_regions(snapshot: &EditorSnapshot) -> Vec<CompressedGapRegion> {
+    let blocks = &snapshot.display_map.blocks;
+    let mut regions = Vec::new();
+
+    for (block_index, block) in blocks.iter().enumerate() {
+        if !block_has_compressed_vertical_gap(blocks, block_index) {
+            continue;
+        }
+
+        let Some(previous_block) = block_index
+            .checked_sub(1)
+            .and_then(|index| blocks.get(index))
+        else {
+            continue;
+        };
+        let Some(next_block) = blocks.get(block_index + 1) else {
+            continue;
+        };
+        let input_blank_start = rendered_visible_end(previous_block).saturating_add(1);
+        if next_block.visible_range.start <= input_blank_start {
+            continue;
+        }
+
+        regions.push(CompressedGapRegion {
+            input_blank_start,
+            next_block_input_start: next_block.visible_range.start,
+            display_blank_offset: snapshot
+                .display_map
+                .source_to_visible(block.source_range.start),
+            previous_display_end: rendered_visible_end(previous_block),
+            next_block_display_start: snapshot
+                .display_map
+                .source_to_visible(next_block.source_range.start),
+        });
+    }
+
+    regions
 }
 
 fn should_reveal_hidden_block_syntax_boundary(
@@ -287,7 +456,8 @@ fn should_reveal_hidden_block_syntax_boundary(
     }
 
     let visible_text = &snapshot.display_map.visible_text;
-    let previous_cursor = clamp_to_char_boundary(visible_text, snapshot.visible_selection.cursor());
+    let previous_cursor =
+        clamp_to_char_boundary(visible_text, mirrored_input_selection(snapshot).cursor());
     let next_cursor = clamp_to_char_boundary(visible_text, visible_selection.cursor());
     if next_cursor >= previous_cursor {
         return false;
@@ -360,40 +530,21 @@ pub(super) fn selection_from_input(
     }
 }
 
-fn utf16_range_to_byte_range(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
-    utf16_offset_to_byte_offset(text, range.start)..utf16_offset_to_byte_offset(text, range.end)
-}
-
-fn utf16_offset_to_byte_offset(text: &str, target: usize) -> usize {
-    if target == 0 {
-        return 0;
-    }
-
-    let mut utf16_offset = 0usize;
-    for (byte_offset, ch) in text.char_indices() {
-        if utf16_offset >= target {
-            return byte_offset;
-        }
-        utf16_offset += ch.len_utf16();
-        if utf16_offset >= target {
-            return byte_offset + ch.len_utf8();
-        }
-    }
-
-    text.len()
-}
-
 pub(super) fn reconcile_visible_input_change(
     snapshot: &EditorSnapshot,
     visible_text: &str,
 ) -> Option<(String, SelectionState)> {
     let (visible_range, replacement) =
         compute_document_diff(&snapshot.display_map.visible_text, visible_text)?;
+    let display_range = std::ops::Range {
+        start: canonical_display_offset_for_input_offset(snapshot, visible_range.start),
+        end: canonical_display_offset_for_input_offset(snapshot, visible_range.end),
+    };
     let source_range = snapshot
         .display_map
         .visible_selection_to_source(&SelectionState {
-            anchor_byte: visible_range.start,
-            head_byte: visible_range.end,
+            anchor_byte: display_range.start,
+            head_byte: display_range.end,
             preferred_column: None,
             affinity: SelectionAffinity::Downstream,
         })
@@ -497,6 +648,57 @@ mod tests {
 
         assert_eq!(mapped.cursor(), marker.source_range.end);
         assert_eq!(mapped.affinity, SelectionAffinity::Downstream);
+    }
+
+    #[test]
+    fn collapsed_inter_block_gap_maps_second_down_press_to_next_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n\nB".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+        let snapshot = controller.snapshot();
+
+        let mirrored_cursor = mirrored_input_selection(&snapshot).cursor();
+        let mut visible_selection = SelectionState::collapsed(mirrored_cursor + 1);
+        visible_selection.preferred_column = Some(0);
+        let mapped = selection_from_visible_input(&snapshot, &visible_selection);
+
+        assert_eq!(mirrored_cursor, 4);
+        assert_eq!(mapped.cursor(), 5);
+    }
+
+    #[test]
+    fn reconcile_visible_input_change_normalizes_typing_into_collapsed_gap() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n\nB".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+        let snapshot = controller.snapshot();
+        let mirrored_cursor = mirrored_input_selection(&snapshot).cursor();
+        let mut visible_text = snapshot.display_map.visible_text.clone();
+        visible_text.insert(mirrored_cursor, 'x');
+
+        let (source_text, selection) =
+            reconcile_visible_input_change(&snapshot, &visible_text).expect("change should map");
+
+        assert_eq!(source_text, "A\n\nx\n\nB");
+        assert_eq!(selection, SelectionState::collapsed(4));
     }
 
     #[test]

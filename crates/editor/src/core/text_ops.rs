@@ -215,6 +215,29 @@ pub(crate) fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
     offset
 }
 
+pub(crate) fn utf16_range_to_byte_range(text: &str, range: &Range<usize>) -> Range<usize> {
+    utf16_offset_to_byte_offset(text, range.start)..utf16_offset_to_byte_offset(text, range.end)
+}
+
+pub(crate) fn utf16_offset_to_byte_offset(text: &str, target: usize) -> usize {
+    if target == 0 {
+        return 0;
+    }
+
+    let mut utf16_offset = 0usize;
+    for (byte_offset, ch) in text.char_indices() {
+        if utf16_offset >= target {
+            return byte_offset;
+        }
+        utf16_offset += ch.len_utf16();
+        if utf16_offset >= target {
+            return byte_offset + ch.len_utf8();
+        }
+    }
+
+    text.len()
+}
+
 pub(crate) fn compute_document_diff(old: &str, new: &str) -> Option<(Range<usize>, String)> {
     if old == new {
         return None;
@@ -542,6 +565,23 @@ mod tests {
 
         assert_eq!(diff.0, "A🙂".len().."A🙂中".len());
         assert_eq!(diff.1, "文");
+    }
+
+    #[test]
+    fn maps_utf16_offset_back_to_utf8_offset() {
+        let text = "A\u{1F642}\u{65B0}";
+
+        assert_eq!(utf16_offset_to_byte_offset(text, 0), 0);
+        assert_eq!(utf16_offset_to_byte_offset(text, 1), 1);
+        assert_eq!(utf16_offset_to_byte_offset(text, 3), "A\u{1F642}".len());
+        assert_eq!(utf16_offset_to_byte_offset(text, 4), text.len());
+    }
+
+    #[test]
+    fn maps_utf16_range_back_to_utf8_range() {
+        let text = "A\u{1F642}\u{65B0}";
+
+        assert_eq!(utf16_range_to_byte_range(text, &(1..4)), 1..text.len());
     }
 
     #[test]

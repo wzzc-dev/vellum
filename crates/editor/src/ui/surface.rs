@@ -74,20 +74,27 @@ impl MarkdownEditor {
             self.focus_input(window, cx);
             return;
         };
-        let Some(block) = self
+        let Some((block_index, block)) = self
             .snapshot
             .display_map
             .blocks
             .iter()
-            .find(|block| block.id == block_id)
-            .cloned()
+            .enumerate()
+            .find(|(_, block)| block.id == block_id)
+            .map(|(index, block)| (index, block.clone()))
         else {
             self.focus_input(window, cx);
             return;
         };
 
-        let local_visible_offset =
-            visible_byte_offset_for_click_position(&block, click_position, bounds, window);
+        let local_visible_offset = visible_byte_offset_for_click_position(
+            &self.snapshot.display_map.blocks,
+            block_index,
+            &block,
+            click_position,
+            bounds,
+            window,
+        );
         let visible_offset = clamp_to_char_boundary(
             &self.snapshot.display_map.visible_text,
             block.visible_range.start + local_visible_offset,
@@ -134,9 +141,17 @@ fn rendered_spans(block: &RenderBlock) -> impl Iterator<Item = &RenderSpan> {
 }
 
 fn is_rendered_span(block: &RenderBlock, span: &RenderSpan) -> bool {
+    if renders_empty_block_linebreaks(block) && span.kind == RenderSpanKind::LineBreak {
+        return !span.visible_text.is_empty();
+    }
+
     span.source_range.start < block.content_range.end
         && !(span.kind == RenderSpanKind::LineBreak
             && span.source_range.end == block.content_range.end)
+}
+
+pub(super) fn renders_empty_block_linebreaks(block: &RenderBlock) -> bool {
+    block.content_range.is_empty() && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
 }
 
 pub(super) fn rendered_visible_end(block: &RenderBlock) -> usize {
@@ -244,6 +259,7 @@ fn render_display_block(
     window: &mut Window,
 ) -> AnyElement {
     let presentation = block_presentation(&block.kind);
+    let empty_line_count = surface_empty_block_line_count(display_blocks.as_ref(), block_index);
     let list_decorations = list_decoration_rows(block);
     let shows_list_decorations = matches!(block.kind, BlockKind::List)
         && list_decorations.iter().any(|marker| marker.is_some());
@@ -271,6 +287,9 @@ fn render_display_block(
                 render_list_lines(block, &list_decorations, palette, window)
             }
             BlockKind::Blockquote => render_blockquote_lines(block, palette, window),
+            _ if empty_line_count.is_some() => {
+                render_empty_line_block(block, empty_line_count.unwrap_or(1))
+            }
             _ => div()
                 .w_full()
                 .text_size(px(presentation.font_size))
@@ -408,7 +427,9 @@ fn build_block_overlay(
     let selection_range = selection_range_in_block(block, selection);
     let selection_quads = selection_range
         .filter(|range| !range.is_empty())
-        .map(|range| selection_quads_for_block(block, range, bounds, palette, window))
+        .map(|range| {
+            selection_quads_for_block(blocks, block_index, block, range, bounds, palette, window)
+        })
         .unwrap_or_default();
     let caret_quad = if input_focused && selection.is_collapsed() {
         caret_quad_for_block(
@@ -444,6 +465,8 @@ fn selection_range_in_block(
 }
 
 fn selection_quads_for_block(
+    blocks: &[RenderBlock],
+    block_index: usize,
     block: &RenderBlock,
     selection_range: std::ops::Range<usize>,
     bounds: Bounds<gpui::Pixels>,
@@ -453,6 +476,16 @@ fn selection_quads_for_block(
     let presentation = block_presentation(&block.kind);
     let line_height = px(presentation.line_height);
     let text_x_offset = text_content_x_offset(block);
+    if let Some(line_count) = surface_empty_block_line_count(blocks, block_index) {
+        return selection_quads_for_empty_line_block(
+            selection_range,
+            line_count,
+            bounds,
+            line_height,
+            text_x_offset,
+            palette,
+        );
+    }
     let text_width = (bounds.size.width - text_x_offset).max(px(0.));
     let lines = shape_block_lines(block, text_width, window);
     if lines.is_empty() {
@@ -537,7 +570,11 @@ pub(super) fn caret_visual_offset_for_block(
     }
 
     if cursor < block_end {
-        return Some(cursor.saturating_sub(block_start));
+        return Some(compressed_empty_block_visual_offset(
+            blocks,
+            block_index,
+            cursor.saturating_sub(block_start),
+        ));
     }
 
     if cursor == block_end {
@@ -549,7 +586,11 @@ pub(super) fn caret_visual_offset_for_block(
             return None;
         }
 
-        return Some(block_end.saturating_sub(block_start));
+        return Some(compressed_empty_block_visual_offset(
+            blocks,
+            block_index,
+            block_end.saturating_sub(block_start),
+        ));
     }
 
     None
@@ -573,6 +614,20 @@ fn caret_quad_for_block(
         return Some(fill(
             Bounds::new(
                 point(bounds.left() + text_x_offset, bounds.top()),
+                size(px(2.), line_height),
+            ),
+            palette.caret_color,
+        ));
+    }
+
+    if let Some(line_count) = surface_empty_block_line_count(blocks, block_index) {
+        let line_index = local_cursor.min(line_count.saturating_sub(1));
+        return Some(fill(
+            Bounds::new(
+                point(
+                    bounds.left() + text_x_offset,
+                    bounds.top() + px(presentation.line_height * line_index as f32),
+                ),
                 size(px(2.), line_height),
             ),
             palette.caret_color,
@@ -819,6 +874,21 @@ fn render_blockquote_lines(
     text_column.into_any_element()
 }
 
+fn render_empty_line_block(block: &RenderBlock, line_count: usize) -> AnyElement {
+    let presentation = block_presentation(&block.kind);
+    let mut text_column = div().w_full().flex().flex_col();
+    for _ in 0..line_count.max(1) {
+        text_column = text_column.child(
+            div()
+                .w_full()
+                .min_h(px(presentation.line_height))
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height)),
+        );
+    }
+    text_column.into_any_element()
+}
+
 fn render_line_text(
     block: &RenderBlock,
     line: &RenderedLine,
@@ -913,6 +983,8 @@ pub(super) fn text_content_x_offset(block: &RenderBlock) -> gpui::Pixels {
 }
 
 fn visible_byte_offset_for_click_position(
+    blocks: &[RenderBlock],
+    block_index: usize,
     block: &RenderBlock,
     click_position: gpui::Point<gpui::Pixels>,
     bounds: Bounds<gpui::Pixels>,
@@ -923,6 +995,16 @@ fn visible_byte_offset_for_click_position(
     }
 
     let text_x_offset = text_content_x_offset(block);
+    if let Some(line_count) = surface_empty_block_line_count(blocks, block_index) {
+        let presentation = block_presentation(&block.kind);
+        let line_height = px(presentation.line_height);
+        let local_y = (click_position.y - bounds.top()).max(px(0.));
+        let line_index = (local_y / line_height).floor() as usize;
+        return line_index
+            .min(line_count.saturating_sub(1))
+            .min(rendered_visible_len(block));
+    }
+
     let text_width = (bounds.size.width - text_x_offset).max(px(0.));
     if text_width <= px(0.) {
         return rendered_visible_len(block);
@@ -999,6 +1081,118 @@ pub(super) fn shape_block_lines(
         )
         .unwrap_or_default()
         .to_vec()
+}
+
+pub(super) fn surface_empty_block_line_count(
+    blocks: &[RenderBlock],
+    block_index: usize,
+) -> Option<usize> {
+    let block = blocks.get(block_index)?;
+    let raw_line_count = rendered_empty_block_line_count(block)?;
+
+    if is_collapsed_inter_block_empty_block(blocks, block_index) {
+        Some(1)
+    } else {
+        Some(raw_line_count)
+    }
+}
+
+pub(super) fn rendered_empty_block_line_count(block: &RenderBlock) -> Option<usize> {
+    if !renders_empty_block_linebreaks(block) {
+        return None;
+    }
+
+    let mut saw_linebreak = false;
+    let mut newline_count = 0usize;
+    for span in rendered_spans(block) {
+        match span.kind {
+            RenderSpanKind::LineBreak => {
+                saw_linebreak = true;
+                newline_count += span
+                    .visible_text
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
+            }
+            _ if !span.visible_text.is_empty() => return None,
+            _ => {}
+        }
+    }
+
+    saw_linebreak.then_some(newline_count + 1)
+}
+
+fn is_collapsed_inter_block_empty_block(blocks: &[RenderBlock], block_index: usize) -> bool {
+    let Some(block) = blocks.get(block_index) else {
+        return false;
+    };
+    if block.kind != BlockKind::Raw
+        || !block.content_range.is_empty()
+        || block.source_range.is_empty()
+    {
+        return false;
+    }
+
+    let Some(previous) = block_index
+        .checked_sub(1)
+        .and_then(|index| blocks.get(index))
+    else {
+        return false;
+    };
+    let Some(next) = blocks.get(block_index + 1) else {
+        return false;
+    };
+
+    previous.kind != BlockKind::Raw && next.kind != BlockKind::Raw
+}
+
+fn compressed_empty_block_visual_offset(
+    blocks: &[RenderBlock],
+    block_index: usize,
+    local_offset: usize,
+) -> usize {
+    let Some(line_count) = surface_empty_block_line_count(blocks, block_index) else {
+        return local_offset;
+    };
+
+    local_offset.min(line_count.saturating_sub(1))
+}
+
+fn selection_quads_for_empty_line_block(
+    selection_range: std::ops::Range<usize>,
+    line_count: usize,
+    bounds: Bounds<gpui::Pixels>,
+    line_height: gpui::Pixels,
+    text_x_offset: gpui::Pixels,
+    palette: RenderPalette,
+) -> Vec<PaintQuad> {
+    if selection_range.is_empty() || line_count == 0 {
+        return Vec::new();
+    }
+
+    let start_line = selection_range.start.min(line_count.saturating_sub(1));
+    let end_line = selection_range
+        .end
+        .saturating_sub(1)
+        .min(line_count.saturating_sub(1));
+    let width = (bounds.size.width - text_x_offset).max(px(1.));
+    let mut quads = Vec::new();
+    let mut y_offset = px(0.);
+
+    for line_index in 0..line_count {
+        if line_index >= start_line && line_index <= end_line {
+            quads.push(fill(
+                Bounds::new(
+                    point(bounds.left() + text_x_offset, bounds.top() + y_offset),
+                    size(width, line_height),
+                ),
+                palette.selection_color,
+            ));
+        }
+        y_offset += line_height;
+    }
+
+    quads
 }
 
 fn wrap_boundary_index(line: &gpui::WrappedLine, boundary: &gpui::WrapBoundary) -> usize {

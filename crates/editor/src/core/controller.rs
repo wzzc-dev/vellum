@@ -125,7 +125,6 @@ impl EditorSnapshot {
 pub struct EditorEffects {
     pub changed: bool,
     pub selection_changed: bool,
-    pub active_block_changed: bool,
     pub reload_path: Option<PathBuf>,
 }
 
@@ -454,7 +453,6 @@ impl EditorController {
         Ok(EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: true,
             reload_path: None,
         })
     }
@@ -467,7 +465,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: true,
             reload_path: None,
         }
     }
@@ -494,7 +491,6 @@ impl EditorController {
         Ok(EditorEffects {
             changed: true,
             selection_changed: false,
-            active_block_changed: false,
             reload_path: None,
         })
     }
@@ -542,7 +538,6 @@ impl EditorController {
                     EditorEffects {
                         changed: false,
                         selection_changed: false,
-                        active_block_changed: false,
                         reload_path: Some(path),
                     }
                 } else {
@@ -556,7 +551,6 @@ impl EditorController {
                     EditorEffects {
                         changed: true,
                         selection_changed: false,
-                        active_block_changed: false,
                         reload_path: None,
                     }
                 } else {
@@ -570,7 +564,6 @@ impl EditorController {
                     EditorEffects {
                         changed: true,
                         selection_changed: false,
-                        active_block_changed: false,
                         reload_path: Some(to),
                     }
                 } else {
@@ -602,7 +595,6 @@ impl EditorController {
             return EditorEffects {
                 changed: true,
                 selection_changed: false,
-                active_block_changed: false,
                 reload_path: None,
             };
         }
@@ -623,7 +615,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: true,
             reload_path: None,
         }
     }
@@ -655,13 +646,10 @@ impl EditorController {
             return EditorEffects::default();
         }
 
-        let previous_block_id = self.selected_block_id();
         self.selection = selection;
-        let next_block_id = self.selected_block_id();
         EditorEffects {
             changed: false,
             selection_changed: true,
-            active_block_changed: previous_block_id != next_block_id,
             reload_path: None,
         }
     }
@@ -690,6 +678,22 @@ impl EditorController {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
+        let block_text = self.document.block_text(&block);
+        if range.is_empty()
+            && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
+            && self.document.blocks().len() == 1
+            && raw_block_is_only_whitespace(&block_text)
+        {
+            let selection_after = SelectionState::collapsed(range.start + 1);
+            return self.replace_selection_with_text(
+                "\n\n".to_string(),
+                Some(selection_after),
+                "Inserted paragraph break",
+            );
+        }
+        if let Some(effect) = self.insert_break_in_eof_empty_paragraph(&block, &range) {
+            return effect;
+        }
         if range.start < block.content_range.start || range.end > block.content_range.end {
             let selection_after = SelectionState::collapsed(range.start + 1);
             return self.replace_selection_with_text(
@@ -698,8 +702,17 @@ impl EditorController {
                 "Inserted line break",
             );
         }
-
-        let block_text = self.document.block_text(&block);
+        if range.is_empty()
+            && block_text.is_empty()
+            && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
+        {
+            let selection_after = SelectionState::collapsed(range.start + 1);
+            return self.replace_selection_with_text(
+                "\n".to_string(),
+                Some(selection_after),
+                "Inserted line break",
+            );
+        }
         let local_cursor = self
             .selection
             .cursor()
@@ -720,7 +733,17 @@ impl EditorController {
         };
 
         let trailing = self.document.block_trailing_text(&block);
-        let replacement = format!("{}{}", transform.replacement, trailing);
+        let mut replacement = format!("{}{}", transform.replacement, trailing);
+        if should_append_eof_sentinel_after_enter(
+            &self.document,
+            &block,
+            &block_text,
+            &range,
+            &replacement,
+            transform.cursor_offset,
+        ) {
+            replacement.push('\n');
+        }
         let selection_after =
             SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
         self.apply_edit(
@@ -814,6 +837,12 @@ impl EditorController {
             );
         }
 
+        if let Some(effect) = self.delete_backward_eof_empty_paragraph() {
+            return effect;
+        }
+        if let Some(effect) = self.delete_backward_collapsed_inter_block_gap() {
+            return effect;
+        }
         if let Some(effect) = self.delete_backward_structural() {
             return effect;
         }
@@ -843,6 +872,13 @@ impl EditorController {
             );
         }
 
+        if let Some(effect) = self.delete_forward_eof_empty_paragraph() {
+            return effect;
+        }
+        if let Some(effect) = self.delete_forward_collapsed_inter_block_gap() {
+            return effect;
+        }
+
         let text = self.document.text();
         let cursor = self.selection.cursor();
         if cursor >= text.len() {
@@ -860,6 +896,103 @@ impl EditorController {
 }
 
 impl EditorController {
+    fn insert_break_in_eof_empty_paragraph(
+        &mut self,
+        block: &BlockProjection,
+        range: &Range<usize>,
+    ) -> Option<EditorEffects> {
+        if !range.is_empty()
+            || !is_eof_empty_paragraph_block(&self.document, block, self.selection.cursor())
+        {
+            return None;
+        }
+
+        let (replacement, status_message) = if block.byte_range.is_empty() {
+            ("\n\n", "Inserted paragraph break")
+        } else {
+            ("\n", "Inserted line break")
+        };
+        let selection_after = SelectionState::collapsed(range.start + 1);
+        Some(self.replace_selection_with_text(
+            replacement.to_string(),
+            Some(selection_after),
+            status_message,
+        ))
+    }
+
+    fn delete_backward_eof_empty_paragraph(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.content_range.start
+            || !is_eof_empty_paragraph_block(&self.document, &current, self.selection.cursor())
+        {
+            return None;
+        }
+
+        let current_index = self.document.block_index_by_id(current.id)?;
+        if current_index == 0 {
+            return None;
+        }
+
+        let previous = self.document.blocks().get(current_index - 1)?.clone();
+        if !supports_eof_empty_paragraph_predecessor_kind(&previous.kind) {
+            return None;
+        }
+
+        let deletion_end = current.byte_range.end.max(previous.byte_range.end);
+        let deletion_range = previous.content_range.end..deletion_end;
+        if deletion_range.is_empty() {
+            return None;
+        }
+
+        Some(self.apply_edit(
+            deletion_range,
+            String::new(),
+            SelectionState::collapsed(previous.content_range.end),
+            "Deleted empty block",
+        ))
+    }
+
+    fn delete_forward_eof_empty_paragraph(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.byte_range.start
+            || !is_eof_empty_paragraph_block(&self.document, &current, self.selection.cursor())
+        {
+            return None;
+        }
+
+        (current.byte_range.len() == 1).then(EditorEffects::default)
+    }
+
+    fn delete_backward_collapsed_inter_block_gap(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.content_range.start {
+            return None;
+        }
+
+        let gap = inter_block_collapsed_gap(&self.document, &current)?;
+        Some(self.apply_edit(
+            gap.replacement_range,
+            "\n".to_string(),
+            SelectionState::collapsed(gap.selection_after),
+            "Deleted empty paragraph",
+        ))
+    }
+
+    fn delete_forward_collapsed_inter_block_gap(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.content_range.start {
+            return None;
+        }
+
+        let gap = inter_block_collapsed_gap(&self.document, &current)?;
+        Some(self.apply_edit(
+            gap.replacement_range,
+            "\n".to_string(),
+            SelectionState::collapsed(gap.selection_after),
+            "Deleted empty paragraph",
+        ))
+    }
+
     fn delete_backward_structural(&mut self) -> Option<EditorEffects> {
         let current = self.current_block()?.clone();
         if self.selection.cursor() != current.content_range.start {
@@ -935,7 +1068,6 @@ impl EditorController {
             return EditorEffects::default();
         };
 
-        let previous_block_id = self.selected_block_id();
         self.document.apply_transaction(Transaction::Replace {
             range: entry.after_range.clone(),
             replacement: entry.before_text.clone(),
@@ -949,7 +1081,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
@@ -959,7 +1090,6 @@ impl EditorController {
             return EditorEffects::default();
         };
 
-        let previous_block_id = self.selected_block_id();
         self.document.apply_transaction(Transaction::Replace {
             range: entry.before_range.clone(),
             replacement: entry.after_text.clone(),
@@ -973,7 +1103,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
@@ -999,7 +1128,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: true,
             reload_path: None,
         }
     }
@@ -1014,7 +1142,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: false,
-            active_block_changed: false,
             reload_path: None,
         }
     }
@@ -1027,7 +1154,6 @@ impl EditorController {
         status_message: &str,
     ) -> EditorEffects {
         let selection_before = self.selection.clone();
-        let previous_block_id = self.selected_block_id();
         let applied = self
             .document
             .apply_transaction(Transaction::Replace { range, replacement });
@@ -1049,7 +1175,6 @@ impl EditorController {
         EditorEffects {
             changed: true,
             selection_changed: true,
-            active_block_changed: previous_block_id != self.selected_block_id(),
             reload_path: None,
         }
     }
@@ -1063,10 +1188,6 @@ impl EditorController {
         self.document
             .blocks()
             .get(self.document.block_index_at_offset(self.selection.cursor()))
-    }
-
-    fn selected_block_id(&self) -> Option<u64> {
-        self.current_block().map(|block| block.id)
     }
 }
 
@@ -1083,6 +1204,39 @@ fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize)
         text.lines().count().saturating_sub(1)
     };
     byte_offset_for_line_column(text, target_line, preferred_column)
+}
+
+#[derive(Debug, Clone)]
+struct InterBlockCollapsedGap {
+    replacement_range: Range<usize>,
+    selection_after: usize,
+}
+
+fn inter_block_collapsed_gap(
+    document: &DocumentBuffer,
+    block: &BlockProjection,
+) -> Option<InterBlockCollapsedGap> {
+    if block.kind != BlockKind::Raw
+        || !block.content_range.is_empty()
+        || block.byte_range.is_empty()
+        || !raw_block_is_only_whitespace(&document.block_span_text(block))
+    {
+        return None;
+    }
+
+    let current_index = document.block_index_by_id(block.id)?;
+    let previous = current_index
+        .checked_sub(1)
+        .and_then(|index| document.blocks().get(index))?;
+    let next = document.blocks().get(current_index + 1)?;
+    if previous.kind == BlockKind::Raw || next.kind == BlockKind::Raw {
+        return None;
+    }
+
+    Some(InterBlockCollapsedGap {
+        replacement_range: previous.content_range.end..next.byte_range.start,
+        selection_after: previous.content_range.end,
+    })
 }
 
 fn supports_empty_boundary_backspace_kind(kind: &BlockKind) -> bool {
@@ -1125,6 +1279,63 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
         cursor += 1;
     }
     cursor.min(text.len())
+}
+
+fn is_last_block(document: &DocumentBuffer, block: &BlockProjection) -> bool {
+    document
+        .block_index_by_id(block.id)
+        .map(|index| index + 1 == document.blocks().len())
+        .unwrap_or(false)
+}
+
+fn is_eof_empty_paragraph_block(
+    document: &DocumentBuffer,
+    block: &BlockProjection,
+    cursor: usize,
+) -> bool {
+    if document.blocks().len() <= 1
+        || !matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
+        || !block.content_range.is_empty()
+        || !document.block_text(block).is_empty()
+        || !raw_block_is_only_whitespace(&document.block_span_text(block))
+        || !is_last_block(document, block)
+    {
+        return false;
+    }
+
+    cursor >= block.byte_range.start && cursor <= block.byte_range.end
+}
+
+fn should_append_eof_sentinel_after_enter(
+    document: &DocumentBuffer,
+    block: &BlockProjection,
+    block_text: &str,
+    range: &Range<usize>,
+    replacement: &str,
+    cursor_offset: usize,
+) -> bool {
+    range.is_empty()
+        && !block_text.is_empty()
+        && supports_eof_empty_paragraph_predecessor_kind(&block.kind)
+        && is_last_block(document, block)
+        && replacement.ends_with("\n\n")
+        && cursor_offset == replacement.len()
+}
+
+fn raw_block_is_only_whitespace(text: &str) -> bool {
+    text.chars()
+        .all(|ch| matches!(ch, '\n' | '\r' | ' ' | '\t'))
+}
+
+fn supports_eof_empty_paragraph_predecessor_kind(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::Raw
+            | BlockKind::Paragraph
+            | BlockKind::Heading { .. }
+            | BlockKind::List
+            | BlockKind::Blockquote
+    )
 }
 
 fn selection_spans_multiple_blocks(document: &DocumentBuffer, range: &Range<usize>) -> bool {
@@ -1236,6 +1447,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_at_eof_adds_typora_sentinel_blank_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "First".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "First\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(7));
+    }
+
+    #[test]
     fn delete_backward_merges_trailing_empty_block() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -1256,6 +1489,180 @@ mod tests {
         assert_eq!(snapshot.document_text, "First");
         assert_eq!(snapshot.selection, SelectionState::collapsed(5));
         assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_backward_on_collapsed_inter_block_gap_removes_visible_empty_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n\nB".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "A\nB");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(1));
+    }
+
+    #[test]
+    fn delete_forward_on_collapsed_inter_block_gap_removes_visible_empty_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n\nB".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "A\nB");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(1));
+    }
+
+    #[test]
+    fn enter_on_zero_length_trailing_block_upgrades_to_typora_eof_invariant() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# A\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "# A\n\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(6));
+    }
+
+    #[test]
+    fn empty_document_double_enter_inserts_typora_style_blank_paragraphs() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "\n\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(2));
+    }
+
+    #[test]
+    fn exiting_empty_list_item_at_eof_adds_typora_sentinel_blank_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n- ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(8),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- one\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(7));
+    }
+
+    #[test]
+    fn exiting_empty_blockquote_line_at_eof_adds_typora_sentinel_blank_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> keep\n> ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(9),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> keep\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(8));
+    }
+
+    #[test]
+    fn backspace_at_start_of_typora_eof_empty_paragraph_removes_separator_and_sentinel() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "A");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(1));
+    }
+
+    #[test]
+    fn backspace_on_lower_typora_eof_empty_line_removes_one_blank_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "A\n\n\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(4),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "A\n\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(3));
     }
 
     #[test]
