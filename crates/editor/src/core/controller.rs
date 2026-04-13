@@ -733,17 +733,7 @@ impl EditorController {
         };
 
         let trailing = self.document.block_trailing_text(&block);
-        let mut replacement = format!("{}{}", transform.replacement, trailing);
-        if should_append_eof_sentinel_after_enter(
-            &self.document,
-            &block,
-            &block_text,
-            &range,
-            &replacement,
-            transform.cursor_offset,
-        ) {
-            replacement.push('\n');
-        }
+        let replacement = format!("{}{}", transform.replacement, trailing);
         let selection_after =
             SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
         self.apply_edit(
@@ -1306,22 +1296,6 @@ fn is_eof_empty_paragraph_block(
     cursor >= block.byte_range.start && cursor <= block.byte_range.end
 }
 
-fn should_append_eof_sentinel_after_enter(
-    document: &DocumentBuffer,
-    block: &BlockProjection,
-    block_text: &str,
-    range: &Range<usize>,
-    replacement: &str,
-    cursor_offset: usize,
-) -> bool {
-    range.is_empty()
-        && !block_text.is_empty()
-        && supports_eof_empty_paragraph_predecessor_kind(&block.kind)
-        && is_last_block(document, block)
-        && replacement.ends_with("\n\n")
-        && cursor_offset == replacement.len()
-}
-
 fn raw_block_is_only_whitespace(text: &str) -> bool {
     text.chars()
         .all(|ch| matches!(ch, '\n' | '\r' | ' ' | '\t'))
@@ -1447,7 +1421,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_at_eof_adds_typora_sentinel_blank_line() {
+    fn enter_at_eof_creates_single_trailing_empty_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -1464,7 +1438,7 @@ mod tests {
         controller.dispatch(EditCommand::InsertBreak { plain: false });
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "First\n\n\n");
+        assert_eq!(snapshot.document_text, "First\n\n");
         assert_eq!(snapshot.selection, SelectionState::collapsed(7));
     }
 
@@ -1578,7 +1552,7 @@ mod tests {
     }
 
     #[test]
-    fn exiting_empty_list_item_at_eof_adds_typora_sentinel_blank_line() {
+    fn exiting_empty_list_item_at_eof_creates_single_trailing_empty_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -1595,12 +1569,12 @@ mod tests {
         controller.dispatch(EditCommand::InsertBreak { plain: false });
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "- one\n\n\n");
+        assert_eq!(snapshot.document_text, "- one\n\n");
         assert_eq!(snapshot.selection, SelectionState::collapsed(7));
     }
 
     #[test]
-    fn exiting_empty_blockquote_line_at_eof_adds_typora_sentinel_blank_line() {
+    fn exiting_empty_blockquote_line_at_eof_creates_single_trailing_empty_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -1617,7 +1591,7 @@ mod tests {
         controller.dispatch(EditCommand::InsertBreak { plain: false });
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "> keep\n\n\n");
+        assert_eq!(snapshot.document_text, "> keep\n\n");
         assert_eq!(snapshot.selection, SelectionState::collapsed(8));
     }
 

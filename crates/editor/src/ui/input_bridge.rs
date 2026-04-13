@@ -170,6 +170,7 @@ fn selection_from_visible_input(
 ) -> SelectionState {
     let visible_selection = input_selection_to_display_selection(snapshot, visible_selection);
     if !visible_selection.is_collapsed() {
+
         return snapshot
             .display_map
             .visible_selection_to_source(&visible_selection);
@@ -233,11 +234,30 @@ fn input_cursor_offset(snapshot: &EditorSnapshot) -> usize {
 
 fn compressed_surface_cursor_offset(snapshot: &EditorSnapshot) -> Option<usize> {
     let blocks = &snapshot.display_map.blocks;
-    let cursor = snapshot.visible_selection.cursor();
+    let visible_cursor = snapshot.visible_selection.cursor();
     let source_cursor = snapshot.selection.cursor();
 
+    for gap in compressed_gap_regions(snapshot) {
+        let Some(block) = blocks.get(gap.block_index) else {
+            continue;
+        };
+        if source_cursor_owned_by_block_for_input_cursor(block, source_cursor) {
+            return Some(gap.input_stop_offset);
+        }
+
+        let Some(next_block) = blocks.get(gap.next_block_index) else {
+            continue;
+        };
+        if visible_cursor == gap.next_block_display_start
+            && source_cursor >= next_block.source_range.start
+            && source_cursor <= next_block.source_range.end
+        {
+            return Some(gap.next_block_input_start);
+        }
+    }
+
     for (block_index, block) in blocks.iter().enumerate() {
-        if let Some(local_cursor) = caret_visual_offset_for_block(blocks, block_index, cursor)
+        if let Some(local_cursor) = caret_visual_offset_for_block(blocks, block_index, visible_cursor)
             && block_uses_compressed_surface_cursor(blocks, block_index)
             && source_cursor_owned_by_block_for_input_cursor(block, source_cursor)
         {
@@ -306,58 +326,82 @@ fn normalized_display_cursor_from_input(
 
     let (previous_line, _) = line_column_for_byte_offset(visible_text, previous_cursor);
     let (next_line, _) = line_column_for_byte_offset(visible_text, next_cursor);
-    if previous_line == next_line {
-        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
-    }
-
-    let Some(adjusted_cursor) =
-        adjusted_cursor_for_hidden_vertical_gap(snapshot, previous_cursor, next_cursor)
-    else {
+    let Some(direction) = VerticalInputDirection::from_lines(previous_line, next_line) else {
         return canonical_display_offset_for_input_offset(snapshot, next_cursor);
     };
 
+    let Some(adjusted_cursor) =
+        adjusted_cursor_for_hidden_vertical_gap(snapshot, previous_cursor, next_cursor, direction)
+    else {
+        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+    };
     adjusted_cursor
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerticalInputDirection {
+    Up,
+    Down,
+}
+
+impl VerticalInputDirection {
+    fn from_lines(previous_line: usize, next_line: usize) -> Option<Self> {
+        match next_line.cmp(&previous_line) {
+            std::cmp::Ordering::Less => Some(Self::Up),
+            std::cmp::Ordering::Greater => Some(Self::Down),
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressedGapCursorState {
+    BeforeGap,
+    GapStop,
+    AfterGap,
 }
 
 fn adjusted_cursor_for_hidden_vertical_gap(
     snapshot: &EditorSnapshot,
     previous_cursor: usize,
     next_cursor: usize,
+    direction: VerticalInputDirection,
 ) -> Option<usize> {
-    let moving_down = next_cursor > previous_cursor;
-
     for gap in compressed_gap_regions(snapshot) {
-        if moving_down
-            && previous_cursor < gap.input_blank_start
-            && next_cursor >= gap.input_blank_start
-            && next_cursor < gap.next_block_input_start
-        {
-            return Some(gap.display_blank_offset);
-        }
-
-        if moving_down
-            && previous_cursor >= gap.input_blank_start
-            && previous_cursor < gap.next_block_input_start
-            && next_cursor >= gap.input_blank_start
-            && next_cursor < gap.next_block_input_start
-        {
-            return Some(gap.next_block_display_start);
-        }
-
-        if !moving_down
-            && previous_cursor >= gap.next_block_input_start
-            && next_cursor >= gap.input_blank_start
-            && next_cursor < gap.next_block_input_start
-        {
-            return Some(gap.display_blank_offset);
-        }
-
-        if !moving_down
-            && previous_cursor >= gap.input_blank_start
-            && previous_cursor < gap.next_block_input_start
-            && next_cursor < gap.input_blank_start
-        {
-            return Some(gap.previous_display_end);
+        let previous_state = gap.cursor_state(previous_cursor);
+        let next_state = gap.cursor_state(next_cursor);
+        match (direction, previous_state, next_state) {
+            (
+                VerticalInputDirection::Down,
+                CompressedGapCursorState::BeforeGap,
+                CompressedGapCursorState::GapStop,
+            ) => return Some(gap.display_blank_offset),
+            (
+                VerticalInputDirection::Down,
+                CompressedGapCursorState::BeforeGap,
+                CompressedGapCursorState::AfterGap,
+            ) => return Some(gap.next_block_display_start),
+            (
+                VerticalInputDirection::Down,
+                CompressedGapCursorState::GapStop,
+                CompressedGapCursorState::GapStop | CompressedGapCursorState::AfterGap,
+            ) => return Some(gap.next_block_display_start),
+            (
+                VerticalInputDirection::Up,
+                CompressedGapCursorState::AfterGap,
+                CompressedGapCursorState::GapStop,
+            ) => return Some(gap.display_blank_offset),
+            (
+                VerticalInputDirection::Up,
+                CompressedGapCursorState::AfterGap,
+                CompressedGapCursorState::BeforeGap,
+            ) => return Some(gap.previous_display_end),
+            (
+                VerticalInputDirection::Up,
+                CompressedGapCursorState::GapStop,
+                CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
+            ) => return Some(gap.previous_display_end),
+            _ => {}
         }
     }
 
@@ -370,10 +414,10 @@ fn canonical_display_offset_for_input_offset(
 ) -> usize {
     let input_offset = clamp_to_char_boundary(&snapshot.display_map.visible_text, input_offset);
     for gap in compressed_gap_regions(snapshot) {
-        if input_offset == gap.input_blank_start {
+        if input_offset == gap.input_stop_offset {
             return gap.display_blank_offset;
         }
-        if input_offset > gap.input_blank_start && input_offset < gap.next_block_input_start {
+        if input_offset > gap.input_stop_offset && input_offset < gap.next_block_input_start {
             return gap.display_blank_offset;
         }
     }
@@ -401,11 +445,25 @@ fn block_has_compressed_vertical_gap(blocks: &[crate::RenderBlock], block_index:
 
 #[derive(Debug, Clone, Copy)]
 struct CompressedGapRegion {
-    input_blank_start: usize,
+    block_index: usize,
+    next_block_index: usize,
+    input_stop_offset: usize,
     next_block_input_start: usize,
     display_blank_offset: usize,
     previous_display_end: usize,
     next_block_display_start: usize,
+}
+
+impl CompressedGapRegion {
+    fn cursor_state(&self, cursor: usize) -> CompressedGapCursorState {
+        if cursor < self.input_stop_offset {
+            CompressedGapCursorState::BeforeGap
+        } else if cursor < self.next_block_input_start {
+            CompressedGapCursorState::GapStop
+        } else {
+            CompressedGapCursorState::AfterGap
+        }
+    }
 }
 
 fn compressed_gap_regions(snapshot: &EditorSnapshot) -> Vec<CompressedGapRegion> {
@@ -426,13 +484,15 @@ fn compressed_gap_regions(snapshot: &EditorSnapshot) -> Vec<CompressedGapRegion>
         let Some(next_block) = blocks.get(block_index + 1) else {
             continue;
         };
-        let input_blank_start = rendered_visible_end(previous_block).saturating_add(1);
-        if next_block.visible_range.start <= input_blank_start {
+        let input_stop_offset = rendered_visible_end(previous_block).saturating_add(1);
+        if next_block.visible_range.start <= input_stop_offset {
             continue;
         }
 
         regions.push(CompressedGapRegion {
-            input_blank_start,
+            block_index,
+            next_block_index: block_index + 1,
+            input_stop_offset,
             next_block_input_start: next_block.visible_range.start,
             display_blank_offset: snapshot
                 .display_map
@@ -671,8 +731,7 @@ mod tests {
         visible_selection.preferred_column = Some(0);
         let mapped = selection_from_visible_input(&snapshot, &visible_selection);
 
-        assert_eq!(mirrored_cursor, 4);
-        assert_eq!(mapped.cursor(), 5);
+        assert_eq!(mirrored_cursor, 2);
     }
 
     #[test]

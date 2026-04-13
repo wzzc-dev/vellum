@@ -144,13 +144,24 @@ impl DisplayMap {
         affinity: SelectionAffinity,
     ) -> usize {
         let mut last_visible = 0usize;
-        for block in &self.blocks {
+        for (block_index, block) in self.blocks.iter().enumerate() {
             for span in &block.spans {
                 last_visible = span.visible_range.end;
                 if source_offset < span.source_range.start {
                     return span.visible_range.start;
                 }
                 if source_offset <= span.source_range.end {
+                    if source_offset == span.source_range.end
+                        && affinity == SelectionAffinity::Downstream
+                        && should_prefer_next_paragraph_after_compressed_gap(
+                            &self.blocks,
+                            block_index,
+                            source_offset,
+                        )
+                    {
+                        continue;
+                    }
+
                     if span.hidden {
                         return span.visible_range.start;
                     }
@@ -282,6 +293,25 @@ impl DisplayMap {
 struct BoundaryMapping {
     upstream_source_offset: usize,
     downstream_source_offset: usize,
+}
+
+fn should_prefer_next_paragraph_after_compressed_gap(
+    blocks: &[RenderBlock],
+    current_index: usize,
+    source_offset: usize,
+) -> bool {
+    let Some(current) = blocks.get(current_index) else {
+        return false;
+    };
+    let Some(next) = blocks.get(current_index + 1) else {
+        return false;
+    };
+
+    current.kind == BlockKind::Raw
+        && current.content_range.is_empty()
+        && current.source_range.end == source_offset
+        && next.source_range.start == source_offset
+        && matches!(next.kind, BlockKind::Paragraph | BlockKind::Raw)
 }
 
 fn source_selection_affinities(
@@ -1292,6 +1322,22 @@ mod tests {
             map.visible_to_source_with_affinity(7, SelectionAffinity::Downstream)
                 .source_offset,
             7
+        );
+    }
+
+    #[test]
+    fn downstream_mapping_prefers_next_block_start_after_extra_blank_separator() {
+        let doc = DocumentBuffer::from_text("A\n\n\nB");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        let next_block = map
+            .blocks
+            .iter()
+            .find(|block| block.visible_text == "B")
+            .expect("next paragraph block");
+        assert_eq!(
+            map.source_to_visible_with_affinity(4, SelectionAffinity::Downstream),
+            next_block.visible_range.start
         );
     }
 }

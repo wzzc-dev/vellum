@@ -67,7 +67,7 @@ impl MarkdownEditor {
                 this.handle_observed_input_change(window, cx);
             });
         });
-
+        
         Self {
             controller,
             snapshot,
@@ -270,6 +270,7 @@ impl MarkdownEditor {
         });
         self.input_focused = true;
     }
+
 }
 
 impl Render for MarkdownEditor {
@@ -546,7 +547,7 @@ mod tests {
             (input.cursor(), input.cursor_position())
         });
         assert_eq!(blank_snapshot.selection.cursor(), 3);
-        assert_eq!(blank_cursor, 4);
+        assert_eq!(blank_cursor, 2);
 
         cx.update_window_entity(&input, |input, window, cx| {
             input.set_cursor_position(
@@ -564,6 +565,176 @@ mod tests {
         let final_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
         assert_eq!(final_snapshot.selection.cursor(), 5);
         assert!(final_cursor > blank_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_down_across_collapsed_gap_stops_once_then_enters_next_block(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let first_snapshot = snapshot(&view, cx);
+        let first_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(first_snapshot.selection.cursor(), 3);
+        assert_eq!(first_cursor, 2);
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let second_snapshot = snapshot(&view, cx);
+        let second_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(second_snapshot.selection.cursor(), 5);
+        assert!(second_cursor > first_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_up_across_collapsed_gap_stops_once_then_enters_previous_block(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let first_snapshot = snapshot(&view, cx);
+        let first_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(first_snapshot.selection.cursor(), 3);
+        assert_eq!(first_cursor, 2);
+
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let second_snapshot = snapshot(&view, cx);
+        let second_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(second_snapshot.selection.cursor(), 1);
+        assert!(second_cursor < first_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_down_twice_from_gap_enters_heading_content_start(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\n# Heading");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        let heading = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::Heading { .. }))
+            .expect("heading block");
+        assert_eq!(snapshot.selection.cursor(), heading.content_range.start);
+    }
+
+    #[gpui::test]
+    fn pressing_down_twice_from_gap_enters_blockquote_content_start(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\n> Quote");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        let blockquote = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::Blockquote))
+            .expect("blockquote block");
+        assert_eq!(snapshot.selection.cursor(), blockquote.content_range.start);
+    }
+
+    #[gpui::test]
+    fn pressing_down_across_gap_enters_list_content_start(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\n\n\n\n- item");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        let list = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::List))
+            .expect("list block");
+        assert_eq!(snapshot.selection.cursor(), list.content_range.start);
     }
 
     #[gpui::test]
@@ -868,7 +1039,7 @@ mod tests {
         cx.simulate_keystrokes("enter");
 
         let snapshot = snapshot(&view, cx);
-        assert_eq!(snapshot.document_text, "First\n\n\n");
+        assert_eq!(snapshot.document_text, "First\n\n");
         assert_eq!(snapshot.selection.cursor(), 7);
     }
 
@@ -912,7 +1083,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn typing_after_single_enter_lands_on_typora_third_markdown_line(cx: &mut TestAppContext) {
+    fn typing_after_single_enter_starts_next_paragraph_without_extra_blank_line(
+        cx: &mut TestAppContext,
+    ) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, "A");
         let input = document_input(&view, cx);
@@ -935,7 +1108,80 @@ mod tests {
         cx.simulate_keystrokes("x");
 
         let snapshot = snapshot(&view, cx);
-        assert_eq!(snapshot.document_text, "A\n\nx\n");
+        assert_eq!(snapshot.document_text, "A\n\nx");
+    }
+
+    #[gpui::test]
+    fn enter_at_start_of_second_visible_line_moves_caret_to_third_line_start(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\n\n\nB");
+        assert_eq!(snapshot.selection.cursor(), 4);
+        assert_eq!(snapshot.display_map.blocks.len(), 3);
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &snapshot.display_map.blocks,
+                1,
+                snapshot.visible_selection.cursor(),
+            ),
+            None
+        );
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &snapshot.display_map.blocks,
+                2,
+                snapshot.visible_selection.cursor(),
+            ),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    fn typing_after_enter_at_start_of_second_line_inserts_before_shifted_content(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "A\nB");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 1,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("x");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "A\n\n\nxB");
     }
 
     #[gpui::test]
