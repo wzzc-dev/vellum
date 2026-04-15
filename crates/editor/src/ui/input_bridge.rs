@@ -168,12 +168,25 @@ fn selection_from_visible_input(
     snapshot: &EditorSnapshot,
     visible_selection: &SelectionState,
 ) -> SelectionState {
+    let input_selection = visible_selection.clone();
     let visible_selection = input_selection_to_display_selection(snapshot, visible_selection);
     if !visible_selection.is_collapsed() {
 
         return snapshot
             .display_map
             .visible_selection_to_source(&visible_selection);
+    }
+
+    if let Some(selection) =
+        selection_for_compressed_gap_stop(snapshot, &input_selection, &visible_selection)
+    {
+        return selection;
+    }
+
+    if let Some(selection) =
+        selection_for_compressed_gap_block_content(snapshot, &input_selection, &visible_selection)
+    {
+        return selection;
     }
 
     if let Some(span) =
@@ -380,12 +393,12 @@ fn adjusted_cursor_for_hidden_vertical_gap(
                 VerticalInputDirection::Down,
                 CompressedGapCursorState::BeforeGap,
                 CompressedGapCursorState::AfterGap,
-            ) => return Some(gap.next_block_display_start),
+            ) => return Some(gap.next_block_content_display_start(snapshot)),
             (
                 VerticalInputDirection::Down,
                 CompressedGapCursorState::GapStop,
                 CompressedGapCursorState::GapStop | CompressedGapCursorState::AfterGap,
-            ) => return Some(gap.next_block_display_start),
+            ) => return Some(gap.next_block_content_display_start(snapshot)),
             (
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::AfterGap,
@@ -395,12 +408,12 @@ fn adjusted_cursor_for_hidden_vertical_gap(
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::AfterGap,
                 CompressedGapCursorState::BeforeGap,
-            ) => return Some(gap.previous_display_end),
+            ) => return Some(gap.previous_block_content_display_end(snapshot)),
             (
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::GapStop,
                 CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
-            ) => return Some(gap.previous_display_end),
+            ) => return Some(gap.previous_block_content_display_end(snapshot)),
             _ => {}
         }
     }
@@ -464,6 +477,26 @@ impl CompressedGapRegion {
             CompressedGapCursorState::AfterGap
         }
     }
+
+    fn next_block_content_display_start(&self, snapshot: &EditorSnapshot) -> usize {
+        let Some(block) = snapshot.display_map.blocks.get(self.next_block_index) else {
+            return self.next_block_display_start;
+        };
+
+        content_display_start_for_block(snapshot, block)
+    }
+
+    fn previous_block_content_display_end(&self, snapshot: &EditorSnapshot) -> usize {
+        let Some(block) = self
+            .block_index
+            .checked_sub(1)
+            .and_then(|index| snapshot.display_map.blocks.get(index))
+        else {
+            return self.previous_display_end;
+        };
+
+        content_display_end_for_block(snapshot, block)
+    }
 }
 
 fn compressed_gap_regions(snapshot: &EditorSnapshot) -> Vec<CompressedGapRegion> {
@@ -505,6 +538,16 @@ fn compressed_gap_regions(snapshot: &EditorSnapshot) -> Vec<CompressedGapRegion>
     }
 
     regions
+}
+
+fn content_display_start_for_block(snapshot: &EditorSnapshot, block: &crate::RenderBlock) -> usize {
+    let _ = snapshot;
+    block.visible_range.start
+}
+
+fn content_display_end_for_block(snapshot: &EditorSnapshot, block: &crate::RenderBlock) -> usize {
+    let _ = snapshot;
+    rendered_visible_end(block)
 }
 
 fn should_reveal_hidden_block_syntax_boundary(
@@ -552,6 +595,126 @@ fn hidden_block_syntax_span_at_visible_cursor(
                 && span.visible_range.is_empty()
         })
     })
+}
+
+fn selection_for_compressed_gap_block_content(
+    snapshot: &EditorSnapshot,
+    input_selection: &SelectionState,
+    visible_selection: &SelectionState,
+) -> Option<SelectionState> {
+    if !visible_selection.is_collapsed() {
+        return None;
+    }
+
+    let previous_cursor = mirrored_input_selection(snapshot).cursor();
+    let next_cursor = input_selection.cursor();
+    let visible_text = &snapshot.display_map.visible_text;
+    let previous_cursor = clamp_to_char_boundary(visible_text, previous_cursor);
+    let next_cursor = clamp_to_char_boundary(visible_text, next_cursor);
+    let direction = VerticalInputDirection::from_lines(
+        line_column_for_byte_offset(visible_text, previous_cursor).0,
+        line_column_for_byte_offset(visible_text, next_cursor).0,
+    )?;
+
+    for gap in compressed_gap_regions(snapshot) {
+        let previous_state = gap.cursor_state(previous_cursor);
+        let next_state = gap.cursor_state(next_cursor);
+        let target_block = match (direction, previous_state, next_state) {
+            (
+                VerticalInputDirection::Down,
+                CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
+                CompressedGapCursorState::GapStop | CompressedGapCursorState::AfterGap,
+            )
+                => snapshot.display_map.blocks.get(gap.next_block_index),
+            (
+                VerticalInputDirection::Up,
+                CompressedGapCursorState::AfterGap | CompressedGapCursorState::GapStop,
+                CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
+            )
+                => gap
+                .block_index
+                .checked_sub(1)
+                .and_then(|index| snapshot.display_map.blocks.get(index)),
+            _ => None,
+        }?;
+
+        if !matches!(
+            target_block.kind,
+            BlockKind::Heading { .. } | BlockKind::Blockquote | BlockKind::List
+        ) {
+            continue;
+        }
+
+        let expected_cursor = match direction {
+            VerticalInputDirection::Down => content_display_start_for_block(snapshot, target_block),
+            VerticalInputDirection::Up => content_display_end_for_block(snapshot, target_block),
+        };
+        if visible_selection.cursor() != expected_cursor {
+            continue;
+        }
+
+        let mut selection = SelectionState::collapsed(expected_cursor);
+        selection.preferred_column = visible_selection.preferred_column;
+        selection.affinity = match direction {
+            VerticalInputDirection::Down => SelectionAffinity::Downstream,
+            VerticalInputDirection::Up => SelectionAffinity::Upstream,
+        };
+        return Some(snapshot.display_map.visible_selection_to_source(&selection));
+    }
+
+    None
+}
+
+fn selection_for_compressed_gap_stop(
+    snapshot: &EditorSnapshot,
+    input_selection: &SelectionState,
+    visible_selection: &SelectionState,
+) -> Option<SelectionState> {
+    if !visible_selection.is_collapsed() {
+        return None;
+    }
+
+    let previous_cursor = mirrored_input_selection(snapshot).cursor();
+    let next_cursor = input_selection.cursor();
+    let visible_text = &snapshot.display_map.visible_text;
+    let previous_cursor = clamp_to_char_boundary(visible_text, previous_cursor);
+    let next_cursor = clamp_to_char_boundary(visible_text, next_cursor);
+    let direction = VerticalInputDirection::from_lines(
+        line_column_for_byte_offset(visible_text, previous_cursor).0,
+        line_column_for_byte_offset(visible_text, next_cursor).0,
+    )?;
+
+    for gap in compressed_gap_regions(snapshot) {
+        if next_cursor != gap.display_blank_offset {
+            continue;
+        }
+
+        let previous_state = gap.cursor_state(previous_cursor);
+        let next_state = gap.cursor_state(next_cursor);
+        let is_gap_stop_move = matches!(
+            (direction, previous_state, next_state),
+            (
+                VerticalInputDirection::Down,
+                CompressedGapCursorState::BeforeGap,
+                CompressedGapCursorState::GapStop
+            ) | (
+                VerticalInputDirection::Up,
+                CompressedGapCursorState::AfterGap,
+                CompressedGapCursorState::GapStop
+            )
+        );
+        if !is_gap_stop_move {
+            continue;
+        }
+
+        let block = snapshot.display_map.blocks.get(gap.block_index)?;
+        let mut selection = SelectionState::collapsed(block.content_range.start);
+        selection.preferred_column = visible_selection.preferred_column;
+        selection.affinity = SelectionAffinity::Downstream;
+        return Some(selection);
+    }
+
+    None
 }
 
 pub(super) fn selection_from_input(
@@ -731,7 +894,57 @@ mod tests {
         visible_selection.preferred_column = Some(0);
         let mapped = selection_from_visible_input(&snapshot, &visible_selection);
 
-        assert_eq!(mirrored_cursor, 2);
+        assert_eq!(mapped.cursor(), 5);
+        assert_eq!(mapped.affinity, SelectionAffinity::Downstream);
+    }
+
+    #[test]
+    fn collapsed_inter_block_gap_maps_second_down_press_to_hidden_heading_content_start() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# A\n\n\n\n## AA".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(3),
+        });
+        let first_snapshot = controller.snapshot();
+        let gap_cursor = mirrored_input_selection(&first_snapshot).cursor();
+        let mut gap_selection = SelectionState::collapsed(gap_cursor);
+        gap_selection.preferred_column = Some(0);
+        let gap_source = selection_from_visible_input(&first_snapshot, &gap_selection);
+
+        controller.dispatch(EditCommand::SetSelection {
+            selection: gap_source,
+        });
+        let snapshot = controller.snapshot();
+        let heading = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::Heading { depth: 2 }))
+            .expect("heading block");
+
+        let mut visible_selection =
+            SelectionState::collapsed(content_display_start_for_block(&snapshot, heading));
+        visible_selection.preferred_column = Some(0);
+        let mapped = selection_from_visible_input(&snapshot, &visible_selection);
+
+        assert_eq!(
+            mapped.cursor(),
+            snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    heading.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(mapped.affinity, SelectionAffinity::Downstream);
     }
 
     #[test]

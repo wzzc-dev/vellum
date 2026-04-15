@@ -672,7 +672,17 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::Heading { .. }))
             .expect("heading block");
-        assert_eq!(snapshot.selection.cursor(), heading.content_range.start);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    heading.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(snapshot.visible_selection.cursor(), heading.visible_range.start);
     }
 
     #[gpui::test]
@@ -703,7 +713,89 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::Blockquote))
             .expect("blockquote block");
-        assert_eq!(snapshot.selection.cursor(), blockquote.content_range.start);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    blockquote.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(snapshot.visible_selection.cursor(), blockquote.visible_range.start);
+    }
+
+    #[gpui::test]
+    fn pressing_down_twice_from_heading_gap_keeps_visual_and_source_carets_in_sync(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# A\n\n\n\n## AA\n\n123\n\n123\n\n123");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+
+        let first_snapshot = snapshot(&view, cx);
+        let heading_index = first_snapshot
+            .display_map
+            .blocks
+            .iter()
+            .position(|block| {
+                matches!(block.kind, BlockKind::Heading { depth: 2 })
+                    && rendered_text_for_block(block) == "AA"
+            })
+            .expect("second heading block");
+        let heading = &first_snapshot.display_map.blocks[heading_index];
+        let input_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+
+        assert_eq!(first_snapshot.visible_selection.cursor(), heading.visible_range.start);
+        assert_eq!(input_cursor, heading.visible_range.start);
+        assert_eq!(
+            first_snapshot.selection.cursor(),
+            first_snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    heading.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &first_snapshot.display_map.blocks,
+                heading_index.saturating_sub(1),
+                first_snapshot.visible_selection.cursor(),
+            ),
+            None
+        );
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &first_snapshot.display_map.blocks,
+                heading_index,
+                first_snapshot.visible_selection.cursor(),
+            ),
+            Some(0)
+        );
+
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+
+        let final_snapshot = snapshot(&view, cx);
+        assert!(final_snapshot.document_text.starts_with("# A\n\n\n\n## xAA"));
     }
 
     #[gpui::test]
@@ -734,7 +826,96 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::List))
             .expect("list block");
-        assert_eq!(snapshot.selection.cursor(), list.content_range.start);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    list.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(snapshot.visible_selection.cursor(), list.visible_range.start);
+    }
+
+    #[gpui::test]
+    fn pressing_down_twice_from_gap_into_heading_keeps_visual_caret_and_input_in_sync(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# A\n\n\n\n## AA\n\n123\n\n123\n\n123\n");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let gap_snapshot = snapshot(&view, cx);
+        let gap_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        assert_eq!(gap_snapshot.selection.cursor(), 5);
+        assert_eq!(gap_cursor, 2);
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let heading_snapshot = snapshot(&view, cx);
+        let (heading_cursor, heading_text) =
+            cx.update_window_entity(&input, |input, _, _| (input.cursor(), input.text().to_string()));
+        let heading_block = heading_snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::Heading { depth: 2 }))
+            .expect("heading block");
+
+        assert_eq!(
+            heading_snapshot.selection.cursor(),
+            heading_snapshot
+                .display_map
+                .visible_to_source_with_affinity(
+                    heading_block.visible_range.start,
+                    SelectionAffinity::Downstream,
+                )
+                .source_offset
+        );
+        assert_eq!(heading_snapshot.visible_selection.cursor(), heading_block.visible_range.start);
+        assert_eq!(heading_cursor, heading_snapshot.visible_selection.cursor());
+        assert_eq!(heading_text, heading_snapshot.display_map.visible_text);
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &heading_snapshot.display_map.blocks,
+                1,
+                heading_snapshot.visible_selection.cursor(),
+            ),
+            None
+        );
+        assert_eq!(
+            caret_visual_offset_for_block(
+                &heading_snapshot.display_map.blocks,
+                2,
+                heading_snapshot.visible_selection.cursor(),
+            ),
+            Some(0)
+        );
+
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+
+        let typed_snapshot = snapshot(&view, cx);
+        assert_eq!(typed_snapshot.document_text, "# A\n\n\n\n## xAA\n\n123\n\n123\n\n123\n");
+        assert_eq!(typed_snapshot.visible_selection.cursor(), heading_block.visible_range.start + 1);
     }
 
     #[gpui::test]
