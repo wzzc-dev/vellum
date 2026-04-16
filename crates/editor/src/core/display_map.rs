@@ -718,7 +718,11 @@ impl<'a> BlockBuilder<'a> {
         for token in parse_inline_tokens(text) {
             let range =
                 source_start + token.local_range.start..source_start + token.local_range.end;
-            let hidden = token.hidden && !self.should_reveal(&range);
+            let reveal_range = token
+                .reveal_range
+                .clone()
+                .map(|reveal_range| source_start + reveal_range.start..source_start + reveal_range.end);
+            let hidden = token.hidden && !self.should_reveal_inline(&range, reveal_range.as_ref());
             let visible_text = if hidden {
                 String::new()
             } else {
@@ -796,6 +800,25 @@ impl<'a> BlockBuilder<'a> {
         }
     }
 
+    fn should_reveal_inline(
+        &self,
+        source_range: &Range<usize>,
+        reveal_range: Option<&Range<usize>>,
+    ) -> bool {
+        if self.should_reveal(source_range) {
+            return true;
+        }
+
+        let Some(reveal_range) = reveal_range else {
+            return false;
+        };
+        let Some(selection) = self.selection else {
+            return false;
+        };
+
+        selection_intersects_range(selection, reveal_range)
+    }
+
     fn should_reveal_block_syntax(&self, source_range: &Range<usize>) -> bool {
         if self.should_reveal(source_range) {
             return true;
@@ -820,6 +843,7 @@ impl<'a> BlockBuilder<'a> {
 #[derive(Debug, Clone)]
 struct InlineToken {
     local_range: Range<usize>,
+    reveal_range: Option<Range<usize>>,
     source_text: String,
     visible_text: String,
     hidden: bool,
@@ -832,6 +856,7 @@ fn parse_inline_tokens(text: &str) -> Vec<InlineToken> {
     if tokens.is_empty() {
         tokens.push(InlineToken {
             local_range: 0..text.len(),
+            reveal_range: None,
             source_text: text.to_string(),
             visible_text: text.to_string(),
             hidden: false,
@@ -927,9 +952,17 @@ fn parse_inline_tokens_into(
             && rest[close + 1..].starts_with('(')
             && let Some(close_paren) = rest[close + 2..].find(')')
         {
-            push_hidden_marker(tokens, base_offset + offset, "[");
             let inner_start = offset + 1;
             let inner_end = offset + close;
+            let target_start = inner_end + 2;
+            let target_end = target_start + close_paren;
+            let reveal_range = offset..target_end + 1;
+            push_hidden_marker_with_reveal(
+                tokens,
+                base_offset + offset,
+                "[",
+                reveal_range.clone(),
+            );
             parse_inline_tokens_into(
                 &text[inner_start..inner_end],
                 base_offset + inner_start,
@@ -939,16 +972,30 @@ fn parse_inline_tokens_into(
                 },
                 tokens,
             );
-            push_hidden_marker(tokens, base_offset + inner_end, "]");
-            push_hidden_marker(tokens, base_offset + inner_end + 1, "(");
-            let target_start = inner_end + 2;
-            let target_end = target_start + close_paren;
-            push_hidden_marker(
+            push_hidden_marker_with_reveal(
+                tokens,
+                base_offset + inner_end,
+                "]",
+                reveal_range.clone(),
+            );
+            push_hidden_marker_with_reveal(
+                tokens,
+                base_offset + inner_end + 1,
+                "(",
+                reveal_range.clone(),
+            );
+            push_hidden_marker_with_reveal(
                 tokens,
                 base_offset + target_start,
                 &text[target_start..target_end],
+                reveal_range.clone(),
             );
-            push_hidden_marker(tokens, base_offset + target_end, ")");
+            push_hidden_marker_with_reveal(
+                tokens,
+                base_offset + target_end,
+                ")",
+                reveal_range,
+            );
             offset = target_end + 1;
             continue;
         }
@@ -967,8 +1014,25 @@ fn parse_inline_tokens_into(
 fn push_hidden_marker(tokens: &mut Vec<InlineToken>, offset: usize, marker: &str) {
     tokens.push(InlineToken {
         local_range: offset..offset + marker.len(),
+        reveal_range: None,
         source_text: marker.to_string(),
-        visible_text: String::new(),
+        visible_text: marker.to_string(),
+        hidden: true,
+        style: RenderInlineStyle::default(),
+    });
+}
+
+fn push_hidden_marker_with_reveal(
+    tokens: &mut Vec<InlineToken>,
+    offset: usize,
+    marker: &str,
+    reveal_range: Range<usize>,
+) {
+    tokens.push(InlineToken {
+        local_range: offset..offset + marker.len(),
+        reveal_range: Some(reveal_range),
+        source_text: marker.to_string(),
+        visible_text: marker.to_string(),
         hidden: true,
         style: RenderInlineStyle::default(),
     });
@@ -986,6 +1050,7 @@ fn push_text_token(
 
     tokens.push(InlineToken {
         local_range: offset..offset + text.len(),
+        reveal_range: None,
         source_text: text.to_string(),
         visible_text: text.to_string(),
         hidden: false,
@@ -1095,6 +1160,14 @@ fn split_inclusive_lines(text: &str) -> Vec<&str> {
 
 fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
     left.start < right.end && right.start < left.end
+}
+
+fn selection_intersects_range(selection: &SelectionModel, range: &Range<usize>) -> bool {
+    if selection.is_collapsed() {
+        range.start < selection.cursor() && selection.cursor() < range.end
+    } else {
+        ranges_overlap(&selection.range(), range)
+    }
 }
 
 fn merge_inline_styles(base: RenderInlineStyle, overlay: RenderInlineStyle) -> RenderInlineStyle {
@@ -1309,6 +1382,28 @@ mod tests {
                 .iter()
                 .any(|span| span.hidden && span.source_text == "`")
         );
+    }
+
+    #[test]
+    fn link_markup_is_revealed_when_cursor_is_inside_link_text() {
+        let doc = DocumentBuffer::from_text("[官网](https://box86.org/)");
+        let hidden = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+        assert_eq!(hidden.visible_text, "官网");
+
+        let selection = SelectionModel {
+            anchor_byte: 4,
+            head_byte: 4,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+        let revealed = DisplayMap::from_document(
+            &doc,
+            Some(&selection),
+            HiddenSyntaxPolicy::SelectionAware,
+        );
+
+        assert_eq!(revealed.visible_text, "[官网](https://box86.org/)");
+        assert_eq!(revealed.source_selection_to_visible(&selection).cursor(), 4);
     }
 
     #[test]

@@ -1303,7 +1303,7 @@ mod tests {
 
     #[gpui::test]
     fn single_surface_hides_blockquote_prefix_but_preserves_source_markup(cx: &mut TestAppContext) {
-        assert_visible_edit_round_trip(cx, "> quote", "quote", "changed", "> changed");
+        assert_visible_edit_round_trip(cx, "> quote", "quote", "changed", "> changed", "changed");
     }
 
     #[gpui::test]
@@ -1314,6 +1314,7 @@ mod tests {
             "Hello world",
             "Hello there",
             "Hello **there**",
+            "Hello there",
         );
     }
 
@@ -1327,6 +1328,7 @@ mod tests {
             "Hello world",
             "Hello there",
             "Hello `there`",
+            "Hello there",
         );
     }
 
@@ -1337,6 +1339,7 @@ mod tests {
             "Hello [world](https://example.com)",
             "Hello world",
             "Hello there",
+            "Hello [there](https://example.com)",
             "Hello [there](https://example.com)",
         );
     }
@@ -1384,6 +1387,45 @@ mod tests {
         assert_eq!(snapshot.display_map.visible_text, "# Title");
         assert_eq!(snapshot.selection.cursor(), 1);
         assert_eq!(snapshot.visible_selection.cursor(), 1);
+    }
+
+    #[gpui::test]
+    fn moving_cursor_into_link_reveals_full_markup(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "[官网](https://example.com/)");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+
+        let collapsed_snapshot = snapshot(&view, cx);
+        assert_eq!(collapsed_snapshot.display_map.visible_text, "官网");
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let revealed_snapshot = snapshot(&view, cx);
+        let (visible_text, cursor_position) = cx.update_window_entity(&input, |input, _, _| {
+            (input.text().to_string(), input.cursor_position())
+        });
+
+        assert_eq!(revealed_snapshot.display_map.visible_text, "[官网](https://example.com/)");
+        assert_eq!(revealed_snapshot.visible_selection.cursor(), 4);
+        assert_eq!(visible_text, "[官网](https://example.com/)");
+        assert_eq!(
+            cursor_position,
+            Position {
+                line: 0,
+                character: 2,
+            }
+        );
     }
 
     #[gpui::test]
@@ -1957,6 +1999,7 @@ mod tests {
         expected_visible_text: &str,
         edited_visible_text: &str,
         expected_source_text: &str,
+        expected_final_visible_text: &str,
     ) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, source_text);
@@ -1972,7 +2015,7 @@ mod tests {
 
         let snapshot = snapshot(&view, cx);
         assert_eq!(snapshot.document_text, expected_source_text);
-        assert_eq!(snapshot.display_map.visible_text, edited_visible_text);
+        assert_eq!(snapshot.display_map.visible_text, expected_final_visible_text);
     }
 
     fn build_editor_window(
