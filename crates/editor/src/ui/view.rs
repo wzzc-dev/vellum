@@ -919,6 +919,110 @@ mod tests {
     }
 
     #[gpui::test]
+    fn pressing_down_through_mixed_blocks_does_not_skip_to_last_line(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# 1\n\n## 2\n\n12\n\n34");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let initial_snapshot = snapshot(&view, cx);
+        assert_eq!(initial_snapshot.display_map.blocks.len(), 4);
+
+        let expected_blocks = [(1usize, "2"), (2usize, "12"), (3usize, "34")];
+
+        for (expected_block_index, expected_text) in expected_blocks {
+            cx.simulate_keystrokes("down");
+            cx.run_until_parked();
+
+            let step_snapshot = snapshot(&view, cx);
+            let input_position =
+                cx.update_window_entity(&input, |input, _, _| input.cursor_position());
+            let caret_blocks = step_snapshot
+                .display_map
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(block_index, _)| {
+                    caret_visual_offset_for_block(
+                        &step_snapshot.display_map.blocks,
+                        block_index,
+                        step_snapshot.visible_selection.cursor(),
+                    )
+                    .map(|_| block_index)
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                caret_blocks,
+                vec![expected_block_index],
+                "input_position={input_position:?}, visible_cursor={}, source_cursor={}",
+                step_snapshot.visible_selection.cursor(),
+                step_snapshot.selection.cursor()
+            );
+            assert_eq!(
+                rendered_text_for_block(&step_snapshot.display_map.blocks[expected_block_index]),
+                expected_text
+            );
+        }
+
+        let before_typing = snapshot(&view, cx);
+        let input_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        let expected_source_cursor = before_typing
+            .display_map
+            .visible_to_source_with_affinity(input_cursor, SelectionAffinity::Downstream)
+            .source_offset;
+        assert_eq!(before_typing.selection.cursor(), expected_source_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_up_from_line_start_enters_previous_line_start(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "12\n\n34");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 2,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        let input_position = cx.update_window_entity(&input, |input, _, _| input.cursor_position());
+
+        assert_eq!(input_position.character, 0);
+        assert_eq!(snapshot.visible_selection.cursor(), 0);
+        assert_eq!(snapshot.selection.cursor(), 0);
+        assert_eq!(
+            caret_visual_offset_for_block(&snapshot.display_map.blocks, 0, snapshot.visible_selection.cursor()),
+            Some(0)
+        );
+        assert_eq!(
+            caret_visual_offset_for_block(&snapshot.display_map.blocks, 1, snapshot.visible_selection.cursor()),
+            None
+        );
+    }
+
+    #[gpui::test]
     fn list_and_following_paragraph_render_single_visual_gap(cx: &mut TestAppContext) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, "- item\n\nNext");

@@ -153,7 +153,7 @@ impl DisplayMap {
                 if source_offset <= span.source_range.end {
                     if source_offset == span.source_range.end
                         && affinity == SelectionAffinity::Downstream
-                        && should_prefer_next_paragraph_after_compressed_gap(
+                        && should_prefer_next_block_start_at_hidden_boundary(
                             &self.blocks,
                             block_index,
                             source_offset,
@@ -295,7 +295,7 @@ struct BoundaryMapping {
     downstream_source_offset: usize,
 }
 
-fn should_prefer_next_paragraph_after_compressed_gap(
+fn should_prefer_next_block_start_at_hidden_boundary(
     blocks: &[RenderBlock],
     current_index: usize,
     source_offset: usize,
@@ -307,11 +307,15 @@ fn should_prefer_next_paragraph_after_compressed_gap(
         return false;
     };
 
-    current.kind == BlockKind::Raw
+    (current.kind == BlockKind::Raw
         && current.content_range.is_empty()
         && current.source_range.end == source_offset
         && next.source_range.start == source_offset
-        && matches!(next.kind, BlockKind::Paragraph | BlockKind::Raw)
+        && matches!(next.kind, BlockKind::Paragraph | BlockKind::Raw))
+        || (current.content_range.end < source_offset
+            && current.source_range.end == source_offset
+            && next.content_range.start == source_offset
+            && next.kind != BlockKind::Raw)
 }
 
 fn source_selection_affinities(
@@ -1337,6 +1341,25 @@ mod tests {
             .expect("next paragraph block");
         assert_eq!(
             map.source_to_visible_with_affinity(4, SelectionAffinity::Downstream),
+            next_block.visible_range.start
+        );
+    }
+
+    #[test]
+    fn downstream_mapping_prefers_next_block_start_after_standard_separator() {
+        let doc = DocumentBuffer::from_text("12\n\n34");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        let next_block = map
+            .blocks
+            .iter()
+            .find(|block| block.visible_text == "34")
+            .expect("next paragraph block");
+        assert_eq!(
+            map.source_to_visible_with_affinity(
+                next_block.content_range.start,
+                SelectionAffinity::Downstream
+            ),
             next_block.visible_range.start
         );
     }

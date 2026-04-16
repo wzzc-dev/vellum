@@ -346,7 +346,12 @@ fn normalized_display_cursor_from_input(
     let Some(adjusted_cursor) =
         adjusted_cursor_for_hidden_vertical_gap(snapshot, previous_cursor, next_cursor, direction)
     else {
-        return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+        let Some(adjusted_cursor) =
+            adjusted_cursor_for_virtual_inter_block_gap(snapshot, previous_cursor, next_cursor, direction)
+        else {
+            return canonical_display_offset_for_input_offset(snapshot, next_cursor);
+        };
+        return adjusted_cursor;
     };
     adjusted_cursor
 }
@@ -415,6 +420,59 @@ fn adjusted_cursor_for_hidden_vertical_gap(
                 CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
             ) => return Some(gap.previous_block_content_display_end(snapshot)),
             _ => {}
+        }
+    }
+
+    None
+}
+
+fn adjusted_cursor_for_virtual_inter_block_gap(
+    snapshot: &EditorSnapshot,
+    previous_cursor: usize,
+    next_cursor: usize,
+    direction: VerticalInputDirection,
+) -> Option<usize> {
+    let blocks = &snapshot.display_map.blocks;
+
+    for (block_index, block) in blocks.iter().enumerate() {
+        let Some(next_block) = blocks.get(block_index + 1) else {
+            continue;
+        };
+
+        if rendered_visible_len(block) == 0 || rendered_visible_len(next_block) == 0 {
+            continue;
+        }
+
+        let block_end = rendered_visible_end(block);
+        let next_block_start = next_block.visible_range.start;
+        if next_block_start <= block_end {
+            continue;
+        }
+
+        match direction {
+            VerticalInputDirection::Down => {
+                let started_in_current_block =
+                    caret_visual_offset_for_block(blocks, block_index, previous_cursor).is_some();
+                let landed_in_virtual_gap =
+                    next_cursor >= block_end && next_cursor < next_block_start;
+                if started_in_current_block && landed_in_virtual_gap {
+                    return Some(content_display_start_for_block(snapshot, next_block));
+                }
+            }
+            VerticalInputDirection::Up => {
+                let started_in_next_block =
+                    caret_visual_offset_for_block(blocks, block_index + 1, previous_cursor);
+                let landed_in_virtual_gap =
+                    next_cursor > block_end && next_cursor <= next_block_start;
+                if let Some(local_offset) = started_in_next_block
+                    && landed_in_virtual_gap
+                {
+                    if local_offset == 0 {
+                        return Some(content_display_start_for_block(snapshot, block));
+                    }
+                    return Some(content_display_end_for_block(snapshot, block));
+                }
+            }
         }
     }
 
