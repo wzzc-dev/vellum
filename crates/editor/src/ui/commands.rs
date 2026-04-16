@@ -4,7 +4,7 @@ use gpui_component::input::Enter as InputEnter;
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, UndoEdit,
+    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -22,6 +22,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-z", UndoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-enter", SecondaryEnter, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new(
             "ctrl-i",
@@ -44,6 +45,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-z", UndoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new("ctrl-y", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-enter",
+            SecondaryEnter,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         KeyBinding::new(
             "shift-enter",
             InputEnter { secondary: true },
@@ -141,5 +147,14 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.redo(window, cx);
+    }
+
+    pub(crate) fn on_secondary_enter(
+        &mut self,
+        _: &SecondaryEnter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.secondary_enter(window, cx);
     }
 }

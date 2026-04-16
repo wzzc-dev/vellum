@@ -16,6 +16,7 @@ actions!(
         FocusNextBlock,
         UndoEdit,
         RedoEdit,
+        SecondaryEnter,
     ]
 );
 
