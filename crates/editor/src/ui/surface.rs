@@ -11,7 +11,11 @@ use gpui_component::ActiveTheme;
 
 use crate::{
     BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, SelectionState,
-    core::{controller::EditorSnapshot, text_ops::clamp_to_char_boundary},
+    core::{
+        controller::EditorSnapshot,
+        table::{TABLE_COLUMN_GAP, TableModel},
+        text_ops::clamp_to_char_boundary,
+    },
 };
 
 use super::{BODY_FONT_SIZE, BODY_LINE_HEIGHT, layout::block_presentation, view::MarkdownEditor};
@@ -48,6 +52,15 @@ struct RenderedFragment {
     kind: RenderSpanKind,
     text: String,
     style: crate::RenderInlineStyle,
+}
+
+#[derive(Debug, Clone)]
+struct TableSurfaceLayout {
+    row_tops: Vec<gpui::Pixels>,
+    row_heights: Vec<gpui::Pixels>,
+    column_starts: Vec<gpui::Pixels>,
+    total_width: gpui::Pixels,
+    total_height: gpui::Pixels,
 }
 
 impl RenderedLine {
@@ -287,6 +300,12 @@ fn render_display_block(
                 render_list_lines(block, &list_decorations, palette, window)
             }
             BlockKind::Blockquote => render_blockquote_lines(block, palette, window),
+            BlockKind::Table => render_table_block(
+                block,
+                snapshot.document_text[block.content_range.clone()].to_string(),
+                palette,
+                window,
+            ),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -718,6 +737,45 @@ fn styled_text_for_block(
     StyledText::new(text).with_runs(runs)
 }
 
+fn render_table_block(
+    block: &RenderBlock,
+    source_text: String,
+    palette: RenderPalette,
+    window: &Window,
+) -> AnyElement {
+    let block_for_canvas = block.clone();
+    div()
+        .relative()
+        .w_full()
+        .child(
+            canvas(
+                move |bounds, window, _| {
+                    table_surface_layout(&block_for_canvas, &source_text, bounds, window)
+                },
+                move |bounds, layout, window, _| {
+                    let Some(layout) = layout else {
+                        return;
+                    };
+                    paint_table_underlay(bounds, &layout, palette, window);
+                },
+            )
+            .absolute()
+            .top(px(0.))
+            .left(px(0.))
+            .right(px(0.))
+            .bottom(px(0.)),
+        )
+        .child(
+            div()
+                .w_full()
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .font_family("Consolas")
+                .child(styled_text_for_block(block, palette, window)),
+        )
+        .into_any_element()
+}
+
 fn apply_fragment_style(
     style: &mut TextStyle,
     kind: RenderSpanKind,
@@ -775,11 +833,191 @@ fn base_text_style_for_block(block: &RenderBlock, text_color: Hsla, window: &Win
         _ => FontWeight::NORMAL,
     };
     style.font_style = FontStyle::Normal;
-    style.white_space = WhiteSpace::Normal;
-    if matches!(block.kind, BlockKind::CodeFence { .. }) {
+    style.white_space = if block.kind == BlockKind::Table {
+        WhiteSpace::Nowrap
+    } else {
+        WhiteSpace::Normal
+    };
+    if matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::Table) {
         style.font_family = SharedString::from("Consolas");
     }
     style
+}
+
+fn table_surface_layout(
+    block: &RenderBlock,
+    source_text: &str,
+    bounds: Bounds<gpui::Pixels>,
+    window: &Window,
+) -> Option<TableSurfaceLayout> {
+    let table = TableModel::parse(source_text);
+    if table.is_empty() {
+        return None;
+    }
+
+    let lines = shape_block_lines(block, bounds.size.width.max(px(1.)), window);
+    if lines.len() < table.visible_row_count() {
+        return None;
+    }
+
+    let row_texts = block.visible_text.split('\n').collect::<Vec<_>>();
+    if row_texts.len() < table.visible_row_count() {
+        return None;
+    }
+
+    let presentation = block_presentation(&block.kind);
+    let line_height = px(presentation.line_height);
+    let mut column_char_widths = vec![0usize; table.column_count()];
+    for visible_row in 0..table.visible_row_count() {
+        for column in 0..table.column_count() {
+            let Some(cell_range) = table.cell_source_range(crate::core::table::TableCellRef {
+                visible_row,
+                column,
+            }) else {
+                continue;
+            };
+            let absolute_range = block.content_range.start + cell_range.start
+                ..block.content_range.start + cell_range.end;
+            column_char_widths[column] = column_char_widths[column]
+                .max(table_cell_visible_char_count(block, &absolute_range));
+        }
+    }
+
+    let mut column_char_starts = Vec::with_capacity(table.column_count());
+    let mut total_char_width = 0usize;
+    for (column, width) in column_char_widths.iter().copied().enumerate() {
+        column_char_starts.push(total_char_width);
+        total_char_width += width;
+        if column + 1 < column_char_widths.len() {
+            total_char_width += TABLE_COLUMN_GAP;
+        }
+    }
+
+    let first_line = lines.first()?;
+    let first_row = row_texts.first().copied().unwrap_or_default();
+    let column_starts = column_char_starts
+        .into_iter()
+        .map(|char_offset| {
+            first_line
+                .position_for_index(
+                    char_column_to_byte_offset(first_row, char_offset),
+                    line_height,
+                )
+                .map(|position| position.x)
+                .unwrap_or(px(0.))
+        })
+        .collect::<Vec<_>>();
+
+    let mut row_tops = Vec::with_capacity(table.visible_row_count());
+    let mut row_heights = Vec::with_capacity(table.visible_row_count());
+    let mut total_height = px(0.);
+    let mut total_width = px(0.);
+    for line in lines.iter().take(table.visible_row_count()) {
+        row_tops.push(total_height);
+        let line_size = line.size(line_height);
+        row_heights.push(line_size.height);
+        total_height += line_size.height;
+        if line_size.width > total_width {
+            total_width = line_size.width;
+        }
+    }
+
+    if total_char_width > 0 {
+        let width_from_chars = first_line
+            .position_for_index(
+                char_column_to_byte_offset(first_row, total_char_width),
+                line_height,
+            )
+            .map(|position| position.x)
+            .unwrap_or(total_width);
+        if width_from_chars > total_width {
+            total_width = width_from_chars;
+        }
+    }
+    total_width += trailing_table_padding_px(window);
+
+    Some(TableSurfaceLayout {
+        row_tops,
+        row_heights,
+        column_starts,
+        total_width,
+        total_height,
+    })
+}
+
+fn paint_table_underlay(
+    bounds: Bounds<gpui::Pixels>,
+    layout: &TableSurfaceLayout,
+    palette: RenderPalette,
+    window: &mut Window,
+) {
+    if layout.row_tops.is_empty() {
+        return;
+    }
+
+    let line_thickness = px(1.);
+    let left = bounds.left();
+    let top = bounds.top();
+    let width = layout.total_width.max(px(1.));
+    let height = layout.total_height.max(px(1.));
+
+    window.paint_quad(fill(
+        Bounds::new(
+            point(left, top + layout.row_tops[0]),
+            size(width, layout.row_heights[0].max(px(1.))),
+        ),
+        palette.code_surface_background,
+    ));
+
+    let mut vertical_lines = Vec::with_capacity(layout.column_starts.len().saturating_add(2));
+    vertical_lines.push(px(0.));
+    vertical_lines.extend(layout.column_starts.iter().copied().skip(1));
+    vertical_lines.push(width);
+    for x in vertical_lines {
+        window.paint_quad(fill(
+            Bounds::new(point(left + x, top), size(line_thickness, height)),
+            palette.border_color,
+        ));
+    }
+
+    for y in layout
+        .row_tops
+        .iter()
+        .copied()
+        .chain(std::iter::once(layout.total_height))
+    {
+        window.paint_quad(fill(
+            Bounds::new(point(left, top + y), size(width, line_thickness)),
+            palette.border_color,
+        ));
+    }
+}
+
+fn table_cell_visible_char_count(
+    block: &RenderBlock,
+    source_range: &std::ops::Range<usize>,
+) -> usize {
+    block
+        .spans
+        .iter()
+        .filter(|span| {
+            !span.visible_text.is_empty()
+                && span.source_range.start < source_range.end
+                && span.source_range.end > source_range.start
+        })
+        .map(|span| span.visible_text.chars().count())
+        .sum()
+}
+
+fn trailing_table_padding_px(window: &Window) -> gpui::Pixels {
+    window.text_style().font_size.to_pixels(window.rem_size()) * (0.6 * TABLE_COLUMN_GAP as f32)
+}
+
+fn char_column_to_byte_offset(text: &str, column: usize) -> usize {
+    text.char_indices()
+        .nth(column)
+        .map(|(offset, _)| offset)
+        .unwrap_or(text.len())
 }
 
 fn rendered_lines_for_block(block: &RenderBlock) -> Vec<RenderedLine> {

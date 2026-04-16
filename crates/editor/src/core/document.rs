@@ -13,6 +13,7 @@ use super::{
     syntax::{
         SyntaxState, input_edit_for_splice, looks_like_blockquote_block, looks_like_list_block,
     },
+    table::pipe_row_cell_count,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -452,12 +453,47 @@ fn can_merge_structured_continuation(
                 BlockKind::Blockquote | BlockKind::Unknown | BlockKind::Raw
             ) && looks_like_blockquote_block(&next_text)
         }
+        BlockKind::Table => {
+            matches!(
+                next.kind,
+                BlockKind::Table | BlockKind::Paragraph | BlockKind::Unknown | BlockKind::Raw
+            ) && looks_like_table_continuation_block(&next_text)
+        }
         _ => false,
     }
 }
 
 fn is_single_line_whitespace_separator(text: &str) -> bool {
     text.trim_matches([' ', '\t', '\r', '\n']).is_empty() && trailing_newline_count(text) <= 1
+}
+
+fn looks_like_table_continuation_block(text: &str) -> bool {
+    let trimmed = text.trim_end_matches(['\r', '\n']);
+    !trimmed.is_empty() && trimmed.lines().all(is_pipe_table_continuation_line)
+}
+
+fn is_pipe_table_continuation_line(line: &str) -> bool {
+    let line = line.trim_end_matches('\r');
+    if line.trim_matches([' ', '\t']).is_empty() {
+        return true;
+    }
+
+    let stripped = strip_table_indent(line);
+    stripped.starts_with('|') && pipe_row_cell_count(stripped) > 0
+}
+
+fn strip_table_indent(line: &str) -> &str {
+    let mut indent = 0usize;
+    let mut offset = 0usize;
+    for ch in line.chars() {
+        if indent == 3 || ch != ' ' {
+            break;
+        }
+        indent += 1;
+        offset += ch.len_utf8();
+    }
+
+    &line[offset..]
 }
 
 fn materialize_inter_block_empty_blocks(blocks: &mut Vec<BlockProjection>, source: &Rope) {
@@ -1097,6 +1133,20 @@ mod tests {
                 "corpus case: {name}"
             );
         }
+    }
+
+    #[test]
+    fn merges_adjacent_table_continuation_blocks() {
+        let source = "| a | b |\n| --- | --- |\n| 1 | 2 |\n|  |  |\n|  |  |";
+        let doc = DocumentBuffer::from_text(source);
+        let tables = doc
+            .blocks()
+            .iter()
+            .filter(|block| block.kind == BlockKind::Table)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(doc.block_text(tables[0]), source);
     }
 
     fn projection_summary(doc: &DocumentBuffer) -> Vec<ProjectionSummary> {

@@ -10,10 +10,11 @@ use anyhow::{Context as _, Result};
 use super::{
     display_map::DisplayMap,
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
+    table::{TableCellRef, TableModel, TableNavDirection},
     text_ops::{
         adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, line_column_for_byte_offset,
-        semantic_enter_transform,
+        pipe_table_enter_transform, semantic_enter_transform,
     },
 };
 
@@ -383,6 +384,101 @@ impl EditorController {
     pub fn autosave_delay(&self) -> Duration {
         self.sync_policy.autosave_delay
     }
+
+    pub(crate) fn navigate_table(&mut self, backwards: bool) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let direction = if backwards {
+            TableNavDirection::Backward
+        } else {
+            TableNavDirection::Forward
+        };
+        self.navigate_table_from_block(&block, direction)
+    }
+
+    pub(crate) fn delete_table_row(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let Some(current_cell) = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())
+        else {
+            return EditorEffects::default();
+        };
+
+        let Some(replacement) = table.rebuild_markdown_without_row(current_cell.visible_row) else {
+            return EditorEffects::default();
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let target_cell = TableCellRef {
+            visible_row: current_cell
+                .visible_row
+                .min(rebuilt.visible_row_count().saturating_sub(1)),
+            column: current_cell
+                .column
+                .min(rebuilt.column_count().saturating_sub(1)),
+        };
+        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let trailing = self.document.block_trailing_text(&block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Deleted table row",
+        )
+    }
+
+    pub(crate) fn exit_table(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let Some(block_index) = self.document.block_index_by_id(block.id) else {
+            return EditorEffects::default();
+        };
+        if let Some(next_block) = self.document.blocks().get(block_index + 1)
+            && next_block.kind == BlockKind::Raw
+            && next_block.content_range.is_empty()
+        {
+            return self
+                .update_selection(SelectionState::collapsed(next_block.content_range.start));
+        }
+
+        let insertion_point = block.byte_range.end;
+        let selection_after = if block.byte_range.end > block.content_range.end {
+            insertion_point
+        } else {
+            insertion_point + 2
+        };
+        self.apply_edit(
+            insertion_point..insertion_point,
+            "\n\n".to_string(),
+            SelectionState::collapsed(selection_after),
+            "Exited table",
+        )
+    }
 }
 
 impl EditorController {
@@ -655,6 +751,14 @@ impl EditorController {
     }
 
     fn insert_break(&mut self, plain: bool) -> EditorEffects {
+        let range = self.selection.range();
+        let current_block = self.current_block().cloned();
+        if let Some(block) = current_block.as_ref()
+            && block.kind == BlockKind::Table
+        {
+            return self.navigate_table_from_block(block, TableNavDirection::Down);
+        }
+
         if plain {
             let start = self.selection.range().start;
             let selection_after = SelectionState::collapsed(start + 1);
@@ -665,7 +769,6 @@ impl EditorController {
             );
         }
 
-        let range = self.selection.range();
         if selection_spans_multiple_blocks(&self.document, &range) {
             let selection_after = SelectionState::collapsed(range.start + 1);
             return self.replace_selection_with_text(
@@ -675,7 +778,7 @@ impl EditorController {
             );
         }
 
-        let Some(block) = self.current_block().cloned() else {
+        let Some(block) = current_block else {
             return EditorEffects::default();
         };
         let block_text = self.document.block_text(&block);
@@ -721,6 +824,23 @@ impl EditorController {
             range.start.saturating_sub(block.content_range.start)
                 ..range.end.saturating_sub(block.content_range.start),
         );
+        if let Some(transform) = pipe_table_enter_transform(
+            &block.kind,
+            &block_text,
+            local_selection.clone(),
+            local_cursor,
+        ) {
+            let trailing = self.document.block_trailing_text(&block);
+            let replacement = format!("{}{}", transform.replacement, trailing);
+            let selection_after =
+                SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
+            return self.apply_edit(
+                block.byte_range,
+                replacement,
+                selection_after,
+                "Created table",
+            );
+        }
         let Some(transform) =
             semantic_enter_transform(&block.kind, &block_text, local_selection, local_cursor)
         else {
@@ -817,6 +937,63 @@ impl EditorController {
         self.update_selection(selection)
     }
 
+    fn navigate_table_from_block(
+        &mut self,
+        block: &BlockProjection,
+        direction: TableNavDirection,
+    ) -> EditorEffects {
+        let table = TableModel::parse(&self.document.block_text(block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let current_cell = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell());
+        let Some(current_cell) = current_cell else {
+            return EditorEffects::default();
+        };
+
+        if let Some(target_cell) = table.next_cell_ref(current_cell, direction) {
+            return self.update_selection(table_cell_selection(block, &table, target_cell));
+        }
+
+        if direction == TableNavDirection::Backward {
+            return EditorEffects::default();
+        }
+
+        let replacement = table.append_empty_row();
+        let target_cell = TableCellRef {
+            visible_row: table.visible_row_count(),
+            column: match direction {
+                TableNavDirection::Forward => 0,
+                TableNavDirection::Backward => 0,
+                TableNavDirection::Down => {
+                    if current_cell.column + 1 == table.column_count() {
+                        0
+                    } else {
+                        current_cell
+                            .column
+                            .min(table.column_count().saturating_sub(1))
+                    }
+                }
+            },
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let selection_after = table_cell_selection(block, &rebuilt, target_cell);
+        let trailing = self.document.block_trailing_text(block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Extended table",
+        )
+    }
+
     fn delete_backward(&mut self) -> EditorEffects {
         if !self.selection.is_collapsed() {
             let selection_after = SelectionState::collapsed(self.selection.range().start);
@@ -827,6 +1004,9 @@ impl EditorController {
             );
         }
 
+        if let Some(effect) = self.delete_backward_in_table() {
+            return effect;
+        }
         if let Some(effect) = self.delete_backward_eof_empty_paragraph() {
             return effect;
         }
@@ -862,6 +1042,9 @@ impl EditorController {
             );
         }
 
+        if let Some(effect) = self.delete_forward_in_table() {
+            return effect;
+        }
         if let Some(effect) = self.delete_forward_eof_empty_paragraph() {
             return effect;
         }
@@ -882,6 +1065,74 @@ impl EditorController {
             SelectionState::collapsed(cursor),
             "Deleted text",
         )
+    }
+
+    fn delete_backward_in_table(&mut self) -> Option<EditorEffects> {
+        self.delete_in_table(true)
+    }
+
+    fn delete_forward_in_table(&mut self) -> Option<EditorEffects> {
+        self.delete_in_table(false)
+    }
+
+    fn delete_in_table(&mut self, backwards: bool) -> Option<EditorEffects> {
+        let block = self.current_block()?.clone();
+        if block.kind != BlockKind::Table {
+            return None;
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return Some(consume_handled_action());
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let current_cell = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())?;
+        let cell_range = table.cell_source_range(current_cell)?;
+        let cell_source = table.cell_source_text(current_cell).unwrap_or("");
+        let cursor_in_cell =
+            local_cursor.clamp(cell_range.start, cell_range.end) - cell_range.start;
+
+        let (updated_cell_source, cursor_after) = if backwards {
+            if cursor_in_cell == 0 {
+                return Some(consume_handled_action());
+            }
+
+            let delete_start = previous_char_boundary(cell_source, cursor_in_cell);
+            let mut updated =
+                String::with_capacity(cell_source.len() - (cursor_in_cell - delete_start));
+            updated.push_str(&cell_source[..delete_start]);
+            updated.push_str(&cell_source[cursor_in_cell..]);
+            (updated, delete_start)
+        } else {
+            if cursor_in_cell >= cell_source.len() {
+                return Some(consume_handled_action());
+            }
+
+            let delete_end = next_char_boundary(cell_source, cursor_in_cell);
+            let mut updated =
+                String::with_capacity(cell_source.len() - (delete_end - cursor_in_cell));
+            updated.push_str(&cell_source[..cursor_in_cell]);
+            updated.push_str(&cell_source[delete_end..]);
+            (updated, cursor_in_cell)
+        };
+
+        let replacement = table.rebuild_markdown_with_override(current_cell, updated_cell_source);
+        let rebuilt = TableModel::parse(&replacement);
+        let selection_after =
+            table_cell_selection_with_offset(&block, &rebuilt, current_cell, cursor_after);
+        let trailing = self.document.block_trailing_text(&block);
+        Some(self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Deleted text",
+        ))
     }
 }
 
@@ -1194,6 +1445,44 @@ fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize)
         text.lines().count().saturating_sub(1)
     };
     byte_offset_for_line_column(text, target_line, preferred_column)
+}
+
+fn table_cell_selection(
+    block: &BlockProjection,
+    table: &TableModel,
+    cell_ref: TableCellRef,
+) -> SelectionState {
+    let source_offset = table
+        .cell_source_range(cell_ref)
+        .map(|range| block.content_range.start + range.start)
+        .unwrap_or(block.content_range.start);
+    let mut selection = SelectionState::collapsed(source_offset);
+    selection.preferred_column = Some(cell_ref.column);
+    selection
+}
+
+fn table_cell_selection_with_offset(
+    block: &BlockProjection,
+    table: &TableModel,
+    cell_ref: TableCellRef,
+    offset_in_cell: usize,
+) -> SelectionState {
+    let Some(range) = table.cell_source_range(cell_ref) else {
+        return table_cell_selection(block, table, cell_ref);
+    };
+
+    let source_offset = range.start + offset_in_cell.min(range.end.saturating_sub(range.start));
+    let mut selection = SelectionState::collapsed(block.content_range.start + source_offset);
+    selection.preferred_column = Some(cell_ref.column);
+    selection
+}
+
+fn consume_handled_action() -> EditorEffects {
+    EditorEffects {
+        changed: false,
+        selection_changed: true,
+        reload_path: None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1637,6 +1926,241 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "A\n\n\n");
         assert_eq!(snapshot.selection, SelectionState::collapsed(3));
+    }
+
+    #[test]
+    fn enter_on_pipe_row_builds_table_and_places_cursor_in_first_empty_body_cell() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "| Name | Role |".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("| Name | Role |".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "| Name | Role |\n| --- | --- |\n|  |  |"
+        );
+        let table =
+            crate::core::table::TableModel::parse("| Name | Role |\n| --- | --- |\n|  |  |");
+        let first_body_cell = table
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 0,
+            })
+            .expect("first body cell");
+        assert_eq!(snapshot.selection.cursor(), first_body_cell.start);
+    }
+
+    #[test]
+    fn navigate_table_forward_appends_row_from_last_cell() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let table = crate::core::table::TableModel::parse(source);
+        let last_cell = table
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("last cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(last_cell.start + "Eng".len()),
+        });
+
+        let effects = controller.navigate_table(false);
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "| Name | Role |\n| --- | --- |\n| Ada | Eng |\n|  |  |"
+        );
+        let rebuilt = crate::core::table::TableModel::parse(&snapshot.document_text);
+        let new_row_first_cell = rebuilt
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 0,
+            })
+            .expect("new first cell");
+        assert_eq!(snapshot.selection.cursor(), new_row_first_cell.start);
+    }
+
+    #[test]
+    fn backspace_at_start_of_empty_table_cell_preserves_markdown() {
+        let source = concat!(
+            "| 1 | 2 | 3 | 4 |\n",
+            "| --- | --- | --- | --- |\n",
+            "|  |  |  |  |\n",
+            "|  |  |  |  |"
+        );
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let last_row_first_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 0,
+            })
+            .expect("last row first cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(last_row_first_cell.start),
+        });
+
+        let first = controller.dispatch(EditCommand::DeleteBackward);
+        let second = controller.dispatch(EditCommand::DeleteBackward);
+
+        assert!(!first.changed);
+        assert!(first.selection_changed);
+        assert!(!second.changed);
+        assert!(second.selection_changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, source);
+        assert_eq!(snapshot.selection.cursor(), last_row_first_cell.start);
+    }
+
+    #[test]
+    fn delete_forward_at_end_of_empty_table_cell_preserves_markdown() {
+        let source = concat!(
+            "| 1 | 2 | 3 | 4 |\n",
+            "| --- | --- | --- | --- |\n",
+            "|  |  |  |  |\n",
+            "|  |  |  |  |"
+        );
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let last_row_first_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 0,
+            })
+            .expect("last row first cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(last_row_first_cell.end),
+        });
+
+        let first = controller.dispatch(EditCommand::DeleteForward);
+        let second = controller.dispatch(EditCommand::DeleteForward);
+
+        assert!(!first.changed);
+        assert!(first.selection_changed);
+        assert!(!second.changed);
+        assert!(second.selection_changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, source);
+        assert_eq!(snapshot.selection.cursor(), last_row_first_cell.end);
+    }
+
+    #[test]
+    fn delete_table_row_removes_current_body_row_and_keeps_selection_in_table() {
+        let source = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Eng |\n",
+            "| Bob | PM |\n",
+            "| Cat | QA |"
+        );
+        let expected = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Eng |\n",
+            "| Cat | QA |"
+        );
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let current_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 1,
+            })
+            .expect("current row second cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(current_cell.start),
+        });
+
+        let effects = controller.delete_table_row();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            crate::core::table::TableModel::parse(expected)
+                .cell_source_range(crate::core::table::TableCellRef {
+                    visible_row: 2,
+                    column: 1,
+                })
+                .expect("same column in following row")
+                .start
+        );
+    }
+
+    #[test]
+    fn exit_table_inserts_following_empty_block_at_eof() {
+        let source = concat!("| Name | Role |\n", "| --- | --- |\n", "| Ada | Eng |");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let current_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("body cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(current_cell.start),
+        });
+
+        let effects = controller.exit_table();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, format!("{source}\n\n"));
+        assert_eq!(snapshot.selection.cursor(), source.len() + 2);
     }
 
     #[test]

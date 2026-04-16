@@ -7,7 +7,10 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme,
-    input::{Backspace, Delete, Enter, IndentInline, Input, InputEvent, InputState, OutdentInline},
+    input::{
+        Backspace, Delete, DeleteToNextWordEnd, Enter, IndentInline, Input, InputEvent, InputState,
+        OutdentInline,
+    },
     scroll::ScrollableElement,
 };
 
@@ -67,7 +70,7 @@ impl MarkdownEditor {
                 this.handle_observed_input_change(window, cx);
             });
         });
-        
+
         Self {
             controller,
             snapshot,
@@ -174,7 +177,53 @@ impl MarkdownEditor {
             return false;
         }
 
-        self.schedule_autosave(window, cx);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        true
+    }
+
+    pub(crate) fn secondary_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input_has_marked_text(window, cx) {
+            return;
+        }
+
+        self.sync_selection_from_input(window, cx);
+        let effects = if selection_is_within_table(&self.snapshot) {
+            self.controller.exit_table()
+        } else {
+            self.controller
+                .dispatch(EditCommand::InsertBreak { plain: true })
+        };
+        if !effects.changed && !effects.selection_changed {
+            return;
+        }
+
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    fn handle_delete_table_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.input_has_marked_text(window, cx) {
+            return false;
+        }
+
+        self.sync_selection_from_input(window, cx);
+        if !selection_is_within_table(&self.snapshot) {
+            return false;
+        }
+
+        let effects = self.controller.delete_table_row();
+        if !effects.changed && !effects.selection_changed {
+            return false;
+        }
+
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
         self.apply_effects(window, cx, effects);
         true
     }
@@ -185,11 +234,13 @@ impl MarkdownEditor {
         }
 
         let effects = self.controller.dispatch(EditCommand::DeleteBackward);
-        if !effects.changed {
+        if !effects.changed && !effects.selection_changed {
             return false;
         }
 
-        self.schedule_autosave(window, cx);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
         self.apply_effects(window, cx, effects);
         true
     }
@@ -200,11 +251,13 @@ impl MarkdownEditor {
         }
 
         let effects = self.controller.dispatch(EditCommand::DeleteForward);
-        if !effects.changed {
+        if !effects.changed && !effects.selection_changed {
             return false;
         }
 
-        self.schedule_autosave(window, cx);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
         self.apply_effects(window, cx, effects);
         true
     }
@@ -214,17 +267,23 @@ impl MarkdownEditor {
             return false;
         }
 
-        let command = if deepen {
-            EditCommand::Indent
+        let effects = if selection_is_within_table(&self.snapshot) {
+            self.controller.navigate_table(!deepen)
         } else {
-            EditCommand::Outdent
+            let command = if deepen {
+                EditCommand::Indent
+            } else {
+                EditCommand::Outdent
+            };
+            self.controller.dispatch(command)
         };
-        let effects = self.controller.dispatch(command);
-        if !effects.changed {
+        if !effects.changed && !effects.selection_changed {
             return false;
         }
 
-        self.schedule_autosave(window, cx);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
         self.apply_effects(window, cx, effects);
         true
     }
@@ -270,7 +329,15 @@ impl MarkdownEditor {
         });
         self.input_focused = true;
     }
+}
 
+fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
+    let range = snapshot.selection.range();
+    snapshot.display_map.blocks.iter().any(|block| {
+        block.kind == crate::BlockKind::Table
+            && range.start >= block.content_range.start
+            && range.end <= block.content_range.end
+    })
 }
 
 impl Render for MarkdownEditor {
@@ -298,6 +365,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_focus_next_block))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
+            .on_action(cx.listener(Self::on_secondary_enter))
             .capture_action({
                 let enter_view = view.clone();
                 move |action: &Enter, window, app: &mut App| {
@@ -324,6 +392,16 @@ impl Render for MarkdownEditor {
                 move |_: &Delete, window, app: &mut App| {
                     let handled =
                         view.update(app, |this, cx| this.handle_delete_forward(window, cx));
+                    if handled {
+                        app.stop_propagation();
+                    }
+                }
+            })
+            .capture_action({
+                let view = cx.entity();
+                move |_: &DeleteToNextWordEnd, window, app: &mut App| {
+                    let handled =
+                        view.update(app, |this, cx| this.handle_delete_table_row(window, cx));
                     if handled {
                         app.stop_propagation();
                     }
@@ -677,10 +755,7 @@ mod tests {
             snapshot.selection.cursor(),
             snapshot
                 .display_map
-                .visible_to_source_with_affinity(
-                    expected_cursor,
-                    SelectionAffinity::Downstream,
-                )
+                .visible_to_source_with_affinity(expected_cursor, SelectionAffinity::Downstream,)
                 .source_offset
         );
         assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
@@ -719,10 +794,7 @@ mod tests {
             snapshot.selection.cursor(),
             snapshot
                 .display_map
-                .visible_to_source_with_affinity(
-                    expected_cursor,
-                    SelectionAffinity::Downstream,
-                )
+                .visible_to_source_with_affinity(expected_cursor, SelectionAffinity::Downstream,)
                 .source_offset
         );
         assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
@@ -771,10 +843,7 @@ mod tests {
             first_snapshot.selection.cursor(),
             first_snapshot
                 .display_map
-                .visible_to_source_with_affinity(
-                    expected_cursor,
-                    SelectionAffinity::Downstream,
-                )
+                .visible_to_source_with_affinity(expected_cursor, SelectionAffinity::Downstream,)
                 .source_offset
         );
         assert_eq!(
@@ -798,7 +867,11 @@ mod tests {
         cx.run_until_parked();
 
         let final_snapshot = snapshot(&view, cx);
-        assert!(final_snapshot.document_text.starts_with("# A\n\n\n\n## AxA"));
+        assert!(
+            final_snapshot
+                .document_text
+                .starts_with("# A\n\n\n\n## AxA")
+        );
     }
 
     #[gpui::test]
@@ -834,10 +907,7 @@ mod tests {
             snapshot.selection.cursor(),
             snapshot
                 .display_map
-                .visible_to_source_with_affinity(
-                    expected_cursor,
-                    SelectionAffinity::Downstream,
-                )
+                .visible_to_source_with_affinity(expected_cursor, SelectionAffinity::Downstream,)
                 .source_offset
         );
         assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
@@ -875,8 +945,9 @@ mod tests {
         cx.run_until_parked();
 
         let heading_snapshot = snapshot(&view, cx);
-        let (heading_cursor, heading_text) =
-            cx.update_window_entity(&input, |input, _, _| (input.cursor(), input.text().to_string()));
+        let (heading_cursor, heading_text) = cx.update_window_entity(&input, |input, _, _| {
+            (input.cursor(), input.text().to_string())
+        });
         let heading_block = heading_snapshot
             .display_map
             .blocks
@@ -889,10 +960,7 @@ mod tests {
             heading_snapshot.selection.cursor(),
             heading_snapshot
                 .display_map
-                .visible_to_source_with_affinity(
-                    expected_cursor,
-                    SelectionAffinity::Downstream,
-                )
+                .visible_to_source_with_affinity(expected_cursor, SelectionAffinity::Downstream,)
                 .source_offset
         );
         assert_eq!(heading_snapshot.visible_selection.cursor(), expected_cursor);
@@ -919,8 +987,14 @@ mod tests {
         cx.run_until_parked();
 
         let typed_snapshot = snapshot(&view, cx);
-        assert_eq!(typed_snapshot.document_text, "# A\n\n\n\n## AxA\n\n123\n\n123\n\n123\n");
-        assert_eq!(typed_snapshot.visible_selection.cursor(), heading_block.visible_range.start + 2);
+        assert_eq!(
+            typed_snapshot.document_text,
+            "# A\n\n\n\n## AxA\n\n123\n\n123\n\n123\n"
+        );
+        assert_eq!(
+            typed_snapshot.visible_selection.cursor(),
+            heading_block.visible_range.start + 2
+        );
     }
 
     #[gpui::test]
@@ -1086,7 +1160,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let expected = [(1usize, "5678", 3usize), (2usize, "12", 2usize), (3usize, "3456", 3usize)];
+        let expected = [
+            (1usize, "5678", 3usize),
+            (2usize, "12", 2usize),
+            (3usize, "3456", 3usize),
+        ];
 
         for (expected_block_index, expected_text, expected_offset) in expected {
             cx.simulate_keystrokes("down");
@@ -1140,7 +1218,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let expected = [(2usize, "12", 2usize), (1usize, "5678", 3usize), (0usize, "1234", 3usize)];
+        let expected = [
+            (2usize, "12", 2usize),
+            (1usize, "5678", 3usize),
+            (0usize, "1234", 3usize),
+        ];
 
         for (expected_block_index, expected_text, expected_offset) in expected {
             cx.simulate_keystrokes("up");
@@ -1191,11 +1273,19 @@ mod tests {
         assert_eq!(snapshot.visible_selection.cursor(), 0);
         assert_eq!(snapshot.selection.cursor(), 0);
         assert_eq!(
-            caret_visual_offset_for_block(&snapshot.display_map.blocks, 0, snapshot.visible_selection.cursor()),
+            caret_visual_offset_for_block(
+                &snapshot.display_map.blocks,
+                0,
+                snapshot.visible_selection.cursor()
+            ),
             Some(0)
         );
         assert_eq!(
-            caret_visual_offset_for_block(&snapshot.display_map.blocks, 1, snapshot.visible_selection.cursor()),
+            caret_visual_offset_for_block(
+                &snapshot.display_map.blocks,
+                1,
+                snapshot.visible_selection.cursor()
+            ),
             None
         );
     }
@@ -1416,7 +1506,10 @@ mod tests {
             (input.text().to_string(), input.cursor_position())
         });
 
-        assert_eq!(revealed_snapshot.display_map.visible_text, "[官网](https://example.com/)");
+        assert_eq!(
+            revealed_snapshot.display_map.visible_text,
+            "[官网](https://example.com/)"
+        );
         assert_eq!(revealed_snapshot.visible_selection.cursor(), 4);
         assert_eq!(visible_text, "[官网](https://example.com/)");
         assert_eq!(
@@ -1907,6 +2000,185 @@ mod tests {
     }
 
     #[gpui::test]
+    fn backspace_at_start_of_empty_table_cell_is_consumed_without_mutation(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!(
+            "| 1 | 2 | 3 | 4 |\n",
+            "| --- | --- | --- | --- |\n",
+            "|  |  |  |  |\n",
+            "|  |  |  |  |"
+        );
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 2, 0));
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("backspace backspace");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, source);
+        assert_eq!(snapshot.selection.cursor(), table_cell_cursor(source, 2, 0));
+        assert_eq!(snapshot.visible_caret_position.line, 2);
+        assert_eq!(snapshot.visible_caret_position.column, 0);
+        assert_eq!(
+            cx.update_window_entity(&input, |input, _, _| input.cursor_position()),
+            Position {
+                line: 2,
+                character: 0,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn ctrl_delete_in_table_removes_current_row(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Eng |\n",
+            "| Bob | PM |\n",
+            "| Cat | QA |"
+        );
+        let expected = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Eng |\n",
+            "| Cat | QA |"
+        );
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 2, 1));
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-delete");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 2, 1)
+        );
+        assert_eq!(
+            cx.update_window_entity(&input, |input, _, _| input.cursor_position()),
+            Position {
+                line: 2,
+                character: 7,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn ctrl_delete_on_last_empty_table_row_removes_row_without_merging_cells(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!(
+            "| 1 | 2 | 3 |\n",
+            "| --- | --- | --- |\n",
+            "| 1 | 2 | 3 |\n",
+            "|  |  |  |"
+        );
+        let expected = concat!("| 1 | 2 | 3 |\n", "| --- | --- | --- |\n", "| 1 | 2 | 3 |");
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 2, 0));
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-delete");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 1, 0)
+        );
+        assert_eq!(
+            snapshot
+                .display_map
+                .visible_text
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["1   2   3", "1   2   3"]
+        );
+    }
+
+    #[gpui::test]
+    fn ctrl_delete_uses_latest_input_cursor_when_snapshot_selection_is_stale(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!(
+            "| 1 | 2 | 3 |\n",
+            "| --- | --- | --- |\n",
+            "| 1 | 2 | 3 |\n",
+            "|  |  |  |"
+        );
+        let expected = concat!("| 1 | 2 | 3 |\n", "| --- | --- | --- |\n", "| 1 | 2 | 3 |");
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 1, 1));
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 2,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+
+        let handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_delete_table_row(window, cx)
+        });
+        assert!(handled);
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 1, 0)
+        );
+    }
+
+    #[gpui::test]
+    fn ctrl_enter_exits_table_to_new_empty_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!("| Name | Role |\n", "| --- | --- |\n", "| Ada | Eng |");
+        let expected = format!("{source}\n\n");
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 1, 1));
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-enter");
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(snapshot.selection.cursor(), expected.len());
+        assert_eq!(
+            cx.update_window_entity(&input, |input, _, _| input.cursor_position()),
+            Position {
+                line: 3,
+                character: 0,
+            }
+        );
+    }
+
+    #[gpui::test]
     fn formatting_command_collapses_selection_in_snapshot_and_hidden_input(
         cx: &mut TestAppContext,
     ) {
@@ -1993,6 +2265,206 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn enter_on_pipe_row_builds_table_and_places_caret_in_first_empty_cell(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "| Name | Role |";
+        let expected = "| Name | Role |\n| --- | --- |\n|  |  |";
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, source.len());
+
+        let handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_enter(false, window, cx)
+        });
+        assert!(handled);
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 1, 0)
+        );
+        assert!(!snapshot.display_map.visible_text.contains('|'));
+        assert!(!snapshot.display_map.visible_text.contains("---"));
+    }
+
+    #[gpui::test]
+    fn tab_and_shift_tab_navigate_between_table_cells(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 1, 0));
+
+        let moved_forward = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_indent(true, window, cx)
+        });
+        assert!(moved_forward);
+        cx.run_until_parked();
+        assert_eq!(
+            snapshot(&view, cx).selection.cursor(),
+            table_cell_cursor(source, 1, 1)
+        );
+
+        let moved_backward = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_indent(false, window, cx)
+        });
+        assert!(moved_backward);
+        cx.run_until_parked();
+        assert_eq!(
+            snapshot(&view, cx).selection.cursor(),
+            table_cell_cursor(source, 1, 0)
+        );
+    }
+
+    #[gpui::test]
+    fn tab_on_last_table_cell_appends_new_row(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let expected = "| Name | Role |\n| --- | --- |\n| Ada | Eng |\n|  |  |";
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_end_cursor(source, 1, 1));
+
+        let handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_indent(true, window, cx)
+        });
+        assert!(handled);
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 2, 0)
+        );
+    }
+
+    #[gpui::test]
+    fn enter_and_shift_enter_move_down_table_column_and_append_at_end(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |\n| Bob | CTO |";
+        let appended = "| Name | Role |\n| --- | --- |\n| Ada | Eng |\n| Bob | CTO |\n|  |  |";
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_cursor(source, 1, 1));
+
+        let enter_handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_enter(false, window, cx)
+        });
+        assert!(enter_handled);
+        cx.run_until_parked();
+        assert_eq!(snapshot(&view, cx).document_text, source);
+        assert_eq!(
+            snapshot(&view, cx).selection.cursor(),
+            table_cell_cursor(source, 2, 1)
+        );
+
+        let shift_enter_handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_enter(true, window, cx)
+        });
+        assert!(shift_enter_handled);
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, appended);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(appended, 3, 0)
+        );
+        let input = document_input(&view, cx);
+        assert_eq!(
+            cx.update_window_entity(&input, |input, _, _| input.cursor_position()),
+            Position {
+                line: 3,
+                character: 0,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn moving_right_from_table_cell_end_enters_next_cell(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        load_document(cx, &view, source);
+        let first_cell_end = table_cell_end_cursor(source, 1, 0);
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: first_cell_end,
+                    head_byte: first_cell_end,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Upstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        let start_position = cx.update_window_entity(&input, |input, _, _| input.cursor_position());
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: start_position.line,
+                    character: start_position.character + 1,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.selection.cursor(), table_cell_cursor(source, 1, 1));
+        assert_eq!(snapshot.selection.affinity, SelectionAffinity::Upstream);
+    }
+
+    #[gpui::test]
+    fn enter_after_multiple_empty_table_rows_keeps_single_table_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = concat!(
+            "| 1 | 2 | 3 |\n",
+            "| --- | --- | --- |\n",
+            "| 1 | 2 | 3 |\n",
+            "|  |  |  |\n",
+            "|  |  |  |"
+        );
+        let expected = concat!(
+            "| 1 | 2 | 3 |\n",
+            "| --- | --- | --- |\n",
+            "| 1 | 2 | 3 |\n",
+            "|  |  |  |\n",
+            "|  |  |  |\n",
+            "|  |  |  |"
+        );
+        load_document(cx, &view, source);
+        set_source_selection(cx, &view, table_cell_end_cursor(source, 3, 2));
+
+        let handled = cx.update_window_entity(&view, |editor, window, cx| {
+            editor.handle_enter(false, window, cx)
+        });
+        assert!(handled);
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot
+                .display_map
+                .blocks
+                .iter()
+                .filter(|block| block.kind == BlockKind::Table)
+                .count(),
+            1
+        );
+        assert_eq!(
+            snapshot.selection.cursor(),
+            table_cell_cursor(expected, 4, 0)
+        );
+    }
+
     fn assert_visible_edit_round_trip(
         cx: &mut TestAppContext,
         source_text: &str,
@@ -2015,7 +2487,10 @@ mod tests {
 
         let snapshot = snapshot(&view, cx);
         assert_eq!(snapshot.document_text, expected_source_text);
-        assert_eq!(snapshot.display_map.visible_text, expected_final_visible_text);
+        assert_eq!(
+            snapshot.display_map.visible_text,
+            expected_final_visible_text
+        );
     }
 
     fn build_editor_window(
@@ -2064,6 +2539,40 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Entity<InputState> {
         cx.update_window_entity(view, |editor, _, _| editor.document_input.clone())
+    }
+
+    fn set_source_selection(
+        cx: &mut VisualTestContext,
+        view: &Entity<MarkdownEditor>,
+        cursor: usize,
+    ) {
+        cx.update_window_entity(view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState::collapsed(cursor),
+            });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+    }
+
+    fn table_cell_cursor(source: &str, visible_row: usize, column: usize) -> usize {
+        crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row,
+                column,
+            })
+            .expect("table cell")
+            .start
+    }
+
+    fn table_cell_end_cursor(source: &str, visible_row: usize, column: usize) -> usize {
+        crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row,
+                column,
+            })
+            .expect("table cell")
+            .end
     }
 
     fn snapshot(view: &Entity<MarkdownEditor>, cx: &VisualTestContext) -> EditorSnapshot {

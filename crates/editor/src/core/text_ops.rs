@@ -1,6 +1,6 @@
 use std::{cmp, ops::Range};
 
-use super::document::BlockKind;
+use super::{document::BlockKind, table::pipe_row_cell_count};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SemanticEnterTransform {
@@ -172,6 +172,46 @@ pub(crate) fn semantic_enter_transform(
         BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
         _ => None,
     }
+}
+
+pub(crate) fn pipe_table_enter_transform(
+    kind: &BlockKind,
+    text: &str,
+    selection: Option<Range<usize>>,
+    cursor_offset: usize,
+) -> Option<SemanticEnterTransform> {
+    if !matches!(kind, BlockKind::Raw | BlockKind::Paragraph) {
+        return None;
+    }
+    if selection
+        .as_ref()
+        .is_some_and(|selection| !selection.is_empty())
+    {
+        return None;
+    }
+
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    if cursor_offset != text.len() {
+        return None;
+    }
+    if text.contains(['\n', '\r']) || !text.starts_with('|') || !text.ends_with('|') {
+        return None;
+    }
+
+    let cells = pipe_row_cell_count(text);
+    if cells < 2 {
+        return None;
+    }
+
+    let delimiter = pipe_table_delimiter_row(cells);
+    let empty_row = pipe_table_empty_row(cells);
+    let replacement = format!("{text}\n{delimiter}\n{empty_row}");
+    let cursor_offset = text.len() + 1 + delimiter.len() + 1 + 1;
+
+    Some(SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    })
 }
 
 pub(crate) fn byte_offset_for_line_column(
@@ -376,6 +416,14 @@ fn apply_selection(
         text: replacement,
         cursor_offset: start,
     }
+}
+
+fn pipe_table_delimiter_row(columns: usize) -> String {
+    format!("| {} |", vec!["---"; columns].join(" | "))
+}
+
+fn pipe_table_empty_row(columns: usize) -> String {
+    format!("| {} |", vec![""; columns].join(" | "))
 }
 
 fn line_bounds(text: &str, cursor_offset: usize) -> (usize, usize) {
@@ -654,6 +702,29 @@ mod tests {
         assert!(!supports_semantic_enter(&BlockKind::CodeFence {
             language: Some("rust".to_string()),
         }));
+    }
+
+    #[test]
+    fn pipe_table_enter_builds_typora_style_table() {
+        let transform =
+            pipe_table_enter_transform(&BlockKind::Paragraph, "| a | b |", None, 9).unwrap();
+
+        assert_eq!(transform.replacement, "| a | b |\n| --- | --- |\n|  |  |");
+        assert_eq!(transform.cursor_offset, "| a | b |\n| --- | --- |\n|".len());
+    }
+
+    #[test]
+    fn pipe_table_enter_does_not_trigger_for_invalid_shapes() {
+        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a |", None, 5).is_none());
+        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "a | b |", None, 7).is_none());
+        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a | b ", None, 8).is_none());
+        assert!(
+            pipe_table_enter_transform(&BlockKind::Paragraph, "| a |\n| b |", None, 11).is_none()
+        );
+        assert!(
+            pipe_table_enter_transform(&BlockKind::Paragraph, "| a | b |", Some(0..1), 9).is_none()
+        );
+        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a | b |", None, 4).is_none());
     }
 
     #[test]

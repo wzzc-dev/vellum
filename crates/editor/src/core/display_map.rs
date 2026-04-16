@@ -3,6 +3,7 @@ use std::ops::Range;
 use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel},
     syntax::InlineStyle,
+    table::{TABLE_COLUMN_GAP, TableCellRef, TableModel},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +146,7 @@ impl DisplayMap {
     ) -> usize {
         let mut last_visible = 0usize;
         for (block_index, block) in self.blocks.iter().enumerate() {
-            for span in &block.spans {
+            for (span_index, span) in block.spans.iter().enumerate() {
                 last_visible = span.visible_range.end;
                 if source_offset < span.source_range.start {
                     return span.visible_range.start;
@@ -161,6 +162,12 @@ impl DisplayMap {
                     {
                         continue;
                     }
+                    if source_offset == span.source_range.end
+                        && affinity == SelectionAffinity::Downstream
+                        && should_prefer_next_table_span_boundary(block, span_index, source_offset)
+                    {
+                        continue;
+                    }
 
                     if span.hidden {
                         return span.visible_range.start;
@@ -171,6 +178,8 @@ impl DisplayMap {
                         && source_offset == span.source_range.start
                     {
                         span.visible_range.start
+                    } else if span.source_range.is_empty() && !span.visible_range.is_empty() {
+                        span.visible_range.end
                     } else {
                         (span.visible_range.start + relative).min(span.visible_range.end)
                     };
@@ -316,6 +325,29 @@ fn should_prefer_next_block_start_at_hidden_boundary(
             && current.source_range.end == source_offset
             && next.content_range.start == source_offset
             && next.kind != BlockKind::Raw)
+}
+
+fn should_prefer_next_table_span_boundary(
+    block: &RenderBlock,
+    span_index: usize,
+    source_offset: usize,
+) -> bool {
+    if block.kind != BlockKind::Table {
+        return false;
+    }
+    let Some(span) = block.spans.get(span_index) else {
+        return false;
+    };
+    if !span.hidden || span.source_range.end != source_offset {
+        return false;
+    }
+
+    block
+        .spans
+        .iter()
+        .skip(span_index + 1)
+        .take_while(|next| next.source_range.start == source_offset)
+        .any(|next| !next.hidden || !next.visible_range.is_empty())
 }
 
 fn source_selection_affinities(
@@ -551,6 +583,7 @@ impl<'a> BlockBuilder<'a> {
             BlockKind::Heading { .. } => self.push_heading(&text),
             BlockKind::Blockquote => self.push_blockquote(&text),
             BlockKind::List => self.push_list(&text),
+            BlockKind::Table => self.push_table(&text),
             BlockKind::CodeFence { .. } => self.push_code_fence(&text),
             _ => self.push_inline_text(
                 self.block.content_range.start,
@@ -714,14 +747,139 @@ impl<'a> BlockBuilder<'a> {
         }
     }
 
+    fn push_table(&mut self, text: &str) {
+        let table = TableModel::parse(text);
+        if table.is_empty() {
+            self.push_inline_text(
+                self.block.content_range.start,
+                text,
+                RenderInlineStyle::default(),
+            );
+            return;
+        }
+
+        let mut column_widths = vec![0usize; table.column_count()];
+        for visible_row in 0..table.visible_row_count() {
+            for column in 0..table.column_count() {
+                let Some(cell_range) = table.cell_source_range(TableCellRef {
+                    visible_row,
+                    column,
+                }) else {
+                    continue;
+                };
+                let source_start = self.block.content_range.start + cell_range.start;
+                let visible_width = self
+                    .visible_inline_text(source_start, &text[cell_range.clone()])
+                    .chars()
+                    .count();
+                column_widths[column] = column_widths[column].max(visible_width);
+            }
+        }
+
+        let mut last_source_offset = self.block.content_range.start;
+        let mut rendered_visible_row = false;
+
+        for row in table.rows() {
+            let row_start = self.block.content_range.start + row.line_start;
+            let row_end = self.block.content_range.start + row.end_with_newline;
+            if row.is_delimiter {
+                self.push_hidden_source(last_source_offset..row_end);
+                last_source_offset = row_end;
+                continue;
+            }
+
+            let row_content_start = row
+                .cells
+                .first()
+                .map(|cell| self.block.content_range.start + cell.source_range.start)
+                .unwrap_or(row_start);
+            self.push_hidden_source(last_source_offset..row_content_start);
+            if rendered_visible_row {
+                self.push_virtual_visible(
+                    RenderSpanKind::LineBreak,
+                    row_content_start,
+                    "\n".to_string(),
+                    RenderInlineStyle::default(),
+                );
+            }
+
+            let mut cursor = row_content_start;
+            for column in 0..table.column_count() {
+                if let Some(cell) = row.cells.get(column) {
+                    let cell_start = self.block.content_range.start + cell.source_range.start;
+                    let cell_end = self.block.content_range.start + cell.source_range.end;
+                    let cell_text = &text[cell.source_range.clone()];
+                    let visible_width = self
+                        .visible_inline_text(cell_start, cell_text)
+                        .chars()
+                        .count();
+
+                    self.push_hidden_source(cursor..cell_start);
+                    self.push_inline_text(cell_start, cell_text, RenderInlineStyle::default());
+                    cursor = cell_end;
+
+                    let gap = if column + 1 < table.column_count() {
+                        let gap = column_widths[column]
+                            .saturating_sub(visible_width)
+                            .saturating_add(TABLE_COLUMN_GAP);
+                        Some(gap)
+                    } else {
+                        Some(column_widths[column].saturating_sub(visible_width))
+                    };
+                    if let Some(gap) = gap.filter(|gap| *gap > 0) {
+                        self.push_virtual_visible(
+                            RenderSpanKind::Text,
+                            cursor,
+                            " ".repeat(gap),
+                            RenderInlineStyle::default(),
+                        );
+                    }
+                } else {
+                    let gap = if column + 1 < table.column_count() {
+                        column_widths[column] + TABLE_COLUMN_GAP
+                    } else {
+                        column_widths[column]
+                    };
+                    self.push_virtual_visible(
+                        RenderSpanKind::Text,
+                        cursor,
+                        " ".repeat(gap),
+                        RenderInlineStyle::default(),
+                    );
+                }
+            }
+
+            self.push_hidden_source(cursor..row_end);
+            last_source_offset = row_end;
+            rendered_visible_row = true;
+        }
+
+        self.push_hidden_source(last_source_offset..self.block.content_range.end);
+    }
+
+    fn visible_inline_text(&self, source_start: usize, text: &str) -> String {
+        let mut visible = String::new();
+        for token in parse_inline_tokens(text) {
+            let range =
+                source_start + token.local_range.start..source_start + token.local_range.end;
+            let reveal_range = token.reveal_range.clone().map(|reveal_range| {
+                source_start + reveal_range.start..source_start + reveal_range.end
+            });
+            let hidden = token.hidden && !self.should_reveal_inline(&range, reveal_range.as_ref());
+            if !hidden {
+                visible.push_str(&token.visible_text);
+            }
+        }
+        visible
+    }
+
     fn push_inline_text(&mut self, source_start: usize, text: &str, style: RenderInlineStyle) {
         for token in parse_inline_tokens(text) {
             let range =
                 source_start + token.local_range.start..source_start + token.local_range.end;
-            let reveal_range = token
-                .reveal_range
-                .clone()
-                .map(|reveal_range| source_start + reveal_range.start..source_start + reveal_range.end);
+            let reveal_range = token.reveal_range.clone().map(|reveal_range| {
+                source_start + reveal_range.start..source_start + reveal_range.end
+            });
             let hidden = token.hidden && !self.should_reveal_inline(&range, reveal_range.as_ref());
             let visible_text = if hidden {
                 String::new()
@@ -745,6 +903,42 @@ impl<'a> BlockBuilder<'a> {
                 },
             );
         }
+    }
+
+    fn push_hidden_source(&mut self, source_range: Range<usize>) {
+        if source_range.is_empty() {
+            return;
+        }
+
+        self.push_span(
+            RenderSpanKind::HiddenSyntax,
+            source_range.clone(),
+            self.document.text_for_range(source_range),
+            String::new(),
+            true,
+            RenderInlineStyle::default(),
+        );
+    }
+
+    fn push_virtual_visible(
+        &mut self,
+        kind: RenderSpanKind,
+        source_offset: usize,
+        visible_text: String,
+        style: RenderInlineStyle,
+    ) {
+        if visible_text.is_empty() {
+            return;
+        }
+
+        self.push_span(
+            kind,
+            source_offset..source_offset,
+            String::new(),
+            visible_text,
+            false,
+            style,
+        );
     }
 
     fn push_hidden_or_visible(
@@ -876,6 +1070,20 @@ fn parse_inline_tokens_into(
     while offset < text.len() {
         let rest = &text[offset..];
 
+        if let Some(escaped) = rest.strip_prefix('\\')
+            && let Some(ch) = escaped.chars().next()
+        {
+            push_escaped_text_token(
+                tokens,
+                base_offset + offset,
+                1 + ch.len_utf8(),
+                &ch.to_string(),
+                style,
+            );
+            offset += 1 + ch.len_utf8();
+            continue;
+        }
+
         if let Some((delimiter, advance, update)) = [
             ("**", 2usize, InlineMarker::Strong),
             ("__", 2usize, InlineMarker::Strong),
@@ -957,12 +1165,7 @@ fn parse_inline_tokens_into(
             let target_start = inner_end + 2;
             let target_end = target_start + close_paren;
             let reveal_range = offset..target_end + 1;
-            push_hidden_marker_with_reveal(
-                tokens,
-                base_offset + offset,
-                "[",
-                reveal_range.clone(),
-            );
+            push_hidden_marker_with_reveal(tokens, base_offset + offset, "[", reveal_range.clone());
             parse_inline_tokens_into(
                 &text[inner_start..inner_end],
                 base_offset + inner_start,
@@ -990,12 +1193,7 @@ fn parse_inline_tokens_into(
                 &text[target_start..target_end],
                 reveal_range.clone(),
             );
-            push_hidden_marker_with_reveal(
-                tokens,
-                base_offset + target_end,
-                ")",
-                reveal_range,
-            );
+            push_hidden_marker_with_reveal(tokens, base_offset + target_end, ")", reveal_range);
             offset = target_end + 1;
             continue;
         }
@@ -1003,7 +1201,7 @@ fn parse_inline_tokens_into(
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '*' | '_' | '~' | '`' | '['))
+            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '['))
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
@@ -1053,6 +1251,27 @@ fn push_text_token(
         reveal_range: None,
         source_text: text.to_string(),
         visible_text: text.to_string(),
+        hidden: false,
+        style,
+    });
+}
+
+fn push_escaped_text_token(
+    tokens: &mut Vec<InlineToken>,
+    offset: usize,
+    source_len: usize,
+    visible_text: &str,
+    style: RenderInlineStyle,
+) {
+    if visible_text.is_empty() {
+        return;
+    }
+
+    tokens.push(InlineToken {
+        local_range: offset..offset + source_len,
+        reveal_range: None,
+        source_text: visible_text.to_string(),
+        visible_text: visible_text.to_string(),
         hidden: false,
         style,
     });
@@ -1325,6 +1544,50 @@ mod tests {
     }
 
     #[test]
+    fn table_display_map_hides_pipe_markup_and_delimiter_row() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let doc = DocumentBuffer::from_text(source);
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "Name   Role\nAda    Eng ");
+        assert!(!map.visible_text.contains("---"));
+
+        let second_line_start = map.visible_text.find('\n').unwrap_or(0) + 1;
+        assert_eq!(
+            map.visible_to_source_with_affinity(second_line_start, SelectionAffinity::Downstream)
+                .source_offset,
+            source.find("Ada").unwrap_or(0)
+        );
+    }
+
+    #[test]
+    fn empty_table_row_boundary_maps_to_start_of_next_visible_line() {
+        let source = "| Name | Role |\n| --- | --- |\n|  |  |";
+        let doc = DocumentBuffer::from_text(source);
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        let empty_row_cell_start = source.rfind("|  |  |").unwrap_or(0) + 1;
+        assert_eq!(
+            map.source_to_visible_with_affinity(
+                empty_row_cell_start,
+                SelectionAffinity::Downstream
+            ),
+            map.visible_text.find('\n').unwrap_or(0) + 1
+        );
+        assert!(map.visible_text.ends_with(' '));
+    }
+
+    #[test]
+    fn escaped_pipes_inside_table_cells_render_without_backslashes() {
+        let source = "| Name | Note |\n| --- | --- |\n| Ada | a\\|b |";
+        let doc = DocumentBuffer::from_text(source);
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert!(map.visible_text.contains("a|b"));
+        assert!(!map.visible_text.contains("\\|"));
+    }
+
+    #[test]
     fn generic_list_prefix_is_hidden_until_cursor_reaches_marker_boundary() {
         let doc = DocumentBuffer::from_text("- item");
         let hidden = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
@@ -1396,11 +1659,8 @@ mod tests {
             preferred_column: None,
             affinity: SelectionAffinity::Downstream,
         };
-        let revealed = DisplayMap::from_document(
-            &doc,
-            Some(&selection),
-            HiddenSyntaxPolicy::SelectionAware,
-        );
+        let revealed =
+            DisplayMap::from_document(&doc, Some(&selection), HiddenSyntaxPolicy::SelectionAware);
 
         assert_eq!(revealed.visible_text, "[官网](https://box86.org/)");
         assert_eq!(revealed.source_selection_to_visible(&selection).cursor(), 4);
