@@ -563,7 +563,7 @@ mod tests {
 
         let final_snapshot = snapshot(&view, cx);
         let final_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
-        assert_eq!(final_snapshot.selection.cursor(), 5);
+        assert_eq!(final_snapshot.selection.cursor(), 6);
         assert!(final_cursor > blank_cursor);
     }
 
@@ -600,7 +600,7 @@ mod tests {
 
         let second_snapshot = snapshot(&view, cx);
         let second_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
-        assert_eq!(second_snapshot.selection.cursor(), 5);
+        assert_eq!(second_snapshot.selection.cursor(), 6);
         assert!(second_cursor > first_cursor);
     }
 
@@ -672,17 +672,18 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::Heading { .. }))
             .expect("heading block");
+        let expected_cursor = heading.visible_range.start + 1;
         assert_eq!(
             snapshot.selection.cursor(),
             snapshot
                 .display_map
                 .visible_to_source_with_affinity(
-                    heading.visible_range.start,
+                    expected_cursor,
                     SelectionAffinity::Downstream,
                 )
                 .source_offset
         );
-        assert_eq!(snapshot.visible_selection.cursor(), heading.visible_range.start);
+        assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
     }
 
     #[gpui::test]
@@ -713,17 +714,18 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::Blockquote))
             .expect("blockquote block");
+        let expected_cursor = blockquote.visible_range.start + 1;
         assert_eq!(
             snapshot.selection.cursor(),
             snapshot
                 .display_map
                 .visible_to_source_with_affinity(
-                    blockquote.visible_range.start,
+                    expected_cursor,
                     SelectionAffinity::Downstream,
                 )
                 .source_offset
         );
-        assert_eq!(snapshot.visible_selection.cursor(), blockquote.visible_range.start);
+        assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
     }
 
     #[gpui::test]
@@ -761,15 +763,16 @@ mod tests {
             .expect("second heading block");
         let heading = &first_snapshot.display_map.blocks[heading_index];
         let input_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        let expected_cursor = heading.visible_range.start + 1;
 
-        assert_eq!(first_snapshot.visible_selection.cursor(), heading.visible_range.start);
-        assert_eq!(input_cursor, heading.visible_range.start);
+        assert_eq!(first_snapshot.visible_selection.cursor(), expected_cursor);
+        assert_eq!(input_cursor, expected_cursor);
         assert_eq!(
             first_snapshot.selection.cursor(),
             first_snapshot
                 .display_map
                 .visible_to_source_with_affinity(
-                    heading.visible_range.start,
+                    expected_cursor,
                     SelectionAffinity::Downstream,
                 )
                 .source_offset
@@ -788,14 +791,14 @@ mod tests {
                 heading_index,
                 first_snapshot.visible_selection.cursor(),
             ),
-            Some(0)
+            Some(1)
         );
 
         cx.simulate_keystrokes("x");
         cx.run_until_parked();
 
         let final_snapshot = snapshot(&view, cx);
-        assert!(final_snapshot.document_text.starts_with("# A\n\n\n\n## xAA"));
+        assert!(final_snapshot.document_text.starts_with("# A\n\n\n\n## AxA"));
     }
 
     #[gpui::test]
@@ -826,17 +829,18 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::List))
             .expect("list block");
+        let expected_cursor = list.visible_range.start + 1;
         assert_eq!(
             snapshot.selection.cursor(),
             snapshot
                 .display_map
                 .visible_to_source_with_affinity(
-                    list.visible_range.start,
+                    expected_cursor,
                     SelectionAffinity::Downstream,
                 )
                 .source_offset
         );
-        assert_eq!(snapshot.visible_selection.cursor(), list.visible_range.start);
+        assert_eq!(snapshot.visible_selection.cursor(), expected_cursor);
     }
 
     #[gpui::test]
@@ -879,18 +883,19 @@ mod tests {
             .iter()
             .find(|block| matches!(block.kind, BlockKind::Heading { depth: 2 }))
             .expect("heading block");
+        let expected_cursor = heading_block.visible_range.start + 1;
 
         assert_eq!(
             heading_snapshot.selection.cursor(),
             heading_snapshot
                 .display_map
                 .visible_to_source_with_affinity(
-                    heading_block.visible_range.start,
+                    expected_cursor,
                     SelectionAffinity::Downstream,
                 )
                 .source_offset
         );
-        assert_eq!(heading_snapshot.visible_selection.cursor(), heading_block.visible_range.start);
+        assert_eq!(heading_snapshot.visible_selection.cursor(), expected_cursor);
         assert_eq!(heading_cursor, heading_snapshot.visible_selection.cursor());
         assert_eq!(heading_text, heading_snapshot.display_map.visible_text);
         assert_eq!(
@@ -907,15 +912,15 @@ mod tests {
                 2,
                 heading_snapshot.visible_selection.cursor(),
             ),
-            Some(0)
+            Some(1)
         );
 
         cx.simulate_keystrokes("x");
         cx.run_until_parked();
 
         let typed_snapshot = snapshot(&view, cx);
-        assert_eq!(typed_snapshot.document_text, "# A\n\n\n\n## xAA\n\n123\n\n123\n\n123\n");
-        assert_eq!(typed_snapshot.visible_selection.cursor(), heading_block.visible_range.start + 1);
+        assert_eq!(typed_snapshot.document_text, "# A\n\n\n\n## AxA\n\n123\n\n123\n\n123\n");
+        assert_eq!(typed_snapshot.visible_selection.cursor(), heading_block.visible_range.start + 2);
     }
 
     #[gpui::test]
@@ -983,6 +988,179 @@ mod tests {
             .visible_to_source_with_affinity(input_cursor, SelectionAffinity::Downstream)
             .source_offset;
         assert_eq!(before_typing.selection.cursor(), expected_source_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_up_through_mixed_blocks_does_not_skip_to_first_line(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# 1\n\n## 2\n\n12\n\n34");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let last_block = editor
+                .snapshot
+                .display_map
+                .blocks
+                .last()
+                .expect("last block")
+                .clone();
+            let selection = SelectionState::collapsed(
+                editor
+                    .snapshot
+                    .display_map
+                    .visible_to_source_with_affinity(
+                        last_block.visible_range.start,
+                        SelectionAffinity::Downstream,
+                    )
+                    .source_offset,
+            );
+            let effects = editor
+                .controller
+                .dispatch(EditCommand::SetSelection { selection });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        let expected_blocks = [(2usize, "12"), (1usize, "2"), (0usize, "1")];
+
+        for (expected_block_index, expected_text) in expected_blocks {
+            cx.simulate_keystrokes("up");
+            cx.run_until_parked();
+
+            let step_snapshot = snapshot(&view, cx);
+            let input_position =
+                cx.update_window_entity(&input, |input, _, _| input.cursor_position());
+            let caret_blocks = step_snapshot
+                .display_map
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(block_index, _)| {
+                    caret_visual_offset_for_block(
+                        &step_snapshot.display_map.blocks,
+                        block_index,
+                        step_snapshot.visible_selection.cursor(),
+                    )
+                    .map(|_| block_index)
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                caret_blocks,
+                vec![expected_block_index],
+                "input_position={input_position:?}, visible_cursor={}, source_cursor={}",
+                step_snapshot.visible_selection.cursor(),
+                step_snapshot.selection.cursor()
+            );
+            assert_eq!(
+                rendered_text_for_block(&step_snapshot.display_map.blocks[expected_block_index]),
+                expected_text
+            );
+        }
+
+        let final_snapshot = snapshot(&view, cx);
+        let input_cursor = cx.update_window_entity(&input, |input, _, _| input.cursor());
+        let expected_source_cursor = final_snapshot
+            .display_map
+            .visible_to_source_with_affinity(input_cursor, SelectionAffinity::Downstream)
+            .source_offset;
+        assert_eq!(final_snapshot.selection.cursor(), expected_source_cursor);
+    }
+
+    #[gpui::test]
+    fn pressing_down_preserves_nearest_column_across_blocks(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# 1234\n\n## 5678\n\n12\n\n3456");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_cursor_position(
+                Position {
+                    line: 0,
+                    character: 3,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let expected = [(1usize, "5678", 3usize), (2usize, "12", 2usize), (3usize, "3456", 3usize)];
+
+        for (expected_block_index, expected_text, expected_offset) in expected {
+            cx.simulate_keystrokes("down");
+            cx.run_until_parked();
+
+            let step_snapshot = snapshot(&view, cx);
+            let caret_offset = caret_visual_offset_for_block(
+                &step_snapshot.display_map.blocks,
+                expected_block_index,
+                step_snapshot.visible_selection.cursor(),
+            )
+            .expect("caret should be in expected block");
+
+            assert_eq!(
+                rendered_text_for_block(&step_snapshot.display_map.blocks[expected_block_index]),
+                expected_text
+            );
+            assert_eq!(caret_offset, expected_offset);
+            assert_eq!(step_snapshot.selection.preferred_column, Some(3));
+        }
+    }
+
+    #[gpui::test]
+    fn pressing_up_preserves_nearest_column_across_blocks(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# 1234\n\n## 5678\n\n12\n\n3456");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let last_block = editor
+                .snapshot
+                .display_map
+                .blocks
+                .last()
+                .expect("last block")
+                .clone();
+            let selection = SelectionState::collapsed(
+                editor
+                    .snapshot
+                    .display_map
+                    .visible_to_source_with_affinity(
+                        last_block.visible_range.start + 3,
+                        SelectionAffinity::Downstream,
+                    )
+                    .source_offset,
+            );
+            let effects = editor
+                .controller
+                .dispatch(EditCommand::SetSelection { selection });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        let expected = [(2usize, "12", 2usize), (1usize, "5678", 3usize), (0usize, "1234", 3usize)];
+
+        for (expected_block_index, expected_text, expected_offset) in expected {
+            cx.simulate_keystrokes("up");
+            cx.run_until_parked();
+
+            let step_snapshot = snapshot(&view, cx);
+            let caret_offset = caret_visual_offset_for_block(
+                &step_snapshot.display_map.blocks,
+                expected_block_index,
+                step_snapshot.visible_selection.cursor(),
+            )
+            .expect("caret should be in expected block");
+
+            assert_eq!(
+                rendered_text_for_block(&step_snapshot.display_map.blocks[expected_block_index]),
+                expected_text
+            );
+            assert_eq!(caret_offset, expected_offset);
+            assert_eq!(step_snapshot.selection.preferred_column, Some(3));
+        }
     }
 
     #[gpui::test]

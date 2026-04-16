@@ -6,16 +6,16 @@ use crate::{
     core::{
         controller::EditorSnapshot,
         text_ops::{
-            clamp_to_char_boundary, compute_document_diff, line_column_for_byte_offset,
-            utf16_range_to_byte_range,
+            byte_offset_for_line_column, clamp_to_char_boundary, compute_document_diff,
+            line_column_for_byte_offset, utf16_range_to_byte_range,
         },
     },
 };
 
 use super::{
     surface::{
-        caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_visible_end,
-        rendered_visible_len, surface_empty_block_line_count,
+        caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
+        rendered_visible_end, rendered_visible_len, surface_empty_block_line_count,
     },
     view::MarkdownEditor,
 };
@@ -170,21 +170,35 @@ fn selection_from_visible_input(
 ) -> SelectionState {
     let input_selection = visible_selection.clone();
     let visible_selection = input_selection_to_display_selection(snapshot, visible_selection);
+    let vertical_move = vertical_move_context(snapshot, &input_selection);
     if !visible_selection.is_collapsed() {
-
-        return snapshot
+        let mut selection = snapshot
             .display_map
             .visible_selection_to_source(&visible_selection);
+        if let Some(vertical_move) = vertical_move {
+            selection.preferred_column = Some(vertical_move.preferred_column);
+        }
+        return selection;
     }
 
     if let Some(selection) =
-        selection_for_compressed_gap_stop(snapshot, &input_selection, &visible_selection)
+        selection_for_compressed_gap_stop(
+            snapshot,
+            &input_selection,
+            &visible_selection,
+            vertical_move,
+        )
     {
         return selection;
     }
 
     if let Some(selection) =
-        selection_for_compressed_gap_block_content(snapshot, &input_selection, &visible_selection)
+        selection_for_compressed_gap_block_content(
+            snapshot,
+            &input_selection,
+            &visible_selection,
+            vertical_move,
+        )
     {
         return selection;
     }
@@ -193,7 +207,9 @@ fn selection_from_visible_input(
         hidden_block_syntax_span_at_visible_cursor(snapshot, visible_selection.cursor())
     {
         let mut selection = SelectionState::collapsed(span.source_range.end);
-        selection.preferred_column = visible_selection.preferred_column;
+        selection.preferred_column = vertical_move
+            .map(|vertical_move| Some(vertical_move.preferred_column))
+            .unwrap_or(visible_selection.preferred_column);
         selection.affinity =
             if should_reveal_hidden_block_syntax_boundary(snapshot, &visible_selection) {
                 SelectionAffinity::Upstream
@@ -208,6 +224,9 @@ fn selection_from_visible_input(
     let mut source_selection = snapshot
         .display_map
         .visible_selection_to_source(&mapping_selection);
+    if let Some(vertical_move) = vertical_move {
+        source_selection.preferred_column = Some(vertical_move.preferred_column);
+    }
 
     if should_reveal_hidden_block_syntax_boundary(snapshot, &visible_selection) {
         source_selection.affinity = SelectionAffinity::Upstream;
@@ -342,12 +361,23 @@ fn normalized_display_cursor_from_input(
     let Some(direction) = VerticalInputDirection::from_lines(previous_line, next_line) else {
         return canonical_display_offset_for_input_offset(snapshot, next_cursor);
     };
+    let preferred_column = preferred_column_for_vertical_move(snapshot, previous_cursor);
 
-    let Some(adjusted_cursor) =
-        adjusted_cursor_for_hidden_vertical_gap(snapshot, previous_cursor, next_cursor, direction)
+    let Some(adjusted_cursor) = adjusted_cursor_for_hidden_vertical_gap(
+        snapshot,
+        previous_cursor,
+        next_cursor,
+        direction,
+        preferred_column,
+    )
     else {
-        let Some(adjusted_cursor) =
-            adjusted_cursor_for_virtual_inter_block_gap(snapshot, previous_cursor, next_cursor, direction)
+        let Some(adjusted_cursor) = adjusted_cursor_for_virtual_inter_block_gap(
+            snapshot,
+            previous_cursor,
+            next_cursor,
+            direction,
+            preferred_column,
+        )
         else {
             return canonical_display_offset_for_input_offset(snapshot, next_cursor);
         };
@@ -360,6 +390,14 @@ fn normalized_display_cursor_from_input(
 enum VerticalInputDirection {
     Up,
     Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VerticalMoveContext {
+    previous_cursor: usize,
+    next_cursor: usize,
+    direction: VerticalInputDirection,
+    preferred_column: usize,
 }
 
 impl VerticalInputDirection {
@@ -384,6 +422,7 @@ fn adjusted_cursor_for_hidden_vertical_gap(
     previous_cursor: usize,
     next_cursor: usize,
     direction: VerticalInputDirection,
+    preferred_column: usize,
 ) -> Option<usize> {
     for gap in compressed_gap_regions(snapshot) {
         let previous_state = gap.cursor_state(previous_cursor);
@@ -398,12 +437,16 @@ fn adjusted_cursor_for_hidden_vertical_gap(
                 VerticalInputDirection::Down,
                 CompressedGapCursorState::BeforeGap,
                 CompressedGapCursorState::AfterGap,
-            ) => return Some(gap.next_block_content_display_start(snapshot)),
+            ) => {
+                return Some(gap.next_block_vertical_target(snapshot, direction, preferred_column));
+            }
             (
                 VerticalInputDirection::Down,
                 CompressedGapCursorState::GapStop,
                 CompressedGapCursorState::GapStop | CompressedGapCursorState::AfterGap,
-            ) => return Some(gap.next_block_content_display_start(snapshot)),
+            ) => {
+                return Some(gap.next_block_vertical_target(snapshot, direction, preferred_column));
+            }
             (
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::AfterGap,
@@ -413,12 +456,16 @@ fn adjusted_cursor_for_hidden_vertical_gap(
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::AfterGap,
                 CompressedGapCursorState::BeforeGap,
-            ) => return Some(gap.previous_block_content_display_end(snapshot)),
+            ) => {
+                return Some(gap.previous_block_vertical_target(snapshot, direction, preferred_column));
+            }
             (
                 VerticalInputDirection::Up,
                 CompressedGapCursorState::GapStop,
                 CompressedGapCursorState::BeforeGap | CompressedGapCursorState::GapStop,
-            ) => return Some(gap.previous_block_content_display_end(snapshot)),
+            ) => {
+                return Some(gap.previous_block_vertical_target(snapshot, direction, preferred_column));
+            }
             _ => {}
         }
     }
@@ -431,6 +478,7 @@ fn adjusted_cursor_for_virtual_inter_block_gap(
     previous_cursor: usize,
     next_cursor: usize,
     direction: VerticalInputDirection,
+    preferred_column: usize,
 ) -> Option<usize> {
     let blocks = &snapshot.display_map.blocks;
 
@@ -456,21 +504,30 @@ fn adjusted_cursor_for_virtual_inter_block_gap(
                 let landed_in_virtual_gap =
                     next_cursor >= block_end && next_cursor < next_block_start;
                 if started_in_current_block && landed_in_virtual_gap {
-                    return Some(content_display_start_for_block(snapshot, next_block));
+                    return Some(vertical_target_display_offset_for_block(
+                        snapshot,
+                        next_block,
+                        direction,
+                        preferred_column,
+                    ));
                 }
             }
             VerticalInputDirection::Up => {
-                let started_in_next_block =
-                    caret_visual_offset_for_block(blocks, block_index + 1, previous_cursor);
+                let started_in_next_block = caret_visual_offset_for_block(
+                    blocks,
+                    block_index + 1,
+                    previous_cursor,
+                )
+                .is_some();
                 let landed_in_virtual_gap =
                     next_cursor > block_end && next_cursor <= next_block_start;
-                if let Some(local_offset) = started_in_next_block
-                    && landed_in_virtual_gap
-                {
-                    if local_offset == 0 {
-                        return Some(content_display_start_for_block(snapshot, block));
-                    }
-                    return Some(content_display_end_for_block(snapshot, block));
+                if started_in_next_block && landed_in_virtual_gap {
+                    return Some(vertical_target_display_offset_for_block(
+                        snapshot,
+                        block,
+                        direction,
+                        preferred_column,
+                    ));
                 }
             }
         }
@@ -536,15 +593,25 @@ impl CompressedGapRegion {
         }
     }
 
-    fn next_block_content_display_start(&self, snapshot: &EditorSnapshot) -> usize {
+    fn next_block_vertical_target(
+        &self,
+        snapshot: &EditorSnapshot,
+        direction: VerticalInputDirection,
+        preferred_column: usize,
+    ) -> usize {
         let Some(block) = snapshot.display_map.blocks.get(self.next_block_index) else {
             return self.next_block_display_start;
         };
 
-        content_display_start_for_block(snapshot, block)
+        vertical_target_display_offset_for_block(snapshot, block, direction, preferred_column)
     }
 
-    fn previous_block_content_display_end(&self, snapshot: &EditorSnapshot) -> usize {
+    fn previous_block_vertical_target(
+        &self,
+        snapshot: &EditorSnapshot,
+        direction: VerticalInputDirection,
+        preferred_column: usize,
+    ) -> usize {
         let Some(block) = self
             .block_index
             .checked_sub(1)
@@ -553,7 +620,7 @@ impl CompressedGapRegion {
             return self.previous_display_end;
         };
 
-        content_display_end_for_block(snapshot, block)
+        vertical_target_display_offset_for_block(snapshot, block, direction, preferred_column)
     }
 }
 
@@ -608,6 +675,59 @@ fn content_display_end_for_block(snapshot: &EditorSnapshot, block: &crate::Rende
     rendered_visible_end(block)
 }
 
+fn preferred_column_for_vertical_move(snapshot: &EditorSnapshot, previous_cursor: usize) -> usize {
+    snapshot
+        .selection
+        .preferred_column
+        .or(mirrored_input_selection(snapshot).preferred_column)
+        .unwrap_or_else(|| line_column_for_byte_offset(&snapshot.display_map.visible_text, previous_cursor).1)
+}
+
+fn vertical_move_context(
+    snapshot: &EditorSnapshot,
+    input_selection: &SelectionState,
+) -> Option<VerticalMoveContext> {
+    let visible_text = &snapshot.display_map.visible_text;
+    let previous_cursor = clamp_to_char_boundary(visible_text, mirrored_input_selection(snapshot).cursor());
+    let next_cursor = clamp_to_char_boundary(visible_text, input_selection.cursor());
+    let direction = VerticalInputDirection::from_lines(
+        line_column_for_byte_offset(visible_text, previous_cursor).0,
+        line_column_for_byte_offset(visible_text, next_cursor).0,
+    )?;
+
+    Some(VerticalMoveContext {
+        previous_cursor,
+        next_cursor,
+        direction,
+        preferred_column: preferred_column_for_vertical_move(snapshot, previous_cursor),
+    })
+}
+
+fn vertical_target_display_offset_for_block(
+    snapshot: &EditorSnapshot,
+    block: &crate::RenderBlock,
+    direction: VerticalInputDirection,
+    preferred_column: usize,
+) -> usize {
+    let rendered_text = rendered_text_for_block(block);
+    if rendered_text.is_empty() {
+        return match direction {
+            VerticalInputDirection::Down => content_display_start_for_block(snapshot, block),
+            VerticalInputDirection::Up => content_display_end_for_block(snapshot, block),
+        };
+    }
+
+    let target_line = match direction {
+        VerticalInputDirection::Down => 0,
+        VerticalInputDirection::Up => rendered_text.lines().count().saturating_sub(1),
+    };
+    let local_offset = byte_offset_for_line_column(&rendered_text, target_line, preferred_column);
+    clamp_to_char_boundary(
+        &snapshot.display_map.visible_text,
+        block.visible_range.start + local_offset,
+    )
+}
+
 fn should_reveal_hidden_block_syntax_boundary(
     snapshot: &EditorSnapshot,
     visible_selection: &SelectionState,
@@ -657,22 +777,18 @@ fn hidden_block_syntax_span_at_visible_cursor(
 
 fn selection_for_compressed_gap_block_content(
     snapshot: &EditorSnapshot,
-    input_selection: &SelectionState,
+    _input_selection: &SelectionState,
     visible_selection: &SelectionState,
+    vertical_move: Option<VerticalMoveContext>,
 ) -> Option<SelectionState> {
     if !visible_selection.is_collapsed() {
         return None;
     }
 
-    let previous_cursor = mirrored_input_selection(snapshot).cursor();
-    let next_cursor = input_selection.cursor();
-    let visible_text = &snapshot.display_map.visible_text;
-    let previous_cursor = clamp_to_char_boundary(visible_text, previous_cursor);
-    let next_cursor = clamp_to_char_boundary(visible_text, next_cursor);
-    let direction = VerticalInputDirection::from_lines(
-        line_column_for_byte_offset(visible_text, previous_cursor).0,
-        line_column_for_byte_offset(visible_text, next_cursor).0,
-    )?;
+    let vertical_move = vertical_move?;
+    let previous_cursor = vertical_move.previous_cursor;
+    let next_cursor = vertical_move.next_cursor;
+    let direction = vertical_move.direction;
 
     for gap in compressed_gap_regions(snapshot) {
         let previous_state = gap.cursor_state(previous_cursor);
@@ -703,16 +819,18 @@ fn selection_for_compressed_gap_block_content(
             continue;
         }
 
-        let expected_cursor = match direction {
-            VerticalInputDirection::Down => content_display_start_for_block(snapshot, target_block),
-            VerticalInputDirection::Up => content_display_end_for_block(snapshot, target_block),
-        };
+        let expected_cursor = vertical_target_display_offset_for_block(
+            snapshot,
+            target_block,
+            direction,
+            vertical_move.preferred_column,
+        );
         if visible_selection.cursor() != expected_cursor {
             continue;
         }
 
         let mut selection = SelectionState::collapsed(expected_cursor);
-        selection.preferred_column = visible_selection.preferred_column;
+        selection.preferred_column = Some(vertical_move.preferred_column);
         selection.affinity = match direction {
             VerticalInputDirection::Down => SelectionAffinity::Downstream,
             VerticalInputDirection::Up => SelectionAffinity::Upstream,
@@ -725,22 +843,18 @@ fn selection_for_compressed_gap_block_content(
 
 fn selection_for_compressed_gap_stop(
     snapshot: &EditorSnapshot,
-    input_selection: &SelectionState,
+    _input_selection: &SelectionState,
     visible_selection: &SelectionState,
+    vertical_move: Option<VerticalMoveContext>,
 ) -> Option<SelectionState> {
     if !visible_selection.is_collapsed() {
         return None;
     }
 
-    let previous_cursor = mirrored_input_selection(snapshot).cursor();
-    let next_cursor = input_selection.cursor();
-    let visible_text = &snapshot.display_map.visible_text;
-    let previous_cursor = clamp_to_char_boundary(visible_text, previous_cursor);
-    let next_cursor = clamp_to_char_boundary(visible_text, next_cursor);
-    let direction = VerticalInputDirection::from_lines(
-        line_column_for_byte_offset(visible_text, previous_cursor).0,
-        line_column_for_byte_offset(visible_text, next_cursor).0,
-    )?;
+    let vertical_move = vertical_move?;
+    let previous_cursor = vertical_move.previous_cursor;
+    let next_cursor = vertical_move.next_cursor;
+    let direction = vertical_move.direction;
 
     for gap in compressed_gap_regions(snapshot) {
         if next_cursor != gap.display_blank_offset {
@@ -767,7 +881,7 @@ fn selection_for_compressed_gap_stop(
 
         let block = snapshot.display_map.blocks.get(gap.block_index)?;
         let mut selection = SelectionState::collapsed(block.content_range.start);
-        selection.preferred_column = visible_selection.preferred_column;
+        selection.preferred_column = Some(vertical_move.preferred_column);
         selection.affinity = SelectionAffinity::Downstream;
         return Some(selection);
     }
