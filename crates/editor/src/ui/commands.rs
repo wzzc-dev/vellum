@@ -1,5 +1,5 @@
 use gpui::{App, Context, KeyBinding, Window};
-use gpui_component::input::Enter as InputEnter;
+use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
@@ -23,6 +23,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-enter", SecondaryEnter, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new(
             "ctrl-i",
@@ -48,6 +49,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(
             "ctrl-enter",
             SecondaryEnter,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        KeyBinding::new(
+            "ctrl-delete",
+            DeleteToNextWordEnd,
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
         KeyBinding::new(
