@@ -11,27 +11,60 @@ const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-b", BoldSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", BoldSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-i", ItalicSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-i", ItalicSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-k", LinkSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-[", PromoteBlock, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-[", PromoteBlock, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-]", DemoteBlock, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-]", DemoteBlock, Some(EDITOR_CONTEXT)),
         KeyBinding::new("escape", ExitBlockEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-up", FocusPrevBlock, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-down", FocusNextBlock, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-z", UndoEdit, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-z", UndoEdit, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-enter", SecondaryEnter, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
-        KeyBinding::new(
-            "ctrl-i",
-            ItalicSelection,
-            Some(GPUI_COMPONENT_INPUT_CONTEXT),
-        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-i", ItalicSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-i", ItalicSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-]", DemoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-]", DemoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new(
             "ctrl-up",
@@ -43,8 +76,15 @@ pub fn bind_keys(cx: &mut App) {
             FocusNextBlock,
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-z", UndoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-z", UndoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-z", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-z", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-y", RedoEdit, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         KeyBinding::new(
             "ctrl-enter",

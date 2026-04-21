@@ -118,6 +118,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_save_now))
             .on_action(cx.listener(Self::on_save_as))
             .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(Self::on_toggle_status_bar))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)

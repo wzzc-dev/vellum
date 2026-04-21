@@ -4,13 +4,19 @@ use std::{
 };
 
 use anyhow::Result;
-use editor::{EditorEvent, EditorSnapshot, MarkdownEditor, bind_keys as bind_editor_keys};
+use editor::{
+    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
+    FocusPrevBlock, ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit,
+    SecondaryEnter, UndoEdit, bind_keys as bind_editor_keys,
+};
 use gpui::{
     App, AppContext, Application, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
     ParentElement, Render, Styled, Timer, VisualContext, Window, WindowOptions, actions, div, px,
 };
 #[cfg(target_os = "macos")]
-use gpui::{Menu, MenuItem, SystemMenuType};
+use gpui::{Menu, MenuItem, OsAction, SystemMenuType};
+#[cfg(target_os = "macos")]
+use gpui_component::input::{Copy, Cut, Paste, SelectAll};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
     button::{Button, ButtonVariants as _},
@@ -37,7 +43,8 @@ actions!(
         SaveNow,
         SaveAs,
         Quit,
-        ToggleSidebar
+        ToggleSidebar,
+        ToggleStatusBar
     ]
 );
 
@@ -58,6 +65,7 @@ struct VellumApp {
     editor: Entity<MarkdownEditor>,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
+    status_bar_pinned: bool,
     status_bar_visible: bool,
     status_bar_hovered: bool,
     status_bar_edge_hovered: bool,
@@ -178,6 +186,49 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::action("Save As...", SaveAs),
             ],
         },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::os_action("Undo", UndoEdit, OsAction::Undo),
+                MenuItem::os_action("Redo", RedoEdit, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                MenuItem::separator(),
+                MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            ],
+        },
+        Menu {
+            name: "Paragraph".into(),
+            items: vec![
+                MenuItem::action("Insert Line Break", SecondaryEnter),
+                MenuItem::separator(),
+                MenuItem::action("Indent Paragraph", DemoteBlock),
+                MenuItem::action("Outdent Paragraph", PromoteBlock),
+                MenuItem::separator(),
+                MenuItem::action("Move to Previous Block", FocusPrevBlock),
+                MenuItem::action("Move to Next Block", FocusNextBlock),
+                MenuItem::separator(),
+                MenuItem::action("Exit Current Block", ExitBlockEdit),
+            ],
+        },
+        Menu {
+            name: "Format".into(),
+            items: vec![
+                MenuItem::action("Bold", BoldSelection),
+                MenuItem::action("Italic", ItalicSelection),
+                MenuItem::separator(),
+                MenuItem::action("Insert Link", LinkSelection),
+            ],
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::action("Toggle Sidebar", ToggleSidebar),
+                MenuItem::action("Toggle Status Bar", ToggleStatusBar),
+            ],
+        },
     ]);
 }
 
@@ -206,8 +257,9 @@ impl VellumApp {
             tree_state,
             editor,
             editor_snapshot,
-            sidebar_visible: false,
-            status_bar_visible: false,
+            sidebar_visible: true,
+            status_bar_pinned: false,
+            status_bar_visible: true,
             status_bar_hovered: false,
             status_bar_edge_hovered: false,
             status_bar_hide_generation: 0,

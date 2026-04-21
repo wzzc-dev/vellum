@@ -45,4 +45,13 @@ impl VellumApp {
     ) {
         self.toggle_sidebar_visibility(cx);
     }
+
+    pub(super) fn on_toggle_status_bar(
+        &mut self,
+        _: &ToggleStatusBar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_status_bar_pinned(!self.status_bar_pinned, window, cx);
+    }
 }

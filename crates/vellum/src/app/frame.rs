@@ -4,6 +4,14 @@ use gpui_component::{Sizable as _, menu::DropdownMenu as _};
 use super::*;
 
 impl VellumApp {
+    fn hide_status_bar(&mut self, cx: &mut Context<Self>) {
+        self.cancel_status_bar_hide();
+        if self.status_bar_visible {
+            self.status_bar_visible = false;
+            cx.notify();
+        }
+    }
+
     fn cancel_status_bar_hide(&mut self) {
         self.status_bar_hide_generation = self.status_bar_hide_generation.wrapping_add(1);
     }
@@ -16,8 +24,13 @@ impl VellumApp {
         }
     }
 
+    fn reveal_status_bar_temporarily(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal_status_bar(cx);
+        self.schedule_status_bar_hide(window, cx);
+    }
+
     fn schedule_status_bar_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.status_bar_visible {
+        if self.status_bar_pinned || !self.status_bar_visible {
             return;
         }
 
@@ -28,16 +41,27 @@ impl VellumApp {
             .spawn(cx, async move |cx| {
                 Timer::after(STATUS_BAR_HIDE_DELAY).await;
                 let _ = cx.update_window_entity(&view, |this, _, cx| {
-                    if this.status_bar_hide_generation == token
-                        && !this.status_bar_hovered
-                        && !this.status_bar_edge_hovered
-                    {
+                    if this.status_bar_hide_generation == token && !this.status_bar_pinned {
                         this.status_bar_visible = false;
                         cx.notify();
                     }
                 });
             })
             .detach();
+    }
+
+    pub(super) fn set_status_bar_pinned(
+        &mut self,
+        pinned: bool,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.status_bar_pinned = pinned;
+        if pinned {
+            self.reveal_status_bar(cx);
+        } else {
+            self.hide_status_bar(cx);
+        }
     }
 
     pub(super) fn on_root_mouse_move(
@@ -55,8 +79,12 @@ impl VellumApp {
 
         self.status_bar_edge_hovered = near_bottom;
         if near_bottom {
-            self.reveal_status_bar(cx);
-        } else if !self.status_bar_hovered {
+            if self.status_bar_pinned {
+                self.reveal_status_bar(cx);
+            } else {
+                self.reveal_status_bar_temporarily(window, cx);
+            }
+        } else if !self.status_bar_hovered && !self.status_bar_pinned {
             self.schedule_status_bar_hide(window, cx);
         }
     }
@@ -73,7 +101,11 @@ impl VellumApp {
 
         self.status_bar_edge_hovered = false;
         self.status_bar_hovered = false;
-        self.schedule_status_bar_hide(window, cx);
+        if !self.status_bar_pinned {
+            self.hide_status_bar(cx);
+        } else {
+            self.schedule_status_bar_hide(window, cx);
+        }
     }
 
     pub(super) fn on_status_bar_hover(
@@ -88,8 +120,12 @@ impl VellumApp {
 
         self.status_bar_hovered = *hovered;
         if *hovered {
-            self.reveal_status_bar(cx);
-        } else if !self.status_bar_edge_hovered {
+            if self.status_bar_pinned {
+                self.reveal_status_bar(cx);
+            } else {
+                self.reveal_status_bar_temporarily(window, cx);
+            }
+        } else if !self.status_bar_edge_hovered && !self.status_bar_pinned {
             self.schedule_status_bar_hide(window, cx);
         }
     }
