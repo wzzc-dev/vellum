@@ -142,6 +142,42 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     }
 }
 
+/// Set the block's heading marker to the given depth (1–6), or strip it to plain
+/// paragraph text if `depth == 0`. Works on both heading and non-heading blocks.
+pub(crate) fn set_heading_markup(text: &str, depth: u8) -> String {
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let rest = if text.contains('\n') {
+        text[first.len()..].to_string()
+    } else {
+        String::new()
+    };
+
+    let trimmed = first.trim_start();
+    let indent = &first[..first.len().saturating_sub(trimmed.len())];
+
+    // Strip any existing heading marker to get bare content.
+    let content = if let Some(space_ix) = trimmed.find(' ') {
+        let marker = &trimmed[..space_ix];
+        if marker.chars().all(|ch| ch == '#') && !marker.is_empty() {
+            &trimmed[space_ix + 1..]
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+
+    let head = if depth == 0 {
+        format!("{indent}{content}")
+    } else {
+        format!("{indent}{} {content}", "#".repeat(depth as usize))
+    };
+    format!("{head}{rest}")
+}
+
 pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
     matches!(
         kind,
@@ -598,6 +634,16 @@ mod tests {
     fn counts_words_across_cjk_and_ascii() {
         assert_eq!(count_document_words("hello world"), 2);
         assert_eq!(count_document_words("你好 world"), 3);
+    }
+
+    #[test]
+    fn set_heading_markup_sets_target_depth() {
+        assert_eq!(set_heading_markup("Title", 1), "# Title");
+        assert_eq!(set_heading_markup("Title", 2), "## Title");
+        assert_eq!(set_heading_markup("# Title", 2), "## Title");
+        assert_eq!(set_heading_markup("## Title", 1), "# Title");
+        assert_eq!(set_heading_markup("## Title", 0), "Title");
+        assert_eq!(set_heading_markup("# Title", 0), "Title");
     }
 
     #[test]

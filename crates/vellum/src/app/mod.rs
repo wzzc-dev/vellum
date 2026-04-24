@@ -7,7 +7,9 @@ use anyhow::Result;
 use editor::{
     BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
     FocusPrevBlock, ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit,
-    SecondaryEnter, ToggleSourceMode, UndoEdit, bind_keys as bind_editor_keys,
+    SecondaryEnter, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4,
+    ToggleHeading5, ToggleHeading6, ToggleParagraph, ToggleSourceMode, UndoEdit,
+    bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -189,6 +191,14 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
         Menu {
             name: "Paragraph".into(),
             items: vec![
+                MenuItem::action("Paragraph", ToggleParagraph),
+                MenuItem::action("Heading 1", ToggleHeading1),
+                MenuItem::action("Heading 2", ToggleHeading2),
+                MenuItem::action("Heading 3", ToggleHeading3),
+                MenuItem::action("Heading 4", ToggleHeading4),
+                MenuItem::action("Heading 5", ToggleHeading5),
+                MenuItem::action("Heading 6", ToggleHeading6),
+                MenuItem::separator(),
                 MenuItem::action("Insert Line Break", SecondaryEnter),
                 MenuItem::separator(),
                 MenuItem::action("Indent Paragraph", DemoteBlock),

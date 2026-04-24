@@ -14,7 +14,7 @@ use super::{
     text_ops::{
         adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, line_column_for_byte_offset,
-        pipe_table_enter_transform, semantic_enter_transform,
+        pipe_table_enter_transform, semantic_enter_transform, set_heading_markup,
     },
 };
 
@@ -186,6 +186,12 @@ pub enum EditCommand {
     },
     DeleteBackward,
     DeleteForward,
+    /// Toggle heading at the given depth (1–6). If the current block is already
+    /// a heading at that depth, it reverts to a plain paragraph (depth 0).
+    /// Passing depth 0 always converts to paragraph.
+    ToggleHeading {
+        depth: u8,
+    },
     Undo,
     Redo,
     ReloadConflict,
@@ -839,6 +845,7 @@ impl EditorController {
             } => self.move_caret_to_adjacent_block(direction, preferred_column),
             EditCommand::DeleteBackward => self.delete_backward(),
             EditCommand::DeleteForward => self.delete_forward(),
+            EditCommand::ToggleHeading { depth } => self.toggle_heading(depth),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
             EditCommand::ReloadConflict => self.reload_conflict_from_disk(),
@@ -1126,6 +1133,33 @@ impl EditorController {
             updated,
             SelectionState::collapsed(new_cursor),
             "Adjusted block structure",
+        )
+    }
+
+    fn toggle_heading(&mut self, depth: u8) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current = self.document.block_text(&block);
+        let target_depth = match block.kind {
+            BlockKind::Heading { depth: current_depth } if current_depth == depth && depth > 0 => 0,
+            _ => depth.min(6),
+        };
+        let updated = set_heading_markup(&current, target_depth);
+        let relative_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        self.apply_edit(
+            block.content_range,
+            updated,
+            SelectionState::collapsed(new_cursor),
+            if target_depth == 0 {
+                "Converted heading to paragraph"
+            } else {
+                "Updated heading level"
+            },
         )
     }
 
@@ -2264,6 +2298,84 @@ mod tests {
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Paragraph
+        ));
+    }
+
+    #[test]
+    fn toggle_heading_converts_paragraph_to_heading() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleHeading { depth: 2 });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "## Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(2));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Heading { depth: 2 }
+        ));
+    }
+
+    #[test]
+    fn toggle_heading_turns_matching_heading_back_into_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "## Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleHeading { depth: 2 });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(2));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Paragraph
+        ));
+    }
+
+    #[test]
+    fn toggle_heading_retargets_existing_heading_to_new_depth() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(1),
+        });
+
+        controller.dispatch(EditCommand::ToggleHeading { depth: 3 });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "### Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(1));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Heading { depth: 3 }
         ));
     }
 

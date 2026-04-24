@@ -18,6 +18,13 @@ actions!(
         UndoEdit,
         RedoEdit,
         SecondaryEnter,
+        ToggleHeading1,
+        ToggleHeading2,
+        ToggleHeading3,
+        ToggleHeading4,
+        ToggleHeading5,
+        ToggleHeading6,
+        ToggleParagraph,
     ]
 );
 

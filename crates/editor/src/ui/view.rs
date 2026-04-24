@@ -141,6 +141,21 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    pub(crate) fn toggle_heading(
+        &mut self,
+        depth: u8,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self
+            .controller
+            .dispatch(EditCommand::ToggleHeading { depth });
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
     pub(crate) fn exit_edit_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::SetSelection {
             selection: SelectionState::collapsed(self.snapshot.selection.cursor()),
@@ -421,6 +436,13 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))
+            .on_action(cx.listener(Self::on_toggle_heading1))
+            .on_action(cx.listener(Self::on_toggle_heading2))
+            .on_action(cx.listener(Self::on_toggle_heading3))
+            .on_action(cx.listener(Self::on_toggle_heading4))
+            .on_action(cx.listener(Self::on_toggle_heading5))
+            .on_action(cx.listener(Self::on_toggle_heading6))
+            .on_action(cx.listener(Self::on_toggle_paragraph))
             .capture_action({
                 let enter_view = view.clone();
                 move |action: &Enter, window, app: &mut App| {

@@ -4,7 +4,9 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleSourceMode, UndoEdit,
+    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleHeading1, ToggleHeading2,
+    ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleParagraph,
+    ToggleSourceMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -23,6 +25,34 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-k", LinkSelection, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-1", ToggleHeading1, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-1", ToggleHeading1, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-2", ToggleHeading2, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-2", ToggleHeading2, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-3", ToggleHeading3, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-3", ToggleHeading3, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-4", ToggleHeading4, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-4", ToggleHeading4, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-5", ToggleHeading5, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-5", ToggleHeading5, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-6", ToggleHeading6, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-6", ToggleHeading6, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-0", ToggleParagraph, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-0", ToggleParagraph, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -66,6 +96,34 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-1", ToggleHeading1, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-1", ToggleHeading1, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-2", ToggleHeading2, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-2", ToggleHeading2, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-3", ToggleHeading3, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-3", ToggleHeading3, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-4", ToggleHeading4, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-4", ToggleHeading4, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-5", ToggleHeading5, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-5", ToggleHeading5, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-6", ToggleHeading6, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-6", ToggleHeading6, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -231,5 +289,68 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_view_mode(window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading1(
+        &mut self,
+        _: &ToggleHeading1,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(1, window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading2(
+        &mut self,
+        _: &ToggleHeading2,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(2, window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading3(
+        &mut self,
+        _: &ToggleHeading3,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(3, window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading4(
+        &mut self,
+        _: &ToggleHeading4,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(4, window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading5(
+        &mut self,
+        _: &ToggleHeading5,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(5, window, cx);
+    }
+
+    pub(crate) fn on_toggle_heading6(
+        &mut self,
+        _: &ToggleHeading6,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(6, window, cx);
+    }
+
+    pub(crate) fn on_toggle_paragraph(
+        &mut self,
+        _: &ToggleParagraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_heading(0, window, cx);
     }
 }
