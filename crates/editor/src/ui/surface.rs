@@ -8,9 +8,10 @@ use std::{
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Entity, FontStyle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ObjectFit, PaintQuad, ParentElement,
-    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage, StyledText,
-    TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div, fill, img, point, px, size,
+    InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, ObjectFit, PaintQuad,
+    ParentElement, SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled,
+    StyledImage, StyledText, TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div, fill,
+    img, point, px, size,
 };
 use gpui_component::{
     ActiveTheme,
@@ -27,7 +28,10 @@ use crate::{
     },
 };
 
-use super::{BODY_FONT_SIZE, BODY_LINE_HEIGHT, layout::block_presentation, view::MarkdownEditor};
+use super::{
+    BODY_FONT_SIZE, BODY_LINE_HEIGHT, layout::block_presentation,
+    view::{MarkdownEditor, SurfaceSelectionAnchor},
+};
 
 const LIST_MARKER_COLUMN_WIDTH: f32 = 28.;
 const BLOCKQUOTE_BAR_WIDTH: f32 = 3.;
@@ -119,57 +123,73 @@ impl MarkdownEditor {
         task_marker_range_for_line(block, line_index)
     }
 
-    fn set_selection_from_surface_position(
-        &mut self,
+    fn surface_selection_anchor_for_position(
+        &self,
         block_id: u64,
-        click_position: gpui::Point<gpui::Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(bounds) = self.block_bounds.borrow().get(&block_id).copied() else {
-            self.focus_input(window, cx);
-            return;
-        };
-        let Some((block_index, block)) = self
+        position: gpui::Point<gpui::Pixels>,
+        selection_range: std::ops::Range<usize>,
+        window: &Window,
+    ) -> Option<SurfaceSelectionAnchor> {
+        let bounds = self.block_bounds.borrow().get(&block_id).copied()?;
+        let (block_index, block) = self
             .snapshot
             .display_map
             .blocks
             .iter()
             .enumerate()
             .find(|(_, block)| block.id == block_id)
-            .map(|(index, block)| (index, block.clone()))
-        else {
-            self.focus_input(window, cx);
-            return;
-        };
+            .map(|(index, block)| (index, block.clone()))?;
 
-        if should_render_image_preview(&block, self.snapshot.selection.range()) {
-            let effects = self.controller.dispatch(EditCommand::SetSelection {
-                selection: SelectionState::collapsed(image_edit_cursor_offset(&block)),
-            });
-            self.apply_effects(window, cx, effects);
-            self.focus_input(window, cx);
-            return;
-        }
-
-        let local_visible_offset = visible_byte_offset_for_click_position(
-            &self.snapshot.display_map.blocks,
-            block_index,
-            &block,
-            click_position,
-            bounds,
-            window,
-        );
-        let visible_offset = clamp_to_char_boundary(
-            &self.snapshot.display_map.visible_text,
-            block.visible_range.start + local_visible_offset,
-        );
-        let selection = SelectionState::collapsed(
+        let source_offset = if should_render_image_preview(&block, selection_range) {
+            image_edit_cursor_offset(&block)
+        } else {
+            let local_visible_offset = visible_byte_offset_for_click_position(
+                &self.snapshot.display_map.blocks,
+                block_index,
+                &block,
+                position,
+                bounds,
+                window,
+            );
+            let visible_offset = clamp_to_char_boundary(
+                &self.snapshot.display_map.visible_text,
+                block.visible_range.start + local_visible_offset,
+            );
             self.snapshot
                 .display_map
                 .visible_to_source(visible_offset)
-                .source_offset,
-        );
+                .source_offset
+        };
+        let visible_offset = self.snapshot.display_map.source_to_visible(source_offset);
+
+        Some(SurfaceSelectionAnchor {
+            source_offset,
+            visible_offset,
+        })
+    }
+
+    fn apply_surface_selection(
+        &mut self,
+        anchor: SurfaceSelectionAnchor,
+        head: SurfaceSelectionAnchor,
+        preserve_anchor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = if preserve_anchor {
+            SelectionState {
+                anchor_byte: anchor.source_offset,
+                head_byte: head.source_offset,
+                preferred_column: None,
+                affinity: if head.visible_offset < anchor.visible_offset {
+                    crate::SelectionAffinity::Upstream
+                } else {
+                    crate::SelectionAffinity::Downstream
+                },
+            }
+        } else {
+            SelectionState::collapsed(head.source_offset)
+        };
         let effects = self
             .controller
             .dispatch(EditCommand::SetSelection { selection });
@@ -189,13 +209,93 @@ impl MarkdownEditor {
             return;
         }
 
-        self.set_selection_from_surface_position(block_id, event.position(), window, cx);
+        let selection_range = self.snapshot.selection.range();
+        let Some(hit) = self.surface_selection_anchor_for_position(
+            block_id,
+            event.position(),
+            selection_range,
+            window,
+        ) else {
+            self.focus_input(window, cx);
+            return;
+        };
+
+        if event.click_count() >= 3 {
+            // 三击选整块：取点击所在 block 的完整 visible range → source
+            let block = self
+                .snapshot
+                .display_map
+                .blocks
+                .iter()
+                .find(|block| block.id == block_id)
+                .cloned();
+            if let Some(block) = block {
+                let source_selection = self.snapshot.display_map.visible_selection_to_source(
+                    &SelectionState {
+                        anchor_byte: block.visible_range.start,
+                        head_byte: block.visible_range.end,
+                        preferred_column: None,
+                        affinity: crate::SelectionAffinity::Downstream,
+                    },
+                );
+                let effects = self
+                    .controller
+                    .dispatch(EditCommand::SetSelection { selection: source_selection });
+                self.apply_effects(window, cx, effects);
+                self.focus_input(window, cx);
+                self.drag_selection_anchor = None;
+            } else {
+                self.apply_surface_selection(hit, hit, false, window, cx);
+                self.drag_selection_anchor = None;
+            }
+            return;
+        }
+
+        if event.click_count() == 2 {
+            // 双击选词：基于 visible text 计算词边界，再映射回 source
+            if let Some(visible_word) = word_range_at_visible_offset(
+                &self.snapshot.display_map.visible_text,
+                hit.visible_offset,
+            ) {
+                let source_selection = self.snapshot.display_map.visible_selection_to_source(
+                    &SelectionState {
+                        anchor_byte: visible_word.start,
+                        head_byte: visible_word.end,
+                        preferred_column: None,
+                        affinity: crate::SelectionAffinity::Downstream,
+                    },
+                );
+                let effects = self
+                    .controller
+                    .dispatch(EditCommand::SetSelection { selection: source_selection });
+                self.apply_effects(window, cx, effects);
+                self.focus_input(window, cx);
+                self.drag_selection_anchor = None;
+            } else {
+                // 双击空白/标点：退化为单击定位
+                self.apply_surface_selection(hit, hit, false, window, cx);
+                self.drag_selection_anchor = None;
+            }
+            return;
+        }
+
+        let anchor = if event.modifiers().shift {
+            self.drag_selection_anchor.unwrap_or(SurfaceSelectionAnchor {
+                source_offset: self.snapshot.selection.anchor_byte,
+                visible_offset: self.snapshot.visible_selection.anchor_byte,
+            })
+        } else {
+            hit
+        };
+        self.apply_surface_selection(anchor, hit, event.modifiers().shift, window, cx);
+        self.drag_selection_anchor = None;
     }
 
     pub(super) fn handle_surface_mouse_down(
         &mut self,
         block_id: u64,
         position: gpui::Point<gpui::Pixels>,
+        shift: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -204,7 +304,51 @@ impl MarkdownEditor {
             return;
         }
 
-        self.set_selection_from_surface_position(block_id, position, window, cx);
+        let selection_range = self.snapshot.selection.range();
+        let Some(head) = self.surface_selection_anchor_for_position(
+            block_id,
+            position,
+            selection_range,
+            window,
+        ) else {
+            self.focus_input(window, cx);
+            return;
+        };
+        let anchor = if shift {
+            self.drag_selection_anchor.unwrap_or(SurfaceSelectionAnchor {
+                source_offset: self.snapshot.selection.anchor_byte,
+                visible_offset: self.snapshot.visible_selection.anchor_byte,
+            })
+        } else {
+            head
+        };
+        self.drag_selection_anchor = Some(anchor);
+        self.apply_surface_selection(anchor, head, shift, window, cx);
+    }
+
+    pub(super) fn handle_surface_mouse_move(
+        &mut self,
+        block_id: u64,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging() {
+            return;
+        }
+        let Some(anchor) = self.drag_selection_anchor else {
+            return;
+        };
+        let selection_range = anchor.source_offset..anchor.source_offset;
+        let Some(head) = self.surface_selection_anchor_for_position(
+            block_id,
+            event.position,
+            selection_range,
+            window,
+        ) else {
+            return;
+        };
+        self.apply_surface_selection(anchor, head, true, window, cx);
     }
 }
 
@@ -551,11 +695,24 @@ fn render_display_block(
                 .w_full()
                 .px_1()
                 .py(px(presentation.block_padding_y))
-                .on_mouse_down(MouseButton::Left, move |event, window, app: &mut App| {
+                .on_mouse_down(MouseButton::Left, {
+                    let block_view = block_view.clone();
+                    move |event, window, app: &mut App| {
+                        app.stop_propagation();
+                        let position = event.position;
+                        let shift = event.modifiers.shift;
+                        let _ = block_view.update(app, |this, cx| {
+                            this.handle_surface_mouse_down(block_id, position, shift, window, cx);
+                        });
+                    }
+                })
+                .on_mouse_move(move |event, window, app: &mut App| {
+                    if !event.dragging() {
+                        return;
+                    }
                     app.stop_propagation();
-                    let position = event.position;
                     let _ = block_view.update(app, |this, cx| {
-                        this.handle_surface_mouse_down(block_id, position, window, cx);
+                        this.handle_surface_mouse_move(block_id, event, window, cx);
                     });
                 })
                 .on_click(move |event, window, cx| {
@@ -1695,6 +1852,60 @@ pub(super) fn rendered_empty_block_line_count(block: &RenderBlock) -> Option<usi
     saw_linebreak.then_some(newline_count + 1)
 }
 
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn word_range_at_visible_offset(text: &str, offset: usize) -> Option<std::ops::Range<usize>> {
+    if text.is_empty() {
+        return None;
+    }
+
+    let offset = clamp_to_char_boundary(text, offset.min(text.len()));
+    let mut cursor = offset;
+
+    if cursor == text.len() {
+        cursor = text.char_indices().next_back().map(|(index, _)| index)?;
+    } else if let Some(ch) = text[cursor..].chars().next() {
+        if !is_word_char(ch) {
+            cursor = text[..cursor]
+                .char_indices()
+                .next_back()
+                .map(|(index, _)| index)
+                .unwrap_or(cursor);
+        }
+    }
+
+    let ch = text[cursor..].chars().next()?;
+    if !is_word_char(ch) {
+        return None;
+    }
+
+    let mut start = cursor;
+    while start > 0 {
+        let Some((previous_index, previous_char)) = text[..start].char_indices().next_back() else {
+            break;
+        };
+        if !is_word_char(previous_char) {
+            break;
+        }
+        start = previous_index;
+    }
+
+    let mut end = cursor + ch.len_utf8();
+    while end < text.len() {
+        let Some(next_char) = text[end..].chars().next() else {
+            break;
+        };
+        if !is_word_char(next_char) {
+            break;
+        }
+        end += next_char.len_utf8();
+    }
+
+    Some(start..end)
+}
+
 fn is_collapsed_inter_block_empty_block(blocks: &[RenderBlock], block_index: usize) -> bool {
     let Some(block) = blocks.get(block_index) else {
         return false;
@@ -1778,7 +1989,7 @@ fn wrap_boundary_index(line: &gpui::WrappedLine, boundary: &gpui::WrapBoundary) 
 mod tests {
     use super::{
         ResolvedImageSource, image_edit_cursor_offset, looks_like_image_uri, resolve_image_source,
-        selection_touches_render_block, should_render_image_preview,
+        selection_touches_render_block, should_render_image_preview, word_range_at_visible_offset,
     };
     use crate::{
         BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
@@ -1857,5 +2068,56 @@ mod tests {
     fn image_click_moves_cursor_inside_markdown_syntax() {
         let block = standalone_image_block("[image: alt]", "[image: alt]");
         assert_eq!(image_edit_cursor_offset(&block), 1);
+    }
+
+    #[test]
+    fn word_range_selects_ascii_word_from_middle() {
+        let text = "hello world";
+        // offset 2 lands in "hello"
+        assert_eq!(word_range_at_visible_offset(text, 2), Some(0..5));
+    }
+
+    #[test]
+    fn word_range_selects_ascii_word_from_start() {
+        let text = "hello world";
+        assert_eq!(word_range_at_visible_offset(text, 0), Some(0..5));
+    }
+
+    #[test]
+    fn word_range_selects_ascii_word_from_end() {
+        let text = "hello world";
+        // offset 10 is 'd' of "world"
+        assert_eq!(word_range_at_visible_offset(text, 10), Some(6..11));
+    }
+
+    #[test]
+    fn word_range_at_space_falls_back_to_preceding_word() {
+        let text = "hello world";
+        // offset 5 is the space between words — function falls back to
+        // the preceding word character ('o'), so it selects "hello"
+        assert_eq!(word_range_at_visible_offset(text, 5), Some(0..5));
+    }
+
+    #[test]
+    fn word_range_returns_none_for_leading_space() {
+        let text = " hello";
+        // offset 0 is a leading space with no preceding word char → None
+        assert_eq!(word_range_at_visible_offset(text, 0), None);
+    }
+
+    #[test]
+    fn word_range_selects_word_when_offset_at_end_of_text() {
+        let text = "hello";
+        // offset == len should fall back to last char
+        assert_eq!(word_range_at_visible_offset(text, 5), Some(0..5));
+    }
+
+    #[test]
+    fn word_range_handles_mixed_ascii_and_cjk_prefix() {
+        // CJK characters are alphanumeric in Rust, so treated as word chars
+        let text = "你好 world";
+        // "你好" = 6 bytes (3 each), space at 6, "world" at 7
+        assert_eq!(word_range_at_visible_offset(text, 0), Some(0..6));
+        assert_eq!(word_range_at_visible_offset(text, 7), Some(7..12));
     }
 }

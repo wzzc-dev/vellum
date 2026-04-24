@@ -30,6 +30,12 @@ pub enum EditorEvent {
     Changed(EditorSnapshot),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SurfaceSelectionAnchor {
+    pub(super) source_offset: usize,
+    pub(super) visible_offset: usize,
+}
+
 pub struct MarkdownEditor {
     pub(super) controller: EditorController,
     pub(super) snapshot: EditorSnapshot,
@@ -40,6 +46,7 @@ pub struct MarkdownEditor {
     pub(super) syncing_input: bool,
     pub(super) input_focused: bool,
     pub(super) block_bounds: Rc<RefCell<HashMap<u64, gpui::Bounds<gpui::Pixels>>>>,
+    pub(super) drag_selection_anchor: Option<SurfaceSelectionAnchor>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -82,6 +89,7 @@ impl MarkdownEditor {
             syncing_input: false,
             input_focused: false,
             block_bounds: Rc::new(RefCell::new(HashMap::new())),
+            drag_selection_anchor: None,
         }
     }
 
@@ -522,8 +530,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use gpui::{
-        AppContext, Entity, EntityInputHandler as _, Modifiers, MouseButton, TestAppContext,
-        VisualContext, VisualTestContext, point, px,
+        AppContext, Entity, EntityInputHandler as _, Modifiers, MouseButton, MouseDownEvent,
+        MouseUpEvent, TestAppContext, VisualContext, VisualTestContext, point, px,
     };
     use gpui_component::{Root, input::Position};
 
@@ -2307,6 +2315,179 @@ mod tests {
             ),
             Some(0)
         );
+    }
+
+    #[gpui::test]
+    fn shift_click_extends_selection_to_clicked_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        let source = "# Heading\n\nParagraph";
+        load_document(cx, &view, source);
+
+        let (first_bounds, second_bounds) = cx.update_window_entity(&view, |editor, _, _| {
+            let first = editor.snapshot.display_map.blocks[0].clone();
+            let second = editor.snapshot.display_map.blocks[1].clone();
+            let bounds = editor.block_bounds.borrow();
+            (
+                bounds
+                    .get(&first.id)
+                    .copied()
+                    .expect("first block bounds should exist"),
+                bounds
+                    .get(&second.id)
+                    .copied()
+                    .expect("second block bounds should exist"),
+            )
+        });
+
+        // 先在第一个 block 上按下鼠标，建立 anchor
+        cx.simulate_mouse_down(
+            point(first_bounds.left() + px(1.), first_bounds.top() + px(8.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+
+        let anchor_snapshot = snapshot(&view, cx);
+        let anchor_byte = anchor_snapshot.selection.anchor_byte;
+
+        // 再在第二个 block 上按下鼠标，带 shift，应当以第一次 anchor 为起点扩展选区
+        cx.simulate_mouse_down(
+            point(second_bounds.left() + px(1.), second_bounds.top() + px(8.)),
+            MouseButton::Left,
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.selection.anchor_byte, anchor_byte);
+        assert!(snapshot.selection.head_byte > anchor_byte);
+        assert!(!snapshot.selection.is_collapsed());
+    }
+
+    #[gpui::test]
+    fn double_click_selects_word_in_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "hello world");
+
+        let target_bounds = cx.update_window_entity(&view, |editor, _, _| {
+            let block = editor.snapshot.display_map.blocks[0].clone();
+            editor
+                .block_bounds
+                .borrow()
+                .get(&block.id)
+                .copied()
+                .expect("rendered block bounds should exist")
+        });
+
+        let click_position = point(target_bounds.left() + px(8.), target_bounds.top() + px(8.));
+        cx.simulate_event(MouseDownEvent {
+            position: click_position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position: click_position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert!(!snapshot.selection.is_collapsed());
+        // "hello" = bytes 0..5 in source ("hello world")
+        assert_eq!(snapshot.selection.range(), 0..5);
+        assert!(!snapshot.visible_selection.is_collapsed());
+    }
+
+    #[gpui::test]
+    fn triple_click_selects_entire_block(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "hello world");
+
+        let target_bounds = cx.update_window_entity(&view, |editor, _, _| {
+            let block = editor.snapshot.display_map.blocks[0].clone();
+            editor
+                .block_bounds
+                .borrow()
+                .get(&block.id)
+                .copied()
+                .expect("rendered block bounds should exist")
+        });
+
+        let click_position = point(target_bounds.left() + px(8.), target_bounds.top() + px(8.));
+        cx.simulate_event(MouseDownEvent {
+            position: click_position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 3,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position: click_position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 3,
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert!(!snapshot.selection.is_collapsed());
+        assert_eq!(snapshot.selection.range(), 0..11);
+        assert_eq!(snapshot.visible_selection.range(), 0..11);
+    }
+
+    #[gpui::test]
+    fn dragging_across_blocks_updates_selection_range(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "# Heading\n\nParagraph");
+
+        let (first_bounds, second_bounds) = cx.update_window_entity(&view, |editor, _, _| {
+            let first = editor.snapshot.display_map.blocks[0].clone();
+            let second = editor.snapshot.display_map.blocks[1].clone();
+            let bounds = editor.block_bounds.borrow();
+            (
+                bounds
+                    .get(&first.id)
+                    .copied()
+                    .expect("first block bounds should exist"),
+                bounds
+                    .get(&second.id)
+                    .copied()
+                    .expect("second block bounds should exist"),
+            )
+        });
+
+        cx.simulate_mouse_down(
+            point(first_bounds.left() + px(8.), first_bounds.top() + px(8.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let first_snapshot = snapshot(&view, cx);
+
+        cx.simulate_mouse_move(
+            point(second_bounds.left() + px(24.), second_bounds.top() + px(8.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        cx.simulate_mouse_up(
+            point(second_bounds.left() + px(24.), second_bounds.top() + px(8.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert!(!snapshot.selection.is_collapsed());
+        assert_eq!(snapshot.selection.anchor_byte, first_snapshot.selection.anchor_byte);
+        assert!(snapshot.selection.head_byte > first_snapshot.selection.head_byte);
     }
 
     #[gpui::test]
