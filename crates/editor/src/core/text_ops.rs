@@ -165,8 +165,11 @@ pub(crate) fn semantic_enter_transform(
 
     let edited = apply_selection(text, selection, cursor_offset);
     match kind {
-        BlockKind::Raw | BlockKind::Paragraph | BlockKind::Heading { .. } => {
+        BlockKind::Raw | BlockKind::Paragraph => {
             Some(split_block_transform(&edited.text, edited.cursor_offset))
+        }
+        BlockKind::Heading { .. } => {
+            Some(heading_enter_transform(&edited.text, edited.cursor_offset))
         }
         BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
@@ -309,6 +312,32 @@ fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
     match text.char_indices().nth(target_column) {
         Some((offset, _)) => offset,
         None => text.len(),
+    }
+}
+
+fn heading_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
+    // Find the heading marker length: "## " → 3
+    let trimmed = text.trim_start();
+    let marker_len = trimmed
+        .chars()
+        .take_while(|ch| *ch == '#')
+        .count();
+    // The content after "## " (or "##" with no space)
+    let content_start = if trimmed.get(marker_len..marker_len + 1) == Some(" ") {
+        marker_len + 1
+    } else {
+        marker_len
+    };
+    let content = trimmed.get(content_start..).unwrap_or("").trim();
+
+    if content.is_empty() {
+        // Empty heading: exit heading, leave an empty paragraph
+        SemanticEnterTransform {
+            replacement: String::new(),
+            cursor_offset: 0,
+        }
+    } else {
+        split_block_transform(text, cursor_offset)
     }
 }
 
@@ -648,6 +677,36 @@ mod tests {
 
         assert_eq!(transform.replacement, "# T\n\nitle");
         assert_eq!(transform.cursor_offset, 5);
+    }
+
+    #[test]
+    fn exits_empty_heading_on_enter_producing_empty_paragraph() {
+        // "# " (marker only, no content) → empty paragraph
+        let transform =
+            semantic_enter_transform(&BlockKind::Heading { depth: 1 }, "# ", None, 2).unwrap();
+
+        assert_eq!(transform.replacement, "");
+        assert_eq!(transform.cursor_offset, 0);
+    }
+
+    #[test]
+    fn exits_empty_heading_without_trailing_space() {
+        // "##" (no space, no content) → empty paragraph
+        let transform =
+            semantic_enter_transform(&BlockKind::Heading { depth: 2 }, "##", None, 2).unwrap();
+
+        assert_eq!(transform.replacement, "");
+        assert_eq!(transform.cursor_offset, 0);
+    }
+
+    #[test]
+    fn nonempty_heading_enter_still_splits() {
+        // Non-empty heading should continue to split, same as before
+        let transform =
+            semantic_enter_transform(&BlockKind::Heading { depth: 2 }, "## A", None, 4).unwrap();
+
+        assert_eq!(transform.replacement, "## A\n\n");
+        assert_eq!(transform.cursor_offset, 6);
     }
 
     #[test]
