@@ -1275,6 +1275,9 @@ impl EditorController {
         if let Some(effect) = self.delete_forward_collapsed_inter_block_gap() {
             return effect;
         }
+        if let Some(effect) = self.delete_forward_structural() {
+            return effect;
+        }
 
         let text = self.document.text();
         let cursor = self.selection.cursor();
@@ -1455,6 +1458,33 @@ impl EditorController {
             "\n".to_string(),
             SelectionState::collapsed(gap.selection_after),
             "Deleted empty paragraph",
+        ))
+    }
+
+    fn delete_forward_structural(&mut self) -> Option<EditorEffects> {
+        let current = self.current_block()?.clone();
+        if self.selection.cursor() != current.content_range.end {
+            return None;
+        }
+
+        let current_index = self.document.block_index_by_id(current.id)?;
+        let next = self.document.blocks().get(current_index + 1)?.clone();
+        if !supports_boundary_backspace_target_kind(&current.kind)
+            || !supports_boundary_backspace_target_kind(&next.kind)
+        {
+            return None;
+        }
+
+        let deletion_range = current.content_range.end..next.byte_range.start;
+        if deletion_range.is_empty() {
+            return None;
+        }
+
+        Some(self.apply_edit(
+            deletion_range,
+            String::new(),
+            SelectionState::collapsed(current.content_range.end),
+            "Deleted empty block",
         ))
     }
 
@@ -2134,6 +2164,52 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "> quote");
         assert_eq!(snapshot.selection, SelectionState::collapsed(7));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_forward_merges_next_paragraph_from_heading_end() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title\n\nNext".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(7),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "# TitleNext");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(7));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_forward_merges_next_paragraph_from_list_end() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item\n\nNext".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(6),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- item\nNext");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(6));
         assert_eq!(snapshot.blocks.len(), 1);
     }
 
