@@ -53,7 +53,10 @@ actions!(
         OpenFindPanel,
         CloseFindPanel,
         FindNextMatch,
-        FindPreviousMatch
+        FindPreviousMatch,
+        OpenFindReplacePanel,
+        ReplaceOne,
+        ReplaceAll
     ]
 );
 
@@ -100,8 +103,11 @@ struct VellumApp {
     find_query: String,
     find_matches: Vec<FindMatch>,
     active_find_index: Option<usize>,
+    replace_visible: bool,
+    replace_query: String,
     outline_filter: String,
     find_query_input: Entity<InputState>,
+    replace_query_input: Entity<InputState>,
     outline_filter_input: Entity<InputState>,
     /// Kept alive to keep subscriptions active.
     #[allow(dead_code)]
@@ -144,6 +150,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-f", OpenFindPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-alt-f", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-g", FindNextMatch, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-g", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
@@ -158,6 +165,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-f", OpenFindPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-h", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
         KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
@@ -262,6 +270,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             name: "Find".into(),
             items: vec![
                 MenuItem::action("Find", OpenFindPanel),
+                MenuItem::action("Find and Replace", OpenFindReplacePanel),
                 MenuItem::action("Find Next", FindNextMatch),
                 MenuItem::action("Find Previous", FindPreviousMatch),
             ],
@@ -303,6 +312,7 @@ impl VellumApp {
         let focus_handle = cx.focus_handle();
         let editor_snapshot = editor.read(cx).snapshot();
         let find_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
+        let replace_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Replace"));
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
 
@@ -321,6 +331,12 @@ impl VellumApp {
                 let value = this.find_query_input.read(cx).value();
                 this.set_find_query(value);
                 cx.notify();
+            }
+        });
+
+        let replace_input_subscription = cx.subscribe(&replace_query_input, |this: &mut Self, _, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                this.replace_query = this.replace_query_input.read(cx).value().to_string();
             }
         });
 
@@ -351,10 +367,13 @@ impl VellumApp {
             find_query: String::new(),
             find_matches: Vec::new(),
             active_find_index: None,
+            replace_visible: false,
+            replace_query: String::new(),
             outline_filter: String::new(),
             find_query_input,
+            replace_query_input,
             outline_filter_input,
-            find_input_subscriptions: vec![editor_subscription, find_input_subscription, outline_input_subscription],
+            find_input_subscriptions: vec![editor_subscription, find_input_subscription, replace_input_subscription, outline_input_subscription],
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
@@ -397,8 +416,15 @@ impl VellumApp {
         self.refresh_find_matches();
     }
 
+    fn open_find_replace_panel(&mut self) {
+        self.find_panel_visible = true;
+        self.replace_visible = true;
+        self.refresh_find_matches();
+    }
+
     fn close_find_panel(&mut self) {
         self.find_panel_visible = false;
+        self.replace_visible = false;
     }
 
     fn refresh_find_matches(&mut self) {
@@ -453,6 +479,34 @@ impl VellumApp {
         }
         let current = self.active_find_index.unwrap_or(0) + 1;
         Some(format!("Find {current}/{}", self.find_matches.len()))
+    }
+
+    fn replace_current_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.active_find_index else {
+            return;
+        };
+        let Some(find_match) = self.find_matches.get(index) else {
+            return;
+        };
+        let range = find_match.range.clone();
+        let replacement = self.replace_query.clone();
+        self.editor.update(cx, |editor, cx| {
+            editor.replace_source_range(range, replacement, window, cx);
+        });
+    }
+
+    fn replace_all_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find_matches.is_empty() {
+            return;
+        }
+        let replacement = self.replace_query.clone();
+        for find_match in self.find_matches.iter().rev() {
+            let range = find_match.range.clone();
+            let replacement = replacement.clone();
+            self.editor.update(cx, |editor, cx| {
+                editor.replace_source_range(range, replacement, window, cx);
+            });
+        }
     }
 }
 

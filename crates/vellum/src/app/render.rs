@@ -158,6 +158,7 @@ impl VellumApp {
     pub(super) fn render_find_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity();
         let find_input = self.find_query_input.clone();
+        let replace_visible = self.replace_visible;
 
         let has_matches = !self.find_matches.is_empty();
         let nav_color = if has_matches {
@@ -166,17 +167,51 @@ impl VellumApp {
             cx.theme().muted_foreground
         };
 
-        div()
+        let match_count_label = if !self.find_query.is_empty() {
+            let current = self.active_find_index.map(|i| i + 1).unwrap_or(0);
+            let total = self.find_matches.len();
+            format!("{current}/{total}")
+        } else {
+            String::new()
+        };
+
+        let toggle_icon = if replace_visible { "▾" } else { "▸" };
+
+        let find_row = div()
             .w_full()
             .flex()
             .items_center()
             .gap_2()
-            .px_3()
-            .py_1()
-            .border_b_1()
-            .border_color(cx.theme().border.opacity(0.18))
-            .bg(cx.theme().background)
+            .child(
+                div()
+                    .id("find-toggle-replace-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().muted_foreground)
+                    .text_sm()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.replace_visible = !this.replace_visible;
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child(toggle_icon),
+            )
             .child(Input::new(&find_input).flex_1())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(match_count_label),
+            )
             .child(
                 div()
                     .id("find-prev-btn")
@@ -240,7 +275,73 @@ impl VellumApp {
                         }
                     })
                     .child("✕"),
+            );
+
+        let replace_input = self.replace_query_input.clone();
+        let replace_row = div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().size(px(20.)))
+            .child(Input::new(&replace_input).flex_1())
+            .child(
+                div()
+                    .id("replace-one-btn")
+                    .px_2()
+                    .py(px(2.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().foreground)
+                    .text_xs()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.on_replace_one(&ReplaceOne, window, cx);
+                            });
+                        }
+                    })
+                    .child("Replace"),
             )
+            .child(
+                div()
+                    .id("replace-all-btn")
+                    .px_2()
+                    .py(px(2.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().foreground)
+                    .text_xs()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.on_replace_all(&ReplaceAll, window, cx);
+                            });
+                        }
+                    })
+                    .child("All"),
+            );
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .px_3()
+            .py_1()
+            .gap_1()
+            .border_b_1()
+            .border_color(cx.theme().border.opacity(0.18))
+            .bg(cx.theme().background)
+            .child(find_row)
+            .when(replace_visible, |this| this.child(replace_row))
             .into_any_element()
     }
 
@@ -358,6 +459,9 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_close_find_panel))
             .on_action(cx.listener(Self::on_find_next_match))
             .on_action(cx.listener(Self::on_find_previous_match))
+            .on_action(cx.listener(Self::on_open_find_replace_panel))
+            .on_action(cx.listener(Self::on_replace_one))
+            .on_action(cx.listener(Self::on_replace_all))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)

@@ -60,6 +60,36 @@ impl VellumApp {
         cx.notify();
     }
 
+    pub(super) fn on_open_find_replace_panel(
+        &mut self,
+        _: &OpenFindReplacePanel,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_find_replace_panel();
+        cx.notify();
+    }
+
+    pub(super) fn on_replace_one(
+        &mut self,
+        _: &ReplaceOne,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_current_match(window, cx);
+        cx.notify();
+    }
+
+    pub(super) fn on_replace_all(
+        &mut self,
+        _: &ReplaceAll,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_all_matches(window, cx);
+        cx.notify();
+    }
+
     pub(super) fn on_open_folder(
         &mut self,
         _: &OpenFolder,

@@ -793,6 +793,24 @@ impl EditorController {
         self.update_selection(SelectionState::collapsed(clamped))
     }
 
+    pub fn replace_source_range(
+        &mut self,
+        range: Range<usize>,
+        replacement: String,
+    ) -> EditorEffects {
+        let len = self.document.text().len();
+        let clamped_start = range.start.min(len);
+        let clamped_end = range.end.min(len);
+        let cursor_after = clamped_start + replacement.len();
+        let selection_after = SelectionState::collapsed(cursor_after);
+        self.apply_edit(
+            clamped_start..clamped_end,
+            replacement,
+            selection_after,
+            "Replaced",
+        )
+    }
+
     pub fn open_path(&mut self, path: PathBuf) -> Result<EditorEffects> {
         let source = DocumentSource::from_disk(path.clone())?;
         self.replace_source(source);

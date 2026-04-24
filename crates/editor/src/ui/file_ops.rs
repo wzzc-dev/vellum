@@ -50,6 +50,17 @@ impl MarkdownEditor {
         self.focus_input(window, cx);
     }
 
+    pub fn replace_source_range(
+        &mut self,
+        range: Range<usize>,
+        replacement: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.replace_source_range(range, replacement);
+        self.apply_effects(window, cx, effects);
+    }
+
     pub fn current_document_dir(&self) -> Option<PathBuf> {
         self.controller.current_document_dir()
     }
