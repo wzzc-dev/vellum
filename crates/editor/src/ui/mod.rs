@@ -14,3 +14,8 @@ pub(crate) const BODY_FONT_SIZE: f32 = 17.;
 pub(crate) const BODY_LINE_HEIGHT: f32 = 28.;
 pub(crate) const CODE_FONT_SIZE: f32 = 15.;
 pub(crate) const CODE_LINE_HEIGHT: f32 = 24.;
+
+#[cfg(target_os = "macos")]
+pub(crate) const MONOSPACE_FONT_FAMILY: &str = "Menlo";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const MONOSPACE_FONT_FAMILY: &str = "Consolas";

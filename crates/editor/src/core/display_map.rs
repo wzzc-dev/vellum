@@ -3,7 +3,7 @@ use std::ops::Range;
 use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel},
     syntax::InlineStyle,
-    table::{TABLE_COLUMN_GAP, TableCellRef, TableModel},
+    table::{TABLE_COLUMN_GAP, TableCellRef, TableModel, str_display_width},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -852,10 +852,8 @@ impl<'a> BlockBuilder<'a> {
                     continue;
                 };
                 let source_start = self.block.content_range.start + cell_range.start;
-                let visible_width = self
-                    .visible_inline_text(source_start, &text[cell_range.clone()])
-                    .chars()
-                    .count();
+                let visible_width =
+                    str_display_width(&self.visible_inline_text(source_start, &text[cell_range.clone()]));
                 column_widths[column] = column_widths[column].max(visible_width);
             }
         }
@@ -893,10 +891,8 @@ impl<'a> BlockBuilder<'a> {
                     let cell_start = self.block.content_range.start + cell.source_range.start;
                     let cell_end = self.block.content_range.start + cell.source_range.end;
                     let cell_text = &text[cell.source_range.clone()];
-                    let visible_width = self
-                        .visible_inline_text(cell_start, cell_text)
-                        .chars()
-                        .count();
+                    let visible_width =
+                        str_display_width(&self.visible_inline_text(cell_start, cell_text));
 
                     self.push_hidden_source(cursor..cell_start);
                     self.push_inline_text(cell_start, cell_text, RenderInlineStyle::default());

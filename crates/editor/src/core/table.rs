@@ -4,6 +4,32 @@ use super::document::SelectionAffinity;
 
 pub(crate) const TABLE_COLUMN_GAP: usize = 3;
 
+pub(crate) fn char_display_width(ch: char) -> usize {
+    if is_wide_char(ch) { 2 } else { 1 }
+}
+
+pub(crate) fn str_display_width(s: &str) -> usize {
+    s.chars().map(char_display_width).sum()
+}
+
+fn is_wide_char(ch: char) -> bool {
+    matches!(ch,
+        '\u{1100}'..='\u{115F}' |
+        '\u{2E80}'..='\u{303E}' |
+        '\u{3040}'..='\u{33BF}' |
+        '\u{3400}'..='\u{4DBF}' |
+        '\u{4E00}'..='\u{9FFF}' |
+        '\u{A000}'..='\u{A4CF}' |
+        '\u{AC00}'..='\u{D7AF}' |
+        '\u{F900}'..='\u{FAFF}' |
+        '\u{FE30}'..='\u{FE6F}' |
+        '\u{FF01}'..='\u{FF60}' |
+        '\u{FFE0}'..='\u{FFE6}' |
+        '\u{20000}'..='\u{2FA1F}' |
+        '\u{30000}'..='\u{3134F}'
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TableNavDirection {
     Forward,

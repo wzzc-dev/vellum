@@ -23,13 +23,13 @@ use crate::{
     SelectionState,
     core::{
         controller::EditorSnapshot,
-        table::{TABLE_COLUMN_GAP, TableModel},
+        table::{TABLE_COLUMN_GAP, TableModel, char_display_width, str_display_width},
         text_ops::clamp_to_char_boundary,
     },
 };
 
 use super::{
-    BODY_FONT_SIZE, BODY_LINE_HEIGHT, layout::block_presentation,
+    BODY_FONT_SIZE, BODY_LINE_HEIGHT, MONOSPACE_FONT_FAMILY, layout::block_presentation,
     view::{MarkdownEditor, SurfaceSelectionAnchor},
 };
 
@@ -551,7 +551,7 @@ fn render_display_block(
                 .text_size(px(presentation.font_size))
                 .line_height(px(presentation.line_height))
                 .when(matches!(block.kind, BlockKind::CodeFence { .. }), |this| {
-                    this.font_family("Consolas")
+                    this.font_family(MONOSPACE_FONT_FAMILY)
                 })
                 .child(styled_text_for_block(&block_clone, palette, window))
                 .into_any_element(),
@@ -1186,7 +1186,7 @@ fn render_table_block(
                 .w_full()
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
-                .font_family("Consolas")
+                .font_family(MONOSPACE_FONT_FAMILY)
                 .child(styled_text_for_block(block, palette, window)),
         )
         .into_any_element()
@@ -1232,7 +1232,7 @@ fn apply_fragment_style(
         if !inline_style.strong {
             style.font_weight = FontWeight::MEDIUM;
         }
-        style.font_family = SharedString::from("Consolas");
+        style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
         style.background_color = Some(palette.code_background);
     }
 }
@@ -1255,7 +1255,7 @@ fn base_text_style_for_block(block: &RenderBlock, text_color: Hsla, window: &Win
         WhiteSpace::Normal
     };
     if matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::Table) {
-        style.font_family = SharedString::from("Consolas");
+        style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
     }
     style
 }
@@ -1421,7 +1421,7 @@ fn table_cell_visible_char_count(
                 && span.source_range.start < source_range.end
                 && span.source_range.end > source_range.start
         })
-        .map(|span| span.visible_text.chars().count())
+        .map(|span| str_display_width(&span.visible_text))
         .sum()
 }
 
@@ -1429,11 +1429,15 @@ fn trailing_table_padding_px(window: &Window) -> gpui::Pixels {
     window.text_style().font_size.to_pixels(window.rem_size()) * (0.6 * TABLE_COLUMN_GAP as f32)
 }
 
-fn char_column_to_byte_offset(text: &str, column: usize) -> usize {
-    text.char_indices()
-        .nth(column)
-        .map(|(offset, _)| offset)
-        .unwrap_or(text.len())
+fn char_column_to_byte_offset(text: &str, target_column: usize) -> usize {
+    let mut width = 0usize;
+    for (offset, ch) in text.char_indices() {
+        if width >= target_column {
+            return offset;
+        }
+        width += char_display_width(ch);
+    }
+    text.len()
 }
 
 fn rendered_lines_for_block(block: &RenderBlock) -> Vec<RenderedLine> {
@@ -1642,7 +1646,7 @@ fn render_line_text(
         .text_size(px(presentation.font_size))
         .line_height(px(presentation.line_height))
         .when(matches!(block.kind, BlockKind::CodeFence { .. }), |this| {
-            this.font_family("Consolas")
+            this.font_family(MONOSPACE_FONT_FAMILY)
         })
         .when(!line.is_empty(), |this| {
             this.child(styled_text_for_line(block, line, palette, window))
@@ -1827,7 +1831,7 @@ pub(super) fn shape_block_lines(
                 style.font_style = FontStyle::Italic;
             }
             if span.style.code {
-                style.font_family = SharedString::from("Consolas");
+                style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
                 if !span.style.strong {
                     style.font_weight = FontWeight::MEDIUM;
                 }
