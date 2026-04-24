@@ -14,7 +14,8 @@ use super::{
     text_ops::{
         adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, line_column_for_byte_offset,
-        pipe_table_enter_transform, semantic_enter_transform, set_heading_markup,
+        pipe_table_enter_transform, semantic_enter_transform, set_blockquote_markup,
+        set_heading_markup, set_list_markup,
     },
 };
 
@@ -192,6 +193,12 @@ pub enum EditCommand {
     ToggleHeading {
         depth: u8,
     },
+    /// Toggle blockquote (`> `) prefix. If the block is already a blockquote, strips it.
+    ToggleBlockquote,
+    /// Toggle bullet list (`- `) prefix. If already a bullet list, strips it.
+    ToggleBulletList,
+    /// Toggle ordered list (`1. `) prefix. If already an ordered list, strips it.
+    ToggleOrderedList,
     Undo,
     Redo,
     ReloadConflict,
@@ -839,6 +846,9 @@ impl EditorController {
             }
             EditCommand::Indent => self.adjust_current_block(true),
             EditCommand::Outdent => self.adjust_current_block(false),
+            EditCommand::ToggleBlockquote => self.toggle_blockquote(),
+            EditCommand::ToggleBulletList => self.toggle_list(false),
+            EditCommand::ToggleOrderedList => self.toggle_list(true),
             EditCommand::MoveCaret {
                 direction,
                 preferred_column,
@@ -1159,6 +1169,53 @@ impl EditorController {
                 "Converted heading to paragraph"
             } else {
                 "Updated heading level"
+            },
+        )
+    }
+
+    fn toggle_blockquote(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current = self.document.block_text(&block);
+        let enabled = !matches!(block.kind, BlockKind::Blockquote);
+        let updated = set_blockquote_markup(&current, enabled);
+        let relative_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        self.apply_edit(
+            block.content_range,
+            updated,
+            SelectionState::collapsed(new_cursor),
+            if enabled {
+                "Converted paragraph to blockquote"
+            } else {
+                "Converted blockquote to paragraph"
+            },
+        )
+    }
+
+    fn toggle_list(&mut self, ordered: bool) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current = self.document.block_text(&block);
+        let updated = set_list_markup(&current, ordered);
+        let relative_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        self.apply_edit(
+            block.content_range,
+            updated,
+            SelectionState::collapsed(new_cursor),
+            if ordered {
+                "Toggled ordered list"
+            } else {
+                "Toggled bullet list"
             },
         )
     }
@@ -2377,6 +2434,116 @@ mod tests {
             snapshot.blocks[0].kind,
             crate::BlockKind::Heading { depth: 3 }
         ));
+    }
+
+    #[test]
+    fn toggle_blockquote_wraps_paragraph_in_blockquote() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleBlockquote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> Hello");
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Blockquote));
+    }
+
+    #[test]
+    fn toggle_blockquote_strips_existing_blockquote() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleBlockquote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello");
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Paragraph));
+    }
+
+    #[test]
+    fn toggle_bullet_list_converts_paragraph_to_list() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleBulletList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- Hello");
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::List));
+    }
+
+    #[test]
+    fn toggle_bullet_list_strips_existing_bullet_list() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleBulletList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello");
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Paragraph));
+    }
+
+    #[test]
+    fn toggle_ordered_list_converts_paragraph_to_numbered_list() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(2),
+        });
+
+        controller.dispatch(EditCommand::ToggleOrderedList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "1. Hello");
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::List));
     }
 
     #[test]

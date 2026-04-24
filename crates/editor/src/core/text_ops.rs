@@ -178,6 +178,113 @@ pub(crate) fn set_heading_markup(text: &str, depth: u8) -> String {
     format!("{head}{rest}")
 }
 
+/// Toggle the blockquote prefix (`> `) on every line of `text`.
+/// If `enabled` is true, prepend `> ` to every line; if false, strip it.
+pub(crate) fn set_blockquote_markup(text: &str, enabled: bool) -> String {
+    text.lines()
+        .map(|line| {
+            if enabled {
+                format!("> {line}")
+            } else {
+                // strip one level of `> ` or `>`
+                line.strip_prefix("> ")
+                    .or_else(|| line.strip_prefix('>'))
+                    .unwrap_or(line)
+                    .to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Convert `text` to a bullet list (`- content`) or an ordered list (`1. content`),
+/// or strip existing list markup back to plain paragraph text.
+/// If `text` is already the requested kind, strips it to paragraph instead (toggle).
+///
+/// `ordered`: true → `1.` style, false → `-` style.
+pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
+    let list_markers_unordered = ["- ", "* ", "+ "];
+    let task_markers = ["- [ ] ", "- [x] ", "* [ ] ", "* [x] "];
+
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+
+    let trimmed = first.trim_start();
+    let _indent = &first[..first.len().saturating_sub(trimmed.len())];
+
+    // Detect current kind.
+    let is_unordered = task_markers
+        .iter()
+        .chain(list_markers_unordered.iter())
+        .any(|m| trimmed.starts_with(m));
+    let is_ordered = trimmed
+        .split_once(". ")
+        .map(|(n, _)| n.chars().all(|ch| ch.is_ascii_digit()))
+        .unwrap_or(false);
+
+    // Toggle off if already the requested kind.
+    if (ordered && is_ordered) || (!ordered && is_unordered) {
+        // Strip list prefix from all lines.
+        return text
+            .lines()
+            .map(|line| {
+                let t = line.trim_start();
+                let ind = &line[..line.len().saturating_sub(t.len())];
+                // strip ordered
+                if let Some((n, rest)) = t.split_once(". ") {
+                    if n.chars().all(|ch| ch.is_ascii_digit()) {
+                        return format!("{ind}{rest}");
+                    }
+                }
+                // strip unordered / task
+                for marker in task_markers.iter().chain(list_markers_unordered.iter()) {
+                    if let Some(rest) = t.strip_prefix(marker) {
+                        return format!("{ind}{rest}");
+                    }
+                }
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    // Convert: strip existing marker first, then add new one.
+    let mut counter = 1usize;
+    let all_lines: Vec<&str> = text.lines().collect();
+    all_lines
+        .iter()
+        .map(|line| {
+            let t = line.trim_start();
+            let ind = &line[..line.len().saturating_sub(t.len())];
+            // bare content after stripping any existing marker
+            let content = 'strip: {
+                if let Some((n, rest)) = t.split_once(". ") {
+                    if n.chars().all(|ch| ch.is_ascii_digit()) {
+                        break 'strip rest;
+                    }
+                }
+                for marker in task_markers.iter().chain(list_markers_unordered.iter()) {
+                    if let Some(rest) = t.strip_prefix(marker) {
+                        break 'strip rest;
+                    }
+                }
+                t
+            };
+            let new_line = if ordered {
+                let result = format!("{ind}{}. {content}", counter);
+                counter += 1;
+                result
+            } else {
+                format!("{ind}- {content}")
+            };
+            new_line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
     matches!(
         kind,
@@ -842,5 +949,51 @@ mod tests {
             adjust_block_markup("> Quote", true),
             Some("> > Quote".to_string())
         );
+    }
+
+    #[test]
+    fn set_blockquote_markup_wraps_and_strips_prefix() {
+        assert_eq!(set_blockquote_markup("Hello", true), "> Hello");
+        assert_eq!(set_blockquote_markup("> Hello", false), "Hello");
+        assert_eq!(set_blockquote_markup(">Hello", false), "Hello");
+        // multiline
+        assert_eq!(
+            set_blockquote_markup("line1\nline2", true),
+            "> line1\n> line2"
+        );
+        assert_eq!(
+            set_blockquote_markup("> line1\n> line2", false),
+            "line1\nline2"
+        );
+    }
+
+    #[test]
+    fn set_list_markup_converts_paragraph_to_bullet() {
+        assert_eq!(set_list_markup("Hello", false), "- Hello");
+    }
+
+    #[test]
+    fn set_list_markup_converts_paragraph_to_ordered() {
+        assert_eq!(set_list_markup("Hello", true), "1. Hello");
+    }
+
+    #[test]
+    fn set_list_markup_strips_bullet_on_toggle() {
+        assert_eq!(set_list_markup("- Hello", false), "Hello");
+    }
+
+    #[test]
+    fn set_list_markup_strips_ordered_on_toggle() {
+        assert_eq!(set_list_markup("1. Hello", true), "Hello");
+    }
+
+    #[test]
+    fn set_list_markup_converts_ordered_to_bullet() {
+        assert_eq!(set_list_markup("1. Hello", false), "- Hello");
+    }
+
+    #[test]
+    fn set_list_markup_converts_bullet_to_ordered() {
+        assert_eq!(set_list_markup("- Hello", true), "1. Hello");
     }
 }

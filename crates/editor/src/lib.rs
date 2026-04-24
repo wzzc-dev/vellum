@@ -25,6 +25,9 @@ actions!(
         ToggleHeading5,
         ToggleHeading6,
         ToggleParagraph,
+        ToggleBlockquote,
+        ToggleBulletList,
+        ToggleOrderedList,
     ]
 );
 

@@ -4,9 +4,9 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleHeading1, ToggleHeading2,
-    ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleParagraph,
-    ToggleSourceMode, UndoEdit,
+    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
+    ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
+    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -53,6 +53,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ToggleParagraph, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-0", ToggleParagraph, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-7", ToggleBlockquote, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-7", ToggleBlockquote, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-8", ToggleBulletList, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-8", ToggleBulletList, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-9", ToggleOrderedList, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-9", ToggleOrderedList, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -124,6 +136,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-7", ToggleBlockquote, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-7", ToggleBlockquote, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-8", ToggleBulletList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-8", ToggleBulletList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -352,5 +376,32 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_heading(0, window, cx);
+    }
+
+    pub(crate) fn on_toggle_blockquote(
+        &mut self,
+        _: &ToggleBlockquote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_blockquote(window, cx);
+    }
+
+    pub(crate) fn on_toggle_bullet_list(
+        &mut self,
+        _: &ToggleBulletList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_list(false, window, cx);
+    }
+
+    pub(crate) fn on_toggle_ordered_list(
+        &mut self,
+        _: &ToggleOrderedList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_list(true, window, cx);
     }
 }
