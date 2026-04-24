@@ -39,6 +39,17 @@ impl MarkdownEditor {
         self.focus_input(window, cx);
     }
 
+    pub fn select_source_offset(
+        &mut self,
+        byte_offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.select_source_offset(byte_offset);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
     pub fn current_document_dir(&self) -> Option<PathBuf> {
         self.controller.current_document_dir()
     }

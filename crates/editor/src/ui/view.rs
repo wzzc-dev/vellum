@@ -182,6 +182,30 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    pub(crate) fn insert_horizontal_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertHorizontalRule);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_code_fence(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertCodeFence);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertTable);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
     pub(crate) fn exit_edit_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::SetSelection {
             selection: SelectionState::collapsed(self.snapshot.selection.cursor()),
@@ -472,6 +496,9 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_toggle_blockquote))
             .on_action(cx.listener(Self::on_toggle_bullet_list))
             .on_action(cx.listener(Self::on_toggle_ordered_list))
+            .on_action(cx.listener(Self::on_insert_horizontal_rule))
+            .on_action(cx.listener(Self::on_insert_code_fence))
+            .on_action(cx.listener(Self::on_insert_table))
             .capture_action({
                 let enter_view = view.clone();
                 move |action: &Enter, window, app: &mut App| {

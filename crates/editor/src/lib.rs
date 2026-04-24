@@ -28,6 +28,9 @@ actions!(
         ToggleBlockquote,
         ToggleBulletList,
         ToggleOrderedList,
+        InsertHorizontalRule,
+        InsertCodeFence,
+        InsertTable,
     ]
 );
 

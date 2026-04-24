@@ -6,16 +6,18 @@ use std::{
 use anyhow::Result;
 use editor::{
     BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
-    FocusPrevBlock, ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit,
-    SecondaryEnter, ToggleBlockquote, ToggleBulletList, ToggleHeading1, ToggleHeading2,
-    ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleOrderedList,
-    ToggleParagraph, ToggleSourceMode, UndoEdit, bind_keys as bind_editor_keys,
+    FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection,
+    LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote,
+    ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5,
+    ToggleHeading6, ToggleOrderedList, ToggleParagraph, ToggleSourceMode, UndoEdit,
+    bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyBinding, ParentElement, Render, Styled, Timer, VisualContext, Window, WindowHandle,
-    WindowOptions, actions, div, px,
+    KeyBinding, ParentElement, Render, Styled, Subscription, Timer, VisualContext, Window,
+    WindowHandle, WindowOptions, actions, div, px,
 };
+use gpui_component::input::{InputEvent, InputState};
 #[cfg(target_os = "macos")]
 use gpui::{Menu, MenuItem, OsAction, SystemMenuType};
 #[cfg(target_os = "macos")]
@@ -47,7 +49,11 @@ actions!(
         SaveAs,
         Quit,
         ToggleSidebar,
-        ToggleStatusBar
+        ToggleStatusBar,
+        OpenFindPanel,
+        CloseFindPanel,
+        FindNextMatch,
+        FindPreviousMatch
     ]
 );
 
@@ -68,6 +74,12 @@ enum SidebarView {
     Outline,
 }
 
+/// A single find match: byte offset range in the source document.
+#[derive(Debug, Clone)]
+pub(super) struct FindMatch {
+    pub(super) range: std::ops::Range<usize>,
+}
+
 struct VellumApp {
     app_state: AppState,
     workspace: WorkspaceState,
@@ -83,6 +95,17 @@ struct VellumApp {
     status_bar_edge_hovered: bool,
     status_bar_hide_generation: u64,
     shell_status_message: String,
+    // --- find panel state ---
+    find_panel_visible: bool,
+    find_query: String,
+    find_matches: Vec<FindMatch>,
+    active_find_index: Option<usize>,
+    outline_filter: String,
+    find_query_input: Entity<InputState>,
+    outline_filter_input: Entity<InputState>,
+    /// Kept alive to keep subscriptions active.
+    #[allow(dead_code)]
+    find_input_subscriptions: Vec<Subscription>,
 }
 
 pub fn run() -> Result<()> {
@@ -120,6 +143,10 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-f", OpenFindPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-g", FindNextMatch, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-g", FindPreviousMatch, Some(APP_CONTEXT)),
+        KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
 
@@ -130,6 +157,10 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-n", NewFile, None),
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-f", OpenFindPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
+        KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
+        KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
     ]);
 }
 
@@ -203,6 +234,10 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Bullet List", ToggleBulletList),
                 MenuItem::action("Ordered List", ToggleOrderedList),
                 MenuItem::separator(),
+                MenuItem::action("Insert Horizontal Rule", InsertHorizontalRule),
+                MenuItem::action("Insert Code Fence", InsertCodeFence),
+                MenuItem::action("Insert Table", InsertTable),
+                MenuItem::separator(),
                 MenuItem::action("Insert Line Break", SecondaryEnter),
                 MenuItem::separator(),
                 MenuItem::action("Indent Paragraph", DemoteBlock),
@@ -221,6 +256,14 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Italic", ItalicSelection),
                 MenuItem::separator(),
                 MenuItem::action("Insert Link", LinkSelection),
+            ],
+        },
+        Menu {
+            name: "Find".into(),
+            items: vec![
+                MenuItem::action("Find", OpenFindPanel),
+                MenuItem::action("Find Next", FindNextMatch),
+                MenuItem::action("Find Previous", FindPreviousMatch),
             ],
         },
         Menu {
@@ -259,16 +302,35 @@ impl VellumApp {
         let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
         let focus_handle = cx.focus_handle();
         let editor_snapshot = editor.read(cx).snapshot();
+        let find_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
+        let outline_filter_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
 
-        cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+        let editor_subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
             let EditorEvent::Changed(snapshot) = event;
             this.editor_snapshot = snapshot.clone();
             if !snapshot.status_message.is_empty() {
                 this.shell_status_message.clear();
             }
+            this.refresh_find_matches();
             cx.notify();
-        })
-        .detach();
+        });
+
+        let find_input_subscription = cx.subscribe(&find_query_input, |this: &mut Self, _, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                let value = this.find_query_input.read(cx).value();
+                this.set_find_query(value);
+                cx.notify();
+            }
+        });
+
+        let outline_input_subscription = cx.subscribe(&outline_filter_input, |this: &mut Self, _, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                let value = this.outline_filter_input.read(cx).value();
+                this.set_outline_filter(value);
+                cx.notify();
+            }
+        });
 
         let mut this = Self {
             app_state: AppState::default(),
@@ -285,6 +347,14 @@ impl VellumApp {
             status_bar_edge_hovered: false,
             status_bar_hide_generation: 0,
             shell_status_message: String::new(),
+            find_panel_visible: false,
+            find_query: String::new(),
+            find_matches: Vec::new(),
+            active_find_index: None,
+            outline_filter: String::new(),
+            find_query_input,
+            outline_filter_input,
+            find_input_subscriptions: vec![editor_subscription, find_input_subscription, outline_input_subscription],
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
@@ -309,4 +379,87 @@ impl VellumApp {
             })
             .detach();
     }
+    fn set_find_query(&mut self, query: impl Into<String>) {
+        let query = query.into();
+        if self.find_query == query {
+            return;
+        }
+        self.find_query = query;
+        self.refresh_find_matches();
+    }
+
+    fn set_outline_filter(&mut self, filter: impl Into<String>) {
+        self.outline_filter = filter.into();
+    }
+
+    fn open_find_panel(&mut self) {
+        self.find_panel_visible = true;
+        self.refresh_find_matches();
+    }
+
+    fn close_find_panel(&mut self) {
+        self.find_panel_visible = false;
+    }
+
+    fn refresh_find_matches(&mut self) {
+        if self.find_query.is_empty() {
+            self.find_matches.clear();
+            self.active_find_index = None;
+            return;
+        }
+
+        self.find_matches = find_matches(&self.editor_snapshot.document_text, &self.find_query)
+            .into_iter()
+            .map(|range| FindMatch { range })
+            .collect();
+
+        self.active_find_index = if self.find_matches.is_empty() {
+            None
+        } else {
+            let current_cursor = self.editor_snapshot.selection.cursor();
+            self.find_matches
+                .iter()
+                .position(|item| item.range.start <= current_cursor && current_cursor <= item.range.end)
+                .or(Some(0))
+        };
+    }
+
+    fn navigate_find_match(&mut self, backwards: bool) -> Option<usize> {
+        if self.find_matches.is_empty() {
+            self.active_find_index = None;
+            return None;
+        }
+
+        let len = self.find_matches.len();
+        let next_index = match self.active_find_index {
+            Some(current) if backwards => (current + len - 1) % len,
+            Some(current) => (current + 1) % len,
+            None if backwards => len - 1,
+            None => 0,
+        };
+        self.active_find_index = Some(next_index);
+        Some(self.find_matches[next_index].range.start)
+    }
+
+    fn active_find_status(&self) -> Option<String> {
+        if !self.find_panel_visible {
+            return None;
+        }
+        if self.find_query.is_empty() {
+            return Some("Find".to_string());
+        }
+        if self.find_matches.is_empty() {
+            return Some("No matches".to_string());
+        }
+        let current = self.active_find_index.unwrap_or(0) + 1;
+        Some(format!("Find {current}/{}", self.find_matches.len()))
+    }
+}
+
+fn find_matches(haystack: &str, needle: &str) -> Vec<std::ops::Range<usize>> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    haystack.match_indices(needle).map(|(start, matched)| start..start + matched.len()).collect()
 }

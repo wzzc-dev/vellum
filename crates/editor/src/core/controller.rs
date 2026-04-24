@@ -199,6 +199,15 @@ pub enum EditCommand {
     ToggleBulletList,
     /// Toggle ordered list (`1. `) prefix. If already an ordered list, strips it.
     ToggleOrderedList,
+    /// Insert a thematic break (`---`). If the current block is an empty paragraph, replace it;
+    /// otherwise insert after the current block and leave the cursor in the following empty paragraph.
+    InsertHorizontalRule,
+    /// Insert a fenced code block (` ``` \n\n``` `). If the current block is an empty paragraph,
+    /// replace it; otherwise insert after the current block. The cursor lands on the empty line
+    /// between the opening and closing fence markers.
+    InsertCodeFence,
+    /// Insert a minimal 2-column pipe table template and place the cursor in the first body cell.
+    InsertTable,
     Undo,
     Redo,
     ReloadConflict,
@@ -777,6 +786,13 @@ impl EditorController {
         self.update_selection(SelectionState::collapsed(block.content_range.start))
     }
 
+    /// Move the collapsed cursor to `byte_offset` in the source document,
+    /// clamping to the document length. Used by find-navigation in the app layer.
+    pub fn select_source_offset(&mut self, byte_offset: usize) -> EditorEffects {
+        let clamped = byte_offset.min(self.document.text().len());
+        self.update_selection(SelectionState::collapsed(clamped))
+    }
+
     pub fn open_path(&mut self, path: PathBuf) -> Result<EditorEffects> {
         let source = DocumentSource::from_disk(path.clone())?;
         self.replace_source(source);
@@ -849,6 +865,9 @@ impl EditorController {
             EditCommand::ToggleBlockquote => self.toggle_blockquote(),
             EditCommand::ToggleBulletList => self.toggle_list(false),
             EditCommand::ToggleOrderedList => self.toggle_list(true),
+            EditCommand::InsertHorizontalRule => self.insert_horizontal_rule(),
+            EditCommand::InsertCodeFence => self.insert_code_fence(),
+            EditCommand::InsertTable => self.insert_table(),
             EditCommand::MoveCaret {
                 direction,
                 preferred_column,
@@ -1217,6 +1236,102 @@ impl EditorController {
             } else {
                 "Toggled bullet list"
             },
+        )
+    }
+
+    fn insert_horizontal_rule(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        if is_empty {
+            // Replace the empty paragraph with `---` and leave cursor at the end.
+            let cursor = block.content_range.start + 3;
+            self.apply_edit(
+                block.content_range,
+                "---".to_string(),
+                SelectionState::collapsed(cursor),
+                "Inserted horizontal rule",
+            )
+        } else {
+            // Insert `\n\n---\n\n` after the current block's full byte range and
+            // leave cursor in the trailing empty paragraph that follows the rule.
+            let insert_pos = block.byte_range.end;
+            let insertion = "\n\n---\n\n".to_string();
+            // Cursor should land after the two-newline separator that follows `---`.
+            // That puts it at: insert_pos + "\n\n---\n\n".len() - 1 … but since the
+            // document will re-parse, we just place cursor at insert_pos + 6 which is
+            // the start of the blank paragraph after `---`.
+            let cursor = insert_pos + 6;
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState::collapsed(cursor),
+                "Inserted horizontal rule",
+            )
+        }
+    }
+
+    fn insert_code_fence(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        // The fence template: opening fence, empty body line, closing fence.
+        // The cursor should land at the start of the empty body line.
+        let template = "```\n\n```";
+        if is_empty {
+            // Replace the empty paragraph in-place.
+            let cursor = block.content_range.start + 4; // after "```\n"
+            self.apply_edit(
+                block.content_range,
+                template.to_string(),
+                SelectionState::collapsed(cursor),
+                "Inserted code fence",
+            )
+        } else {
+            // Insert after the current block.
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            // Cursor lands at the empty body line: insert_pos + "\n\n```\n".len()
+            let cursor = insert_pos + 2 + 4; // "\n\n" + "```\n"
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState::collapsed(cursor),
+                "Inserted code fence",
+            )
+        }
+    }
+
+    fn insert_table(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let table_template = "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |";
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let (edit_range, insertion, base_offset) = if is_empty {
+            (block.content_range.clone(), table_template.to_string(), block.content_range.start)
+        } else {
+            let insert_pos = block.byte_range.end;
+            (insert_pos..insert_pos, format!("\n\n{table_template}"), insert_pos + 2)
+        };
+        // Cursor should land in the first body cell of the table.
+        // "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |"
+        //  The first body cell "|  |  |" starts at offset:
+        //  "| Column 1 | Column 2 |\n| --- | --- |\n|" → len = 24 + 14 + 1 = 39 … then " " at +1
+        let header = "| Column 1 | Column 2 |\n";
+        let separator = "| --- | --- |\n";
+        // first body cell content starts after "| " → +2
+        let cursor = base_offset + header.len() + separator.len() + 2;
+        self.apply_edit(
+            edit_range,
+            insertion,
+            SelectionState::collapsed(cursor),
+            "Inserted table",
         )
     }
 
@@ -3006,6 +3121,106 @@ mod tests {
                 .expect("same column in following row")
                 .start
         );
+    }
+
+    #[test]
+    fn insert_horizontal_rule_replaces_empty_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(0),
+        });
+
+        controller.dispatch(EditCommand::InsertHorizontalRule);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "---");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(3));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn insert_horizontal_rule_after_nonempty_paragraph_creates_following_empty_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertHorizontalRule);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello\n\n---\n\n");
+        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::ThematicBreak));
+    }
+
+    #[test]
+    fn insert_code_fence_places_cursor_on_empty_body_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertCodeFence);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello\n\n```\n\n```");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(11));
+        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::CodeFence { .. }));
+    }
+
+    #[test]
+    fn insert_table_places_cursor_in_first_body_cell() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertTable);
+
+        let snapshot = controller.snapshot();
+        let expected = "Hello\n\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |";
+        assert_eq!(snapshot.document_text, expected);
+        let first_body_cell = crate::core::table::TableModel::parse(
+            "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |",
+        )
+        .cell_source_range(crate::core::table::TableCellRef {
+            visible_row: 1,
+            column: 0,
+        })
+        .expect("first body cell");
+        assert_eq!(snapshot.selection.cursor(), 7 + first_body_cell.start + 1);
+        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::Table));
     }
 
     #[test]

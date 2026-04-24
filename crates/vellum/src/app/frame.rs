@@ -1,4 +1,4 @@
-use gpui::StatefulInteractiveElement as _;
+use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
 use gpui_component::{Selectable, Sizable as _, button::ButtonGroup, menu::DropdownMenu as _};
 
 use super::*;
@@ -320,6 +320,7 @@ impl VellumApp {
         } else {
             ("Saved", IconName::CircleCheck, cx.theme().success)
         };
+        let find_status = self.active_find_status();
 
         div()
             .id("status-bar")
@@ -352,6 +353,13 @@ impl VellumApp {
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Words {}", self.document_word_count())),
                     )
+                    .when_some(find_status, |this, find_status| {
+                        this.child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(find_status),
+                        )
+                    })
                     .child(
                         ButtonGroup::new("editor-view-mode-status")
                             .compact()

@@ -1,5 +1,5 @@
 use gpui::{AnyElement, StatefulInteractiveElement as _, prelude::FluentBuilder as _};
-use gpui_component::{Selectable, button::ButtonGroup, scroll::ScrollableElement};
+use gpui_component::{Selectable, button::ButtonGroup, input::Input, scroll::ScrollableElement};
 
 use super::*;
 
@@ -66,20 +66,52 @@ impl VellumApp {
             })
             .map(|block| block.id);
 
-        if self.editor_snapshot.outline.is_empty() {
+        // Outline filter input
+        let filter_text = self.outline_filter.clone();
+        let filter_view = view.clone();
+        let filter_input = self.outline_filter_input.clone();
+
+        let filtered_items: Vec<_> = self
+            .editor_snapshot
+            .outline
+            .iter()
+            .filter(|item| {
+                filter_text.is_empty()
+                    || item.title.to_lowercase().contains(&filter_text.to_lowercase())
+            })
+            .cloned()
+            .collect();
+
+        let filter_bar = div()
+            .w_full()
+            .child(Input::new(&filter_input));
+
+        if filtered_items.is_empty() {
             return div()
                 .size_full()
                 .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No headings yet")
+                .flex_col()
+                .gap_2()
+                .child(filter_bar)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if self.editor_snapshot.outline.is_empty() {
+                            "No headings yet"
+                        } else {
+                            "No matches"
+                        }),
+                )
                 .into_any_element();
         }
 
         let mut items = div().w_full().flex().flex_col().gap_1();
-        for (ix, item) in self.editor_snapshot.outline.iter().enumerate() {
+        for (ix, item) in filtered_items.iter().enumerate() {
             let block_id = item.block_id;
             let title = item.title.clone();
             let depth = item.depth.saturating_sub(1) as f32;
@@ -101,7 +133,7 @@ impl VellumApp {
                             .child(title),
                     )
                     .on_click({
-                        let view = view.clone();
+                        let view = filter_view.clone();
                         move |_, window, cx| {
                             let _ = view.update(cx, |this, cx| {
                                 this.editor.update(cx, |editor, cx| {
@@ -115,8 +147,100 @@ impl VellumApp {
 
         div()
             .size_full()
-            .overflow_y_scrollbar()
-            .child(items)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(filter_bar)
+            .child(div().flex_1().min_h(px(0.)).overflow_y_scrollbar().child(items))
+            .into_any_element()
+    }
+
+    pub(super) fn render_find_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let view = cx.entity();
+        let find_input = self.find_query_input.clone();
+
+        let has_matches = !self.find_matches.is_empty();
+        let nav_color = if has_matches {
+            cx.theme().foreground
+        } else {
+            cx.theme().muted_foreground
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().border.opacity(0.18))
+            .bg(cx.theme().background)
+            .child(Input::new(&find_input).flex_1())
+            .child(
+                div()
+                    .id("find-prev-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(nav_color)
+                    .text_sm()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.on_find_previous_match(&FindPreviousMatch, window, cx);
+                            });
+                        }
+                    })
+                    .child("↑"),
+            )
+            .child(
+                div()
+                    .id("find-next-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(nav_color)
+                    .text_sm()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.on_find_next_match(&FindNextMatch, window, cx);
+                            });
+                        }
+                    })
+                    .child("↓"),
+            )
+            .child(
+                div()
+                    .id("find-close-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().muted_foreground)
+                    .text_sm()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.close_find_panel();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child("✕"),
+            )
             .into_any_element()
     }
 
@@ -177,7 +301,12 @@ impl Render for VellumApp {
             .min_w(px(0.))
             .min_h(px(0.))
             .bg(cx.theme().background)
-            .child(self.editor.clone())
+            .flex()
+            .flex_col()
+            .when(self.find_panel_visible, |this| {
+                this.child(self.render_find_bar(cx))
+            })
+            .child(div().flex_1().min_h(px(0.)).child(self.editor.clone()))
             .into_any_element();
 
         let body: AnyElement = if self.sidebar_visible {
@@ -225,6 +354,10 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_save_as))
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_toggle_status_bar))
+            .on_action(cx.listener(Self::on_open_find_panel))
+            .on_action(cx.listener(Self::on_close_find_panel))
+            .on_action(cx.listener(Self::on_find_next_match))
+            .on_action(cx.listener(Self::on_find_previous_match))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)

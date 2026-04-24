@@ -10,6 +10,56 @@ impl VellumApp {
         self.open_file_dialog(window, cx);
     }
 
+    pub(super) fn on_open_find_panel(
+        &mut self,
+        _: &OpenFindPanel,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_find_panel();
+        cx.notify();
+    }
+
+    pub(super) fn on_close_find_panel(
+        &mut self,
+        _: &CloseFindPanel,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_find_panel();
+        cx.notify();
+    }
+
+    pub(super) fn on_find_next_match(
+        &mut self,
+        _: &FindNextMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_find_panel();
+        if let Some(offset) = self.navigate_find_match(false) {
+            self.editor.update(cx, |editor, cx| {
+                editor.select_source_offset(offset, window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    pub(super) fn on_find_previous_match(
+        &mut self,
+        _: &FindPreviousMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_find_panel();
+        if let Some(offset) = self.navigate_find_match(true) {
+            self.editor.update(cx, |editor, cx| {
+                editor.select_source_offset(offset, window, cx);
+            });
+        }
+        cx.notify();
+    }
+
     pub(super) fn on_open_folder(
         &mut self,
         _: &OpenFolder,

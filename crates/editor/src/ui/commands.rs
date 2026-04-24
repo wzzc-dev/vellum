@@ -3,8 +3,9 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
-    BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
+    BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, InsertCodeFence,
+    InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection, PromoteBlock, RedoEdit,
+    SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
     ToggleOrderedList, ToggleParagraph, ToggleSourceMode, UndoEdit,
 };
@@ -65,6 +66,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-9", ToggleOrderedList, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-9", ToggleOrderedList, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-h", InsertHorizontalRule, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-h", InsertHorizontalRule, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-k", InsertCodeFence, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-k", InsertCodeFence, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-t", InsertTable, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-t", InsertTable, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -148,6 +161,26 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-h", InsertHorizontalRule, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-h",
+            InsertHorizontalRule,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-k", InsertCodeFence, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-k",
+            InsertCodeFence,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-t", InsertTable, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-t", InsertTable, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -403,5 +436,32 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_list(true, window, cx);
+    }
+
+    pub(crate) fn on_insert_horizontal_rule(
+        &mut self,
+        _: &InsertHorizontalRule,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_horizontal_rule(window, cx);
+    }
+
+    pub(crate) fn on_insert_code_fence(
+        &mut self,
+        _: &InsertCodeFence,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_code_fence(window, cx);
+    }
+
+    pub(crate) fn on_insert_table(
+        &mut self,
+        _: &InsertTable,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table(window, cx);
     }
 }
