@@ -8,10 +8,10 @@ use std::{
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Entity, FontStyle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, ObjectFit, PaintQuad,
-    ParentElement, SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled,
-    StyledImage, StyledText, TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div, fill,
-    img, point, px, size,
+    InteractiveElement, IntoElement, IsZero, MouseButton, MouseMoveEvent, ObjectFit, PaintQuad,
+    ParentElement, ScrollHandle, SharedString, StatefulInteractiveElement, StrikethroughStyle,
+    Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div,
+    fill, img, point, px, size,
 };
 use gpui_component::{
     ActiveTheme,
@@ -330,6 +330,7 @@ impl MarkdownEditor {
         &mut self,
         block_id: u64,
         event: &MouseMoveEvent,
+        scroll_handle: &ScrollHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -339,6 +340,29 @@ impl MarkdownEditor {
         let Some(anchor) = self.drag_selection_anchor else {
             return;
         };
+
+        let viewport_bounds = scroll_handle.bounds();
+        if !viewport_bounds.is_zero() {
+            let edge_threshold = px(24.);
+            let max_scroll_y = scroll_handle.max_offset().height.max(px(0.));
+            let current_offset = scroll_handle.offset();
+            let mut next_offset = current_offset;
+
+            if event.position.y < viewport_bounds.top() + edge_threshold {
+                let distance = (viewport_bounds.top() + edge_threshold - event.position.y).max(px(0.));
+                next_offset.y = (current_offset.y + distance.min(px(18.))).min(px(0.));
+            } else if event.position.y > viewport_bounds.bottom() - edge_threshold {
+                let distance = (event.position.y - (viewport_bounds.bottom() - edge_threshold)).max(px(0.));
+                next_offset.y =
+                    (current_offset.y - distance.min(px(18.))).max(-max_scroll_y);
+            }
+
+            if next_offset != current_offset {
+                scroll_handle.set_offset(next_offset);
+                cx.notify();
+            }
+        }
+
         let selection_range = anchor.source_offset..anchor.source_offset;
         let Some(head) = self.surface_selection_anchor_for_position(
             block_id,
@@ -400,6 +424,7 @@ pub(super) fn render_document_surface(
     snapshot: &EditorSnapshot,
     input_focused: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
+    scroll_handle: ScrollHandle,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
 ) -> AnyElement {
@@ -459,6 +484,7 @@ pub(super) fn render_document_surface(
             &block,
             input_focused,
             block_bounds.clone(),
+            scroll_handle.clone(),
             palette,
             window,
         ));
@@ -474,6 +500,7 @@ fn render_display_block(
     block: &RenderBlock,
     input_focused: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
+    scroll_handle: ScrollHandle,
     palette: RenderPalette,
     window: &mut Window,
 ) -> AnyElement {
@@ -706,14 +733,23 @@ fn render_display_block(
                         });
                     }
                 })
-                .on_mouse_move(move |event, window, app: &mut App| {
-                    if !event.dragging() {
-                        return;
+                .on_mouse_move({
+                    let scroll_handle = scroll_handle.clone();
+                    move |event, window, app: &mut App| {
+                        if !event.dragging() {
+                            return;
+                        }
+                        app.stop_propagation();
+                        let _ = block_view.update(app, |this, cx| {
+                            this.handle_surface_mouse_move(
+                                block_id,
+                                event,
+                                &scroll_handle,
+                                window,
+                                cx,
+                            );
+                        });
                     }
-                    app.stop_propagation();
-                    let _ = block_view.update(app, |this, cx| {
-                        this.handle_surface_mouse_move(block_id, event, window, cx);
-                    });
                 })
                 .on_click(move |event, window, cx| {
                     let _ = block_click_view.update(cx, |this, cx| {

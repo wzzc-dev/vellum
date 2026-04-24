@@ -3,7 +3,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Subscription, VisualContext, Window, div, px,
+    Render, ScrollHandle, StatefulInteractiveElement, Styled, Subscription, VisualContext, Window,
+    div, px,
 };
 use gpui_component::{
     ActiveTheme,
@@ -47,6 +48,7 @@ pub struct MarkdownEditor {
     pub(super) input_focused: bool,
     pub(super) block_bounds: Rc<RefCell<HashMap<u64, gpui::Bounds<gpui::Pixels>>>>,
     pub(super) drag_selection_anchor: Option<SurfaceSelectionAnchor>,
+    pub(super) scroll_handle: ScrollHandle,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -90,6 +92,7 @@ impl MarkdownEditor {
             input_focused: false,
             block_bounds: Rc::new(RefCell::new(HashMap::new())),
             drag_selection_anchor: None,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -480,7 +483,13 @@ impl Render for MarkdownEditor {
             })
             .child(
                 div().size_full().flex().flex_col().child(
-                    div().flex_1().overflow_y_scrollbar().child(
+                    div()
+                        .flex_1()
+                        .id("editor-scroll-container")
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .vertical_scrollbar(&self.scroll_handle)
+                        .child(
                         div().w_full().px_8().pt(px(28.)).pb(px(44.)).child(
                             div()
                                 .mx_auto()
@@ -510,13 +519,14 @@ impl Render for MarkdownEditor {
                                                 .opacity(0.),
                                         )
                                         .child(render_document_surface(
-                                            &view,
-                                            &self.snapshot,
-                                            self.input_focused,
-                                            self.block_bounds.clone(),
-                                            window,
-                                            cx,
-                                        )),
+                                           &view,
+                                           &self.snapshot,
+                                           self.input_focused,
+                                           self.block_bounds.clone(),
+                                           self.scroll_handle.clone(),
+                                           window,
+                                           cx,
+                                       )),
                                 ),
                         ),
                     ),
