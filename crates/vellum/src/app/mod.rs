@@ -10,8 +10,9 @@ use editor::{
     SecondaryEnter, UndoEdit, bind_keys as bind_editor_keys,
 };
 use gpui::{
-    App, AppContext, Application, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, Render, Styled, Timer, VisualContext, Window, WindowOptions, actions, div, px,
+    App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyBinding, ParentElement, Render, Styled, Timer, VisualContext, Window, WindowHandle,
+    WindowOptions, actions, div, px,
 };
 #[cfg(target_os = "macos")]
 use gpui::{Menu, MenuItem, OsAction, SystemMenuType};
@@ -63,6 +64,7 @@ struct VellumApp {
     workspace: WorkspaceState,
     tree_state: Entity<TreeState>,
     editor: Entity<MarkdownEditor>,
+    focus_handle: FocusHandle,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
     status_bar_pinned: bool,
@@ -78,20 +80,21 @@ pub fn run() -> Result<()> {
         gpui_component::init(cx);
         bind_keys(cx);
         bind_editor_keys(cx);
-        install_app_menus(cx);
 
         let options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         };
 
-        cx.open_window(options, |window, cx| {
-            window.set_window_title("Vellum");
-            let view = cx.new(|cx| VellumApp::new(window, cx));
-            VellumApp::start_background_tasks(&view, window, cx);
-            cx.new(|cx| Root::new(view, window, cx))
-        })
-        .expect("failed to open main window");
+        let main_window = cx
+            .open_window(options, |window, cx| {
+                window.set_window_title("Vellum");
+                let view = cx.new(|cx| VellumApp::new(window, cx));
+                VellumApp::start_background_tasks(&view, window, cx);
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("failed to open main window");
+        install_app_menus(cx, main_window);
 
         cx.activate(true);
     });
@@ -121,49 +124,25 @@ fn bind_keys(cx: &mut App) {
 }
 
 #[cfg(target_os = "macos")]
-fn install_app_menus(cx: &mut App) {
+fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     cx.on_action(|_: &Quit, cx| cx.quit());
-    cx.on_action(|_: &NewFile, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |root, window, cx| {
-                let Ok(root) = root.downcast::<Root>() else {
-                    return;
-                };
-                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
-                    let _ = app.update(cx, |this, cx| {
-                        this.create_new_file(window, cx);
-                    });
-                }
-            });
-        }
+    let window = main_window;
+    cx.on_action(move |_: &NewFile, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.create_new_file(window, cx);
+        });
     });
-    cx.on_action(|_: &OpenFile, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |root, window, cx| {
-                let Ok(root) = root.downcast::<Root>() else {
-                    return;
-                };
-                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
-                    let _ = app.update(cx, |this, cx| {
-                        this.open_file_dialog(window, cx);
-                    });
-                }
-            });
-        }
+    let window = main_window;
+    cx.on_action(move |_: &OpenFile, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.open_file_dialog(window, cx);
+        });
     });
-    cx.on_action(|_: &OpenFolder, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |root, window, cx| {
-                let Ok(root) = root.downcast::<Root>() else {
-                    return;
-                };
-                if let Ok(app) = root.read(cx).view().clone().downcast::<VellumApp>() {
-                    let _ = app.update(cx, |this, cx| {
-                        this.request_open_folder(window, cx);
-                    });
-                }
-            });
-        }
+    let window = main_window;
+    cx.on_action(move |_: &OpenFolder, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.request_open_folder(window, cx);
+        });
     });
     cx.set_menus(vec![
         Menu {
@@ -232,13 +211,29 @@ fn install_app_menus(cx: &mut App) {
     ]);
 }
 
+#[cfg(target_os = "macos")]
+fn update_vellum_app_from_menu(
+    window_handle: WindowHandle<Root>,
+    cx: &mut App,
+    update: impl FnOnce(&mut VellumApp, &mut Window, &mut Context<VellumApp>),
+) {
+    let _ = window_handle.update(cx, |root, window, cx| {
+        if let Ok(app) = root.view().clone().downcast::<VellumApp>() {
+            let _ = app.update(cx, |this, cx| {
+                update(this, window, cx);
+            });
+        }
+    });
+}
+
 #[cfg(not(target_os = "macos"))]
-fn install_app_menus(_: &mut App) {}
+fn install_app_menus(_: &mut App, _: WindowHandle<Root>) {}
 
 impl VellumApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree_state = cx.new(|cx| TreeState::new(cx));
         let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        let focus_handle = cx.focus_handle();
         let editor_snapshot = editor.read(cx).snapshot();
 
         cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
@@ -256,6 +251,7 @@ impl VellumApp {
             workspace: WorkspaceState::new(),
             tree_state,
             editor,
+            focus_handle,
             editor_snapshot,
             sidebar_visible: true,
             status_bar_pinned: false,
@@ -265,6 +261,7 @@ impl VellumApp {
             status_bar_hide_generation: 0,
             shell_status_message: String::new(),
         };
+        window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
         this
     }

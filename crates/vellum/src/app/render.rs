@@ -104,6 +104,7 @@ impl Render for VellumApp {
         div()
             .id("vellum-app")
             .key_context(APP_CONTEXT)
+            .track_focus(&self.focus_handle)
             .size_full()
             .min_w(px(0.))
             .min_h(px(0.))
