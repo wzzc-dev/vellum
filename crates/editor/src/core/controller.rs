@@ -2214,6 +2214,60 @@ mod tests {
     }
 
     #[test]
+    fn delete_backward_demotes_heading_level_at_block_start() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "## Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(0),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "# Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
+        assert_eq!(snapshot.blocks.len(), 1);
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Heading { depth: 1 }
+        ));
+    }
+
+    #[test]
+    fn delete_backward_turns_h1_into_paragraph_at_block_start() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(0),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
+        assert_eq!(snapshot.blocks.len(), 1);
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Paragraph
+        ));
+    }
+
+    #[test]
     fn delete_backward_on_collapsed_inter_block_gap_removes_visible_empty_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
