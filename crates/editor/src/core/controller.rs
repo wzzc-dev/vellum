@@ -1782,7 +1782,11 @@ fn supports_empty_boundary_backspace_kind(kind: &BlockKind) -> bool {
 fn supports_boundary_backspace_target_kind(kind: &BlockKind) -> bool {
     matches!(
         kind,
-        BlockKind::Raw | BlockKind::Paragraph | BlockKind::Heading { .. }
+        BlockKind::Raw
+            | BlockKind::Paragraph
+            | BlockKind::Heading { .. }
+            | BlockKind::List
+            | BlockKind::Blockquote
     )
 }
 
@@ -2084,6 +2088,52 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "First");
         assert_eq!(snapshot.selection, SelectionState::collapsed(5));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_backward_merges_trailing_empty_block_after_list() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- item\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(8),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- item\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(7));
+        assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_backward_merges_trailing_empty_block_after_blockquote() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> quote\n\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(9),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> quote");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(7));
         assert_eq!(snapshot.blocks.len(), 1);
     }
 
