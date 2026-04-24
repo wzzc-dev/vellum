@@ -265,7 +265,7 @@ impl VellumApp {
             editor_snapshot,
             sidebar_visible: true,
             sidebar_view: SidebarView::Files,
-            status_bar_pinned: false,
+            status_bar_pinned: true,
             status_bar_visible: true,
             status_bar_hovered: false,
             status_bar_edge_hovered: false,

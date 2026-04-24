@@ -255,7 +255,7 @@ pub(super) fn render_document_surface(
         let empty_click_view = view.clone();
         return div()
             .id("empty-surface")
-            .occlude()
+            .block_mouse_except_scroll()
             .w_full()
             .min_h(px(BODY_LINE_HEIGHT))
             .text_size(px(BODY_FONT_SIZE))
@@ -524,7 +524,7 @@ fn render_display_block(
         .child(
             div()
                 .id(("surface-hit-target", block_id))
-                .occlude()
+                .block_mouse_except_scroll()
                 .w_full()
                 .px_1()
                 .py(px(presentation.block_padding_y))
