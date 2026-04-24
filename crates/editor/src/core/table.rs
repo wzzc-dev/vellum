@@ -321,6 +321,79 @@ impl TableModel {
         Some(lines.join("\n"))
     }
 
+    pub(crate) fn rebuild_markdown_with_inserted_row_after(
+        &self,
+        visible_row: usize,
+    ) -> Option<String> {
+        if visible_row >= self.visible_row_count() {
+            return None;
+        }
+
+        let mut lines = Vec::with_capacity(self.visible_row_count().saturating_add(2));
+        for current_row in 0..self.visible_row_count() {
+            let cells = self.visible_row_cells(current_row);
+            lines.push(format_pipe_row(&cells));
+            if current_row == 0 {
+                lines.push(self.delimiter_row_markdown());
+            }
+            if current_row == visible_row {
+                lines.push(self.empty_row_markdown());
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    pub(crate) fn rebuild_markdown_with_inserted_column_after(
+        &self,
+        column_to_insert_after: usize,
+    ) -> Option<String> {
+        if column_to_insert_after >= self.column_count() {
+            return None;
+        }
+
+        let mut lines = Vec::with_capacity(self.visible_row_count().saturating_add(1));
+        let delimiter_cells = self.delimiter_row_cells();
+        for visible_row in 0..self.visible_row_count() {
+            let mut cells = self.visible_row_cells(visible_row);
+            cells.insert(column_to_insert_after + 1, String::new());
+            lines.push(format_pipe_row(&cells));
+
+            if visible_row == 0 {
+                let mut delimiter = delimiter_cells.clone();
+                delimiter.insert(column_to_insert_after + 1, "---".to_string());
+                lines.push(format_pipe_row(&delimiter));
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    pub(crate) fn rebuild_markdown_without_column(
+        &self,
+        column_to_remove: usize,
+    ) -> Option<String> {
+        if column_to_remove >= self.column_count() || self.column_count() <= 1 {
+            return None;
+        }
+
+        let mut lines = Vec::with_capacity(self.visible_row_count().saturating_add(1));
+        let mut delimiter_cells = self.delimiter_row_cells();
+        delimiter_cells.remove(column_to_remove);
+
+        for visible_row in 0..self.visible_row_count() {
+            let mut cells = self.visible_row_cells(visible_row);
+            cells.remove(column_to_remove);
+            lines.push(format_pipe_row(&cells));
+
+            if visible_row == 0 {
+                lines.push(format_pipe_row(&delimiter_cells));
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
     pub(crate) fn append_empty_row(&self) -> String {
         if self.source.is_empty() {
             return self.empty_row_markdown();
@@ -340,6 +413,17 @@ impl TableModel {
                 .to_string()
             })
             .map(|cell| escape_markdown_table_cell(&cell))
+            .collect()
+    }
+
+    fn delimiter_row_cells(&self) -> Vec<String> {
+        let Some(row) = self.rows.iter().find(|row| row.is_delimiter) else {
+            return vec!["---".to_string(); self.column_count.max(1)];
+        };
+
+        row.cells
+            .iter()
+            .map(|cell| self.source[cell.source_range.clone()].to_string())
             .collect()
     }
 }
@@ -520,6 +604,36 @@ mod tests {
         assert_eq!(
             model.rebuild_markdown_without_row(1),
             Some("| H1 | H2 |\n| :--- | ---: |\n| C | D |".to_string())
+        );
+    }
+
+    #[test]
+    fn inserting_visible_row_after_current_rebuilds_markdown() {
+        let model = TableModel::parse("| H1 | H2 |\n| --- | --- |\n| A | B |");
+
+        assert_eq!(
+            model.rebuild_markdown_with_inserted_row_after(0),
+            Some("| H1 | H2 |\n| --- | --- |\n|  |  |\n| A | B |".to_string())
+        );
+    }
+
+    #[test]
+    fn inserting_column_preserves_existing_delimiter_alignment() {
+        let model = TableModel::parse("| H1 | H2 |\n| :--- | ---: |\n| A | B |");
+
+        assert_eq!(
+            model.rebuild_markdown_with_inserted_column_after(0),
+            Some("| H1 |  | H2 |\n| :--- | --- | ---: |\n| A |  | B |".to_string())
+        );
+    }
+
+    #[test]
+    fn deleting_column_rebuilds_markdown_and_keeps_alignment() {
+        let model = TableModel::parse("| H1 | H2 | H3 |\n| :--- | --- | ---: |\n| A | B | C |");
+
+        assert_eq!(
+            model.rebuild_markdown_without_column(1),
+            Some("| H1 | H3 |\n| :--- | ---: |\n| A | C |".to_string())
         );
     }
 }

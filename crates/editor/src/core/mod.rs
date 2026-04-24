@@ -7,11 +7,12 @@ pub(crate) mod text_ops;
 
 pub use controller::{
     BlockSnapshot, CaretPosition, ConflictState, DocumentSource, EditCommand, EditorController,
-    EditorEffects, EditorSnapshot, FileSyncEvent, SyncPolicy, SyncState,
+    EditorEffects, EditorSnapshot, EditorViewMode, FileSyncEvent, OutlineItem, SyncPolicy,
+    SyncState,
 };
 pub use display_map::{
     DisplayMap, EmbeddedNodeKind, HiddenSyntaxPolicy, HitTestResult, RenderBlock,
-    RenderInlineStyle, RenderSpan, RenderSpanKind,
+    RenderInlineStyle, RenderSpan, RenderSpanKind, RenderSpanMeta,
 };
 pub use document::{
     BlockKind, BlockProjection, BlockSpan, CursorAnchorPolicy, DocumentBuffer, DocumentState,

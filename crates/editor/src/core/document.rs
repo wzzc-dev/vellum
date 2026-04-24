@@ -25,8 +25,11 @@ pub enum BlockKind {
     List,
     Table,
     CodeFence { language: Option<String> },
+    MathBlock,
     ThematicBreak,
     Html,
+    YamlFrontMatter,
+    FootnoteDefinition,
     Footnote,
     Unknown,
 }
@@ -198,6 +201,10 @@ impl DocumentBuffer {
 
     pub fn display_map(&self, selection: Option<&SelectionModel>) -> DisplayMap {
         DisplayMap::from_document(self, selection, HiddenSyntaxPolicy::SelectionAware)
+    }
+
+    pub fn source_display_map(&self) -> DisplayMap {
+        DisplayMap::from_source_text(&self.text())
     }
 
     pub fn block_index_at_offset(&self, offset: usize) -> usize {

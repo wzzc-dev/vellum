@@ -7,7 +7,10 @@ use gpui::{
     StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, TextStyle, UnderlineStyle,
     WhiteSpace, Window, canvas, div, fill, point, px, size,
 };
-use gpui_component::ActiveTheme;
+use gpui_component::{
+    ActiveTheme,
+    button::{Button, ButtonVariants as _},
+};
 
 use crate::{
     BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, SelectionState,
@@ -23,6 +26,7 @@ use super::{BODY_FONT_SIZE, BODY_LINE_HEIGHT, layout::block_presentation, view::
 const LIST_MARKER_COLUMN_WIDTH: f32 = 28.;
 const BLOCKQUOTE_BAR_WIDTH: f32 = 3.;
 const DECORATION_GAP_X: f32 = 12.;
+const TASK_MARKER_CLICK_WIDTH: f32 = 34.;
 
 #[derive(Debug, Clone, Copy)]
 struct RenderPalette {
@@ -76,6 +80,33 @@ impl RenderedLine {
 }
 
 impl MarkdownEditor {
+    fn task_marker_hit_range(
+        &self,
+        block_id: u64,
+        position: gpui::Point<gpui::Pixels>,
+    ) -> Option<std::ops::Range<usize>> {
+        let bounds = self.block_bounds.borrow().get(&block_id).copied()?;
+        let block = self
+            .snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| block.id == block_id)?;
+        if block.kind != BlockKind::List {
+            return None;
+        }
+
+        let local_x = (position.x - bounds.left() - text_content_x_offset(block)).max(px(0.));
+        if local_x > px(TASK_MARKER_CLICK_WIDTH) {
+            return None;
+        }
+
+        let line_height = px(block_presentation(&block.kind).line_height);
+        let local_y = (position.y - bounds.top()).max(px(0.));
+        let line_index = (local_y / line_height).floor() as usize;
+        task_marker_range_for_line(block, line_index)
+    }
+
     fn set_selection_from_surface_position(
         &mut self,
         block_id: u64,
@@ -132,6 +163,11 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(range) = self.task_marker_hit_range(block_id, event.position()) {
+            self.toggle_task_marker(range, window, cx);
+            return;
+        }
+
         self.set_selection_from_surface_position(block_id, event.position(), window, cx);
     }
 
@@ -142,6 +178,11 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.task_marker_hit_range(block_id, position).is_some() {
+            self.focus_input(window, cx);
+            return;
+        }
+
         self.set_selection_from_surface_position(block_id, position, window, cx);
     }
 }
@@ -285,6 +326,8 @@ fn render_display_block(
     let overlay_block = block.clone();
     let block_view = view.clone();
     let block_click_view = view.clone();
+    let show_table_toolbar =
+        matches!(block.kind, BlockKind::Table) && selection_is_within_render_block(snapshot, block);
 
     let text_content = if show_placeholder {
         div()
@@ -403,6 +446,75 @@ fn render_display_block(
             code_surface.into_any_element()
         }
         _ => text_area,
+    };
+    let content = if show_table_toolbar {
+        let add_row_view = view.clone();
+        let remove_row_view = view.clone();
+        let add_col_view = view.clone();
+        let remove_col_view = view.clone();
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new(("table-row-add", block.id))
+                            .label("Row+")
+                            .ghost()
+                            .compact()
+                            .tooltip("Insert row")
+                            .on_click(move |_, window, app: &mut App| {
+                                let _ = add_row_view.update(app, |this, cx| {
+                                    this.insert_table_row(window, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(("table-row-del", block.id))
+                            .label("Row-")
+                            .ghost()
+                            .compact()
+                            .tooltip("Delete row")
+                            .on_click(move |_, window, app: &mut App| {
+                                let _ = remove_row_view.update(app, |this, cx| {
+                                    this.delete_table_row(window, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(("table-col-add", block.id))
+                            .label("Col+")
+                            .ghost()
+                            .compact()
+                            .tooltip("Insert column")
+                            .on_click(move |_, window, app: &mut App| {
+                                let _ = add_col_view.update(app, |this, cx| {
+                                    this.insert_table_column(window, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(("table-col-del", block.id))
+                            .label("Col-")
+                            .ghost()
+                            .compact()
+                            .tooltip("Delete column")
+                            .on_click(move |_, window, app: &mut App| {
+                                let _ = remove_col_view.update(app, |this, cx| {
+                                    this.delete_table_column(window, cx);
+                                });
+                            }),
+                    ),
+            )
+            .child(content)
+            .into_any_element()
+    } else {
+        content
     };
 
     div()
@@ -1099,6 +1211,11 @@ fn render_list_lines(
     content.into_any_element()
 }
 
+fn selection_is_within_render_block(snapshot: &EditorSnapshot, block: &RenderBlock) -> bool {
+    let range = snapshot.selection.range();
+    range.start >= block.content_range.start && range.end <= block.content_range.end
+}
+
 fn render_blockquote_lines(
     block: &RenderBlock,
     palette: RenderPalette,
@@ -1193,6 +1310,32 @@ pub(super) fn list_decoration_rows(block: &RenderBlock) -> Vec<Option<String>> {
     }
 
     if rows.is_empty() { vec![None] } else { rows }
+}
+
+fn task_marker_range_for_line(
+    block: &RenderBlock,
+    target_line_index: usize,
+) -> Option<std::ops::Range<usize>> {
+    let mut line_index = 0usize;
+
+    for span in &block.spans {
+        if span.kind == RenderSpanKind::TaskMarker && line_index == target_line_index {
+            return Some(span.source_range.clone());
+        }
+
+        if span.kind == RenderSpanKind::LineBreak && span.source_text.contains('\n') {
+            line_index += span
+                .source_text
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+            if line_index > target_line_index {
+                break;
+            }
+        }
+    }
+
+    None
 }
 
 fn normalize_list_marker(source_text: &str) -> String {

@@ -14,6 +14,7 @@ actions!(
         ExitBlockEdit,
         FocusPrevBlock,
         FocusNextBlock,
+        ToggleSourceMode,
         UndoEdit,
         RedoEdit,
         SecondaryEnter,
@@ -23,8 +24,9 @@ actions!(
 pub use core::{
     BlockKind, BlockProjection, BlockSnapshot, BlockSpan, CaretPosition, ConflictState,
     CursorAnchorPolicy, DisplayMap, DocumentBuffer, DocumentSource, DocumentState, EditCommand,
-    EditorController, EditorEffects, EditorSnapshot, EmbeddedNodeKind, FileSyncEvent,
-    HiddenSyntaxPolicy, HitTestResult, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
-    SelectionAffinity, SelectionModel, SelectionState, SyncPolicy, SyncState, Transaction,
+    EditorController, EditorEffects, EditorSnapshot, EditorViewMode, EmbeddedNodeKind,
+    FileSyncEvent, HiddenSyntaxPolicy, HitTestResult, OutlineItem, RenderBlock, RenderInlineStyle,
+    RenderSpan, RenderSpanKind, RenderSpanMeta, SelectionAffinity, SelectionModel, SelectionState,
+    SyncPolicy, SyncState, Transaction,
 };
 pub use ui::{EditorEvent, MarkdownEditor, bind_keys};

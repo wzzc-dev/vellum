@@ -242,7 +242,24 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
     let content_end = content_end_for_node(source, node);
     let content_range = start_byte..content_end;
     let (kind, cursor_anchor_policy, can_code_edit) = match node.kind() {
-        "paragraph" => (BlockKind::Paragraph, CursorAnchorPolicy::Clamp, false),
+        "paragraph" => {
+            let text = source_text(source, start_byte..content_end);
+            if is_math_block_text(&text) {
+                (
+                    BlockKind::MathBlock,
+                    CursorAnchorPolicy::PreserveColumn,
+                    false,
+                )
+            } else if is_footnote_definition_text(&text) {
+                (
+                    BlockKind::FootnoteDefinition,
+                    CursorAnchorPolicy::Clamp,
+                    false,
+                )
+            } else {
+                (BlockKind::Paragraph, CursorAnchorPolicy::Clamp, false)
+            }
+        }
         "atx_heading" => (
             BlockKind::Heading {
                 depth: atx_heading_depth(node),
@@ -274,8 +291,14 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
         ),
         "thematic_break" => (BlockKind::ThematicBreak, CursorAnchorPolicy::Clamp, false),
         "html_block" => (BlockKind::Html, CursorAnchorPolicy::Clamp, false),
-        "minus_metadata" | "plus_metadata" => (BlockKind::Raw, CursorAnchorPolicy::Clamp, false),
-        "link_reference_definition" => (BlockKind::Unknown, CursorAnchorPolicy::Clamp, false),
+        "minus_metadata" | "plus_metadata" => {
+            (BlockKind::YamlFrontMatter, CursorAnchorPolicy::Clamp, false)
+        }
+        "link_reference_definition" => (
+            BlockKind::FootnoteDefinition,
+            CursorAnchorPolicy::Clamp,
+            false,
+        ),
         _ => recover_block_shape(source, start_byte, node.end_byte()).unwrap_or((
             BlockKind::Unknown,
             CursorAnchorPolicy::Clamp,
@@ -799,6 +822,20 @@ fn recover_block_shape(
     end: usize,
 ) -> Option<(BlockKind, CursorAnchorPolicy, bool)> {
     let text = source_text(source, start..end);
+    if is_math_block_text(&text) {
+        return Some((
+            BlockKind::MathBlock,
+            CursorAnchorPolicy::PreserveColumn,
+            false,
+        ));
+    }
+    if is_footnote_definition_text(&text) {
+        return Some((
+            BlockKind::FootnoteDefinition,
+            CursorAnchorPolicy::Clamp,
+            false,
+        ));
+    }
     if let Some(depth) = atx_heading_depth_from_text(&text) {
         return Some((
             BlockKind::Heading { depth },
@@ -816,6 +853,16 @@ fn recover_block_shape(
     }
 
     None
+}
+
+fn is_math_block_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.len() >= 4 && trimmed.starts_with("$$") && trimmed.ends_with("$$")
+}
+
+fn is_footnote_definition_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("[^") && trimmed.contains("]:")
 }
 
 fn atx_heading_depth_from_text(text: &str) -> Option<u8> {

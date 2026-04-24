@@ -7,7 +7,7 @@ use anyhow::Result;
 use editor::{
     BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
     FocusPrevBlock, ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit,
-    SecondaryEnter, UndoEdit, bind_keys as bind_editor_keys,
+    SecondaryEnter, ToggleSourceMode, UndoEdit, bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -59,6 +59,13 @@ struct AppState {
     workspace_root: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SidebarView {
+    #[default]
+    Files,
+    Outline,
+}
+
 struct VellumApp {
     app_state: AppState,
     workspace: WorkspaceState,
@@ -67,6 +74,7 @@ struct VellumApp {
     focus_handle: FocusHandle,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
+    sidebar_view: SidebarView,
     status_bar_pinned: bool,
     status_bar_visible: bool,
     status_bar_hovered: bool,
@@ -204,6 +212,8 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::action("Toggle Source Mode", ToggleSourceMode),
+                MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Status Bar", ToggleStatusBar),
             ],
@@ -254,6 +264,7 @@ impl VellumApp {
             focus_handle,
             editor_snapshot,
             sidebar_visible: true,
+            sidebar_view: SidebarView::Files,
             status_bar_pinned: false,
             status_bar_visible: true,
             status_bar_hovered: false,

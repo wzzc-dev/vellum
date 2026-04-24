@@ -36,6 +36,35 @@ impl From<&InlineStyle> for RenderInlineStyle {
 pub enum EmbeddedNodeKind {
     CodeBlock { language: Option<String> },
     Table,
+    Image,
+    MathBlock,
+    Diagram { language: String },
+    HtmlBlock,
+    FootnoteDefinition,
+    Toc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderSpanMeta {
+    Link {
+        target: String,
+        title: Option<String>,
+    },
+    Image {
+        src: String,
+        alt: String,
+        title: Option<String>,
+    },
+    Math {
+        source: String,
+        display: bool,
+    },
+    Html {
+        source: String,
+    },
+    ReferenceLink {
+        label: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +85,7 @@ pub struct RenderSpan {
     pub visible_text: String,
     pub hidden: bool,
     pub style: RenderInlineStyle,
+    pub meta: Option<RenderSpanMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +119,38 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
+    pub(crate) fn from_source_text(text: &str) -> Self {
+        let span = RenderSpan {
+            kind: RenderSpanKind::Text,
+            source_range: 0..text.len(),
+            visible_range: 0..text.len(),
+            source_text: text.to_string(),
+            visible_text: text.to_string(),
+            hidden: false,
+            style: RenderInlineStyle::default(),
+            meta: None,
+        };
+        let block = RenderBlock {
+            id: 0,
+            kind: BlockKind::Raw,
+            source_range: 0..text.len(),
+            content_range: 0..text.len(),
+            visible_range: 0..text.len(),
+            visible_text: text.to_string(),
+            spans: vec![span],
+            embedded: None,
+        };
+        let blocks = vec![block];
+        let boundary_mappings = build_boundary_mappings(text, &blocks);
+
+        Self {
+            hidden_syntax_policy: HiddenSyntaxPolicy::SelectionAware,
+            visible_text: text.to_string(),
+            blocks,
+            boundary_mappings,
+        }
+    }
+
     pub(crate) fn from_document(
         document: &DocumentBuffer,
         selection: Option<&SelectionModel>,
@@ -558,10 +620,26 @@ impl<'a> BlockBuilder<'a> {
 
     fn finish(self) -> RenderBlock {
         let embedded = match &self.block.kind {
-            BlockKind::CodeFence { language } => Some(EmbeddedNodeKind::CodeBlock {
-                language: language.clone(),
-            }),
+            BlockKind::CodeFence { language } => {
+                if language
+                    .as_deref()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("mermaid"))
+                {
+                    Some(EmbeddedNodeKind::Diagram {
+                        language: "mermaid".to_string(),
+                    })
+                } else {
+                    Some(EmbeddedNodeKind::CodeBlock {
+                        language: language.clone(),
+                    })
+                }
+            }
             BlockKind::Table => Some(EmbeddedNodeKind::Table),
+            BlockKind::MathBlock => Some(EmbeddedNodeKind::MathBlock),
+            BlockKind::Html => Some(EmbeddedNodeKind::HtmlBlock),
+            BlockKind::FootnoteDefinition | BlockKind::Footnote => {
+                Some(EmbeddedNodeKind::FootnoteDefinition)
+            }
             _ => None,
         };
 
@@ -601,6 +679,7 @@ impl<'a> BlockBuilder<'a> {
                 trailing,
                 false,
                 RenderInlineStyle::default(),
+                None,
             );
         }
     }
@@ -668,6 +747,7 @@ impl<'a> BlockBuilder<'a> {
                     task_marker_text(line),
                     false,
                     RenderInlineStyle::default(),
+                    None,
                 );
                 self.push_inline_text(
                     source_offset + task_marker_end,
@@ -699,6 +779,7 @@ impl<'a> BlockBuilder<'a> {
                     newline_text,
                     false,
                     RenderInlineStyle::default(),
+                    None,
                 );
             }
             source_offset += segment.len();
@@ -733,6 +814,7 @@ impl<'a> BlockBuilder<'a> {
                         code: true,
                         ..RenderInlineStyle::default()
                     },
+                    None,
                 );
                 source_offset += middle.len();
             }
@@ -901,6 +983,7 @@ impl<'a> BlockBuilder<'a> {
                 } else {
                     merge_inline_styles(style, token.style)
                 },
+                token.meta,
             );
         }
     }
@@ -917,6 +1000,7 @@ impl<'a> BlockBuilder<'a> {
             String::new(),
             true,
             RenderInlineStyle::default(),
+            None,
         );
     }
 
@@ -938,6 +1022,7 @@ impl<'a> BlockBuilder<'a> {
             visible_text,
             false,
             style,
+            None,
         );
     }
 
@@ -959,6 +1044,7 @@ impl<'a> BlockBuilder<'a> {
             },
             hidden,
             RenderInlineStyle::default(),
+            None,
         );
     }
 
@@ -970,6 +1056,7 @@ impl<'a> BlockBuilder<'a> {
         visible_text: String,
         hidden: bool,
         style: RenderInlineStyle,
+        meta: Option<RenderSpanMeta>,
     ) {
         let visible_start = self.visible_text.len();
         self.visible_text.push_str(&visible_text);
@@ -982,6 +1069,7 @@ impl<'a> BlockBuilder<'a> {
             visible_text,
             hidden,
             style,
+            meta,
         });
     }
 
@@ -1042,6 +1130,7 @@ struct InlineToken {
     visible_text: String,
     hidden: bool,
     style: RenderInlineStyle,
+    meta: Option<RenderSpanMeta>,
 }
 
 fn parse_inline_tokens(text: &str) -> Vec<InlineToken> {
@@ -1055,6 +1144,7 @@ fn parse_inline_tokens(text: &str) -> Vec<InlineToken> {
             visible_text: text.to_string(),
             hidden: false,
             style: RenderInlineStyle::default(),
+            meta: None,
         });
     }
     tokens
@@ -1155,6 +1245,59 @@ fn parse_inline_tokens_into(
             continue;
         }
 
+        if rest.starts_with("![")
+            && let Some(close) = rest.find(']')
+            && rest[close + 1..].starts_with('(')
+            && let Some(close_paren) = rest[close + 2..].find(')')
+        {
+            let source_end = close + 3 + close_paren;
+            let source = &rest[..source_end];
+            let alt = rest[2..close].to_string();
+            let raw_target = &rest[close + 2..close + 2 + close_paren];
+            let (src, title) = parse_link_destination_and_title(raw_target);
+            tokens.push(InlineToken {
+                local_range: base_offset + offset..base_offset + offset + source.len(),
+                reveal_range: Some(offset..offset + source.len()),
+                source_text: source.to_string(),
+                visible_text: if alt.is_empty() {
+                    format!("[image: {src}]")
+                } else {
+                    format!("[image: {alt}]")
+                },
+                hidden: false,
+                style: RenderInlineStyle {
+                    link: true,
+                    ..style
+                },
+                meta: Some(RenderSpanMeta::Image { src, alt, title }),
+            });
+            offset += source.len();
+            continue;
+        }
+
+        if rest.starts_with('$')
+            && let Some((source, inner, display)) = parse_math_span(rest)
+        {
+            tokens.push(InlineToken {
+                local_range: base_offset + offset..base_offset + offset + source.len(),
+                reveal_range: Some(offset..offset + source.len()),
+                source_text: source.to_string(),
+                visible_text: if display {
+                    format!("[math: {}]", inner.trim())
+                } else {
+                    inner.to_string()
+                },
+                hidden: false,
+                style,
+                meta: Some(RenderSpanMeta::Math {
+                    source: inner.to_string(),
+                    display,
+                }),
+            });
+            offset += source.len();
+            continue;
+        }
+
         if rest.starts_with('[')
             && let Some(close) = rest.find(']')
             && rest[close + 1..].starts_with('(')
@@ -1165,6 +1308,8 @@ fn parse_inline_tokens_into(
             let target_start = inner_end + 2;
             let target_end = target_start + close_paren;
             let reveal_range = offset..target_end + 1;
+            let (target, title) = parse_link_destination_and_title(&text[target_start..target_end]);
+            let token_start = tokens.len();
             push_hidden_marker_with_reveal(tokens, base_offset + offset, "[", reveal_range.clone());
             parse_inline_tokens_into(
                 &text[inner_start..inner_end],
@@ -1194,6 +1339,9 @@ fn parse_inline_tokens_into(
                 reveal_range.clone(),
             );
             push_hidden_marker_with_reveal(tokens, base_offset + target_end, ")", reveal_range);
+            if let Some(token) = tokens[token_start..].iter_mut().find(|token| !token.hidden) {
+                token.meta = Some(RenderSpanMeta::Link { target, title });
+            }
             offset = target_end + 1;
             continue;
         }
@@ -1201,7 +1349,7 @@ fn parse_inline_tokens_into(
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '['))
+            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$'))
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
@@ -1217,6 +1365,7 @@ fn push_hidden_marker(tokens: &mut Vec<InlineToken>, offset: usize, marker: &str
         visible_text: marker.to_string(),
         hidden: true,
         style: RenderInlineStyle::default(),
+        meta: None,
     });
 }
 
@@ -1233,6 +1382,7 @@ fn push_hidden_marker_with_reveal(
         visible_text: marker.to_string(),
         hidden: true,
         style: RenderInlineStyle::default(),
+        meta: None,
     });
 }
 
@@ -1253,6 +1403,7 @@ fn push_text_token(
         visible_text: text.to_string(),
         hidden: false,
         style,
+        meta: None,
     });
 }
 
@@ -1274,7 +1425,47 @@ fn push_escaped_text_token(
         visible_text: visible_text.to_string(),
         hidden: false,
         style,
+        meta: None,
     });
+}
+
+fn parse_link_destination_and_title(raw: &str) -> (String, Option<String>) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return (String::new(), None);
+    }
+
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let target = parts
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['<', '>'])
+        .to_string();
+    let title = parts.next().and_then(|rest| {
+        let title = rest.trim().trim_matches(['"', '\'', '(', ')']).to_string();
+        (!title.is_empty()).then_some(title)
+    });
+
+    (target, title)
+}
+
+fn parse_math_span(rest: &str) -> Option<(&str, &str, bool)> {
+    if let Some(tail) = rest.strip_prefix("$$") {
+        let end = tail.find("$$")?;
+        let source_end = 2 + end + 2;
+        return Some((&rest[..source_end], &tail[..end], true));
+    }
+
+    let tail = rest.strip_prefix('$')?;
+    if tail.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let end = tail.find('$')?;
+    if end == 0 {
+        return None;
+    }
+    let source_end = 1 + end + 1;
+    Some((&rest[..source_end], &tail[..end], false))
 }
 
 #[derive(Debug, Clone, Copy)]

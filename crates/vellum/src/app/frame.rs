@@ -1,5 +1,5 @@
 use gpui::StatefulInteractiveElement as _;
-use gpui_component::{Sizable as _, menu::DropdownMenu as _};
+use gpui_component::{Selectable, Sizable as _, button::ButtonGroup, menu::DropdownMenu as _};
 
 use super::*;
 
@@ -160,6 +160,15 @@ impl VellumApp {
         cx.notify();
     }
 
+    pub(super) fn set_sidebar_view(&mut self, view: SidebarView, cx: &mut Context<Self>) {
+        if self.sidebar_view == view {
+            return;
+        }
+
+        self.sidebar_view = view;
+        cx.notify();
+    }
+
     pub(super) fn document_label(&self) -> String {
         let mut label = self.editor_snapshot.display_name.clone();
         if self.editor_snapshot.dirty {
@@ -249,6 +258,17 @@ impl VellumApp {
                             });
                         }
                     }))
+                    .separator()
+                    .item(PopupMenuItem::new("Toggle Source Mode").on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.toggle_view_mode(window, cx);
+                                });
+                            });
+                        }
+                    }))
             })
     }
 
@@ -284,6 +304,7 @@ impl VellumApp {
     }
 
     pub(super) fn render_status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
         let (doc_status, icon, color) = if self.editor_snapshot.has_conflict {
             ("Conflict", IconName::TriangleAlert, cx.theme().warning)
         } else if self.editor_snapshot.is_missing {
@@ -330,6 +351,30 @@ impl VellumApp {
                         div()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Words {}", self.document_word_count())),
+                    )
+                    .child(
+                        ButtonGroup::new("editor-view-mode-status")
+                            .compact()
+                            .ghost()
+                            .child(Button::new("view-mode-preview").label("Preview").selected(
+                                self.editor_snapshot.view_mode
+                                    == editor::EditorViewMode::LivePreview,
+                            ))
+                            .child(Button::new("view-mode-source").label("Source").selected(
+                                self.editor_snapshot.view_mode == editor::EditorViewMode::Source,
+                            ))
+                            .on_click(move |selected: &Vec<usize>, window, app| {
+                                let target = if selected.contains(&1) {
+                                    editor::EditorViewMode::Source
+                                } else {
+                                    editor::EditorViewMode::LivePreview
+                                };
+                                let _ = view.update(app, |this, cx| {
+                                    this.editor.update(cx, |editor, cx| {
+                                        editor.set_view_mode(target, window, cx);
+                                    });
+                                });
+                            }),
                     )
                     .child(
                         div()

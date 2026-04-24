@@ -7,6 +7,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme,
+    button::{Button, ButtonVariants as _},
     input::{
         Backspace, Delete, DeleteToNextWordEnd, Enter, IndentInline, Input, InputEvent, InputState,
         OutdentInline,
@@ -305,10 +306,14 @@ impl MarkdownEditor {
             .detach();
     }
 
-    fn render_conflict_banner(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+    fn render_conflict_banner(&self, cx: &Context<Self>) -> Option<gpui::AnyElement> {
         if !self.snapshot.has_conflict {
             return None;
         }
+
+        let view = cx.entity();
+        let reload_view = view.clone();
+        let keep_view = view.clone();
 
         Some(
             div()
@@ -318,8 +323,46 @@ impl MarkdownEditor {
                 .border_color(cx.theme().warning.opacity(0.24))
                 .bg(cx.theme().warning.opacity(0.08))
                 .px_3()
-                .py_2()
-                .child("External file changes detected. Save or reload to resolve."),
+                .py_3()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .text_color(cx.theme().foreground)
+                        .child("External file changes detected. Choose the disk copy or keep your current buffer."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("reload-disk")
+                                .label("Reload Disk")
+                                .ghost()
+                                .compact()
+                                .on_click(move |_, window, app: &mut App| {
+                                    let _ = reload_view.update(app, |this, cx| {
+                                        this.reload_conflict(window, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("keep-current")
+                                .label("Keep Mine")
+                                .ghost()
+                                .compact()
+                                .on_click(move |_, window, app: &mut App| {
+                                    let _ = keep_view.update(app, |this, cx| {
+                                        this.keep_current_conflict(window, cx);
+                                    });
+                                }),
+                        ),
+                )
+                .into_any_element(),
         )
     }
 
@@ -363,6 +406,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_exit_block_edit))
             .on_action(cx.listener(Self::on_focus_prev_block))
             .on_action(cx.listener(Self::on_focus_next_block))
+            .on_action(cx.listener(Self::on_toggle_source_mode))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))

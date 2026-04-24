@@ -91,6 +91,26 @@ pub struct CaretPosition {
     pub column: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorViewMode {
+    LivePreview,
+    Source,
+}
+
+impl Default for EditorViewMode {
+    fn default() -> Self {
+        Self::LivePreview
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutlineItem {
+    pub block_id: u64,
+    pub depth: u8,
+    pub title: String,
+    pub source_offset: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct EditorSnapshot {
     pub path: Option<PathBuf>,
@@ -110,6 +130,8 @@ pub struct EditorSnapshot {
     pub visible_caret_position: CaretPosition,
     pub display_map: DisplayMap,
     pub blocks: Vec<BlockSnapshot>,
+    pub outline: Vec<OutlineItem>,
+    pub view_mode: EditorViewMode,
 }
 
 impl EditorSnapshot {
@@ -346,6 +368,7 @@ pub struct EditorController {
     status_message: String,
     undo_stack: Vec<EditHistoryEntry>,
     redo_stack: Vec<EditHistoryEntry>,
+    view_mode: EditorViewMode,
 }
 
 impl EditorController {
@@ -374,6 +397,7 @@ impl EditorController {
             status_message: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            view_mode: EditorViewMode::LivePreview,
         }
     }
 
@@ -447,6 +471,145 @@ impl EditorController {
         )
     }
 
+    pub(crate) fn insert_table_row(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let Some(current_cell) = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())
+        else {
+            return EditorEffects::default();
+        };
+
+        let Some(replacement) =
+            table.rebuild_markdown_with_inserted_row_after(current_cell.visible_row)
+        else {
+            return EditorEffects::default();
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let target_cell = TableCellRef {
+            visible_row: (current_cell.visible_row + 1)
+                .min(rebuilt.visible_row_count().saturating_sub(1)),
+            column: current_cell
+                .column
+                .min(rebuilt.column_count().saturating_sub(1)),
+        };
+        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let trailing = self.document.block_trailing_text(&block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Inserted table row",
+        )
+    }
+
+    pub(crate) fn insert_table_column(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let Some(current_cell) = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())
+        else {
+            return EditorEffects::default();
+        };
+
+        let Some(replacement) =
+            table.rebuild_markdown_with_inserted_column_after(current_cell.column)
+        else {
+            return EditorEffects::default();
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let target_cell = TableCellRef {
+            visible_row: current_cell
+                .visible_row
+                .min(rebuilt.visible_row_count().saturating_sub(1)),
+            column: (current_cell.column + 1).min(rebuilt.column_count().saturating_sub(1)),
+        };
+        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let trailing = self.document.block_trailing_text(&block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Inserted table column",
+        )
+    }
+
+    pub(crate) fn delete_table_column(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let Some(current_cell) = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())
+        else {
+            return EditorEffects::default();
+        };
+
+        let Some(replacement) = table.rebuild_markdown_without_column(current_cell.column) else {
+            return EditorEffects::default();
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let target_cell = TableCellRef {
+            visible_row: current_cell
+                .visible_row
+                .min(rebuilt.visible_row_count().saturating_sub(1)),
+            column: current_cell
+                .column
+                .min(rebuilt.column_count().saturating_sub(1)),
+        };
+        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let trailing = self.document.block_trailing_text(&block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Deleted table column",
+        )
+    }
+
     pub(crate) fn exit_table(&mut self) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
@@ -487,7 +650,10 @@ impl EditorController {
         let selection = clamp_selection_to_text(&document_text, self.selection.clone());
         let caret_byte = selection.cursor().min(document_text.len());
         let (line, column) = line_column_for_byte_offset(&document_text, caret_byte);
-        let display_map = self.document.display_map(Some(&selection));
+        let display_map = match self.view_mode {
+            EditorViewMode::LivePreview => self.document.display_map(Some(&selection)),
+            EditorViewMode::Source => self.document.source_display_map(),
+        };
         let mut visible_selection = display_map.source_selection_to_visible(&selection);
         let visible_text = display_map.visible_text.clone();
         let visible_caret_byte = visible_selection.cursor().min(visible_text.len());
@@ -505,6 +671,7 @@ impl EditorController {
                 can_code_edit: block.can_code_edit,
             })
             .collect::<Vec<_>>();
+        let outline = build_outline(&self.document);
         EditorSnapshot {
             path: self.sync.path.clone(),
             suggested_path: self.sync.suggested_path.clone(),
@@ -531,6 +698,8 @@ impl EditorController {
             },
             display_map,
             blocks,
+            outline,
+            view_mode: self.view_mode,
         }
     }
 
@@ -540,6 +709,59 @@ impl EditorController {
 
     pub fn current_document_dir(&self) -> Option<PathBuf> {
         self.sync.current_dir()
+    }
+
+    pub fn view_mode(&self) -> EditorViewMode {
+        self.view_mode
+    }
+
+    pub fn set_view_mode(&mut self, view_mode: EditorViewMode) -> EditorEffects {
+        if self.view_mode == view_mode {
+            return EditorEffects::default();
+        }
+
+        self.view_mode = view_mode;
+        EditorEffects {
+            changed: false,
+            selection_changed: true,
+            reload_path: None,
+        }
+    }
+
+    pub fn toggle_view_mode(&mut self) -> EditorEffects {
+        let next = match self.view_mode {
+            EditorViewMode::LivePreview => EditorViewMode::Source,
+            EditorViewMode::Source => EditorViewMode::LivePreview,
+        };
+        self.set_view_mode(next)
+    }
+
+    pub(crate) fn toggle_task_range(&mut self, range: Range<usize>) -> EditorEffects {
+        let current = self.document.text_for_range(range.clone());
+        let replacement = if current.contains("[ ]") {
+            current.replacen("[ ]", "[x]", 1)
+        } else if current.contains("[x]") {
+            current.replacen("[x]", "[ ]", 1)
+        } else if current.contains("[X]") {
+            current.replacen("[X]", "[ ]", 1)
+        } else {
+            return EditorEffects::default();
+        };
+
+        self.apply_edit(
+            range,
+            replacement,
+            self.selection.clone(),
+            "Updated task state",
+        )
+    }
+
+    pub fn select_block_start(&mut self, block_id: u64) -> EditorEffects {
+        let Some(block) = self.document.block_by_id(block_id) else {
+            return EditorEffects::default();
+        };
+
+        self.update_selection(SelectionState::collapsed(block.content_range.start))
     }
 
     pub fn open_path(&mut self, path: PathBuf) -> Result<EditorEffects> {
@@ -716,7 +938,9 @@ impl EditorController {
     }
 
     fn replace_source(&mut self, source: DocumentSource) {
+        let view_mode = self.view_mode;
         *self = Self::new(source, self.sync_policy);
+        self.view_mode = view_mode;
     }
 }
 
@@ -1438,6 +1662,39 @@ fn file_modified_at(path: &Path) -> Option<SystemTime> {
         .and_then(|meta| meta.modified().ok())
 }
 
+fn build_outline(document: &DocumentBuffer) -> Vec<OutlineItem> {
+    document
+        .blocks()
+        .iter()
+        .filter_map(|block| {
+            let BlockKind::Heading { depth } = block.kind else {
+                return None;
+            };
+            let title = heading_title(&document.block_text(block));
+            (!title.is_empty()).then_some(OutlineItem {
+                block_id: block.id,
+                depth,
+                title,
+                source_offset: block.content_range.start,
+            })
+        })
+        .collect()
+}
+
+fn heading_title(text: &str) -> String {
+    let first_line = text.lines().next().unwrap_or(text);
+    let trimmed = first_line.trim();
+    let without_prefix = trimmed
+        .strip_prefix("###### ")
+        .or_else(|| trimmed.strip_prefix("##### "))
+        .or_else(|| trimmed.strip_prefix("#### "))
+        .or_else(|| trimmed.strip_prefix("### "))
+        .or_else(|| trimmed.strip_prefix("## "))
+        .or_else(|| trimmed.strip_prefix("# "))
+        .unwrap_or(trimmed);
+    without_prefix.trim_end_matches('#').trim().to_string()
+}
+
 fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize) -> usize {
     let target_line = if direction >= 0 {
         0
@@ -1658,6 +1915,52 @@ mod tests {
     }
 
     #[test]
+    fn source_mode_snapshot_uses_full_text_and_builds_outline() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Title\n\n## Details\nBody".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.set_view_mode(EditorViewMode::Source);
+        let snapshot = controller.snapshot();
+
+        assert_eq!(snapshot.view_mode, EditorViewMode::Source);
+        assert_eq!(
+            snapshot.display_map.visible_text,
+            "# Title\n\n## Details\nBody"
+        );
+        assert_eq!(snapshot.outline.len(), 2);
+        assert_eq!(snapshot.outline[0].title, "Title");
+        assert_eq!(snapshot.outline[1].title, "Details");
+    }
+
+    #[test]
+    fn select_block_start_moves_selection_to_heading_offset() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# First\n\n## Second".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        let second_heading = controller.snapshot().outline[1].clone();
+        controller.select_block_start(second_heading.block_id);
+
+        assert_eq!(
+            controller.snapshot().selection.cursor(),
+            second_heading.source_offset
+        );
+    }
+
+    #[test]
     fn sync_document_state_updates_dirty_state_and_history() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -1684,6 +1987,36 @@ mod tests {
 
         controller.dispatch(EditCommand::Redo);
         assert_eq!(controller.snapshot().document_text, "Updated title\n");
+    }
+
+    #[test]
+    fn toggle_task_range_updates_checkbox_markup() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- [ ] task".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        let task_range = controller
+            .snapshot()
+            .display_map
+            .blocks
+            .iter()
+            .flat_map(|block| block.spans.iter())
+            .find(|span| span.kind == crate::RenderSpanKind::TaskMarker)
+            .expect("task marker")
+            .source_range
+            .clone();
+
+        controller.toggle_task_range(task_range.clone());
+        assert_eq!(controller.snapshot().document_text, "- [x] task");
+
+        controller.toggle_task_range(task_range);
+        assert_eq!(controller.snapshot().document_text, "- [ ] task");
     }
 
     #[test]
@@ -2000,6 +2333,89 @@ mod tests {
             })
             .expect("new first cell");
         assert_eq!(snapshot.selection.cursor(), new_row_first_cell.start);
+    }
+
+    #[test]
+    fn insert_table_row_rebuilds_markdown_and_places_cursor_in_new_row() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let body_role_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("body role cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(body_role_cell.start),
+        });
+
+        let effects = controller.insert_table_row();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        let expected = "| Name | Role |\n| --- | --- |\n| Ada | Eng |\n|  |  |";
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            crate::core::table::TableModel::parse(expected)
+                .cell_source_range(crate::core::table::TableCellRef {
+                    visible_row: 2,
+                    column: 1,
+                })
+                .expect("new row same column")
+                .start
+        );
+    }
+
+    #[test]
+    fn insert_and_delete_table_column_update_markdown() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let body_name_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 0,
+            })
+            .expect("body name cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(body_name_cell.start),
+        });
+
+        let inserted = controller.insert_table_column();
+        assert!(inserted.changed);
+        let inserted_snapshot = controller.snapshot();
+        let inserted_text = "| Name |  | Role |\n| --- | --- | --- |\n| Ada |  | Eng |";
+        assert_eq!(inserted_snapshot.document_text, inserted_text);
+        assert_eq!(
+            inserted_snapshot.selection.cursor(),
+            crate::core::table::TableModel::parse(inserted_text)
+                .cell_source_range(crate::core::table::TableCellRef {
+                    visible_row: 1,
+                    column: 1,
+                })
+                .expect("inserted column cell")
+                .start
+        );
+
+        let deleted = controller.delete_table_column();
+        assert!(deleted.changed);
+        assert_eq!(controller.snapshot().document_text, source);
     }
 
     #[test]

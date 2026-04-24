@@ -4,7 +4,7 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, UndoEdit,
+    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleSourceMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -35,6 +35,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-up", FocusPrevBlock, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-down", FocusNextBlock, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-/", ToggleSourceMode, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-/", ToggleSourceMode, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-z", UndoEdit, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-z", UndoEdit, Some(EDITOR_CONTEXT)),
@@ -53,7 +57,11 @@ pub fn bind_keys(cx: &mut App) {
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-i", ItalicSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-i", ItalicSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-i",
+            ItalicSelection,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -74,6 +82,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(
             "ctrl-down",
             FocusNextBlock,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-/",
+            ToggleSourceMode,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-/",
+            ToggleSourceMode,
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
         #[cfg(target_os = "macos")]
@@ -202,5 +222,14 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.secondary_enter(window, cx);
+    }
+
+    pub(crate) fn on_toggle_source_mode(
+        &mut self,
+        _: &ToggleSourceMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_view_mode(window, cx);
     }
 }

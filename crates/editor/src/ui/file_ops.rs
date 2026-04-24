@@ -1,13 +1,44 @@
-use std::{path::PathBuf, time::SystemTime};
+use std::{ops::Range, path::PathBuf, time::SystemTime};
 
 use anyhow::Result;
 use gpui::{Context, Window};
 
-use crate::core::controller::{EditorEffects, FileSyncEvent};
+use crate::{
+    EditCommand, EditorViewMode,
+    core::controller::{EditorEffects, FileSyncEvent},
+};
 
 use super::view::MarkdownEditor;
 
 impl MarkdownEditor {
+    pub fn set_view_mode(
+        &mut self,
+        view_mode: EditorViewMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.set_view_mode(view_mode);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub fn toggle_view_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.toggle_view_mode();
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub fn select_block_start(
+        &mut self,
+        block_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.select_block_start(block_id);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
     pub fn current_document_dir(&self) -> Option<PathBuf> {
         self.controller.current_document_dir()
     }
@@ -78,6 +109,68 @@ impl MarkdownEditor {
             .controller
             .apply_disk_state(path, disk_text, modified_at);
         self.apply_effects(window, cx, effects);
+    }
+
+    pub fn reload_conflict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::ReloadConflict);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub fn keep_current_conflict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::KeepCurrentConflict);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn toggle_task_marker(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.toggle_task_range(range);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn insert_table_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.insert_table_row();
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn delete_table_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.delete_table_row();
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn insert_table_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.insert_table_column();
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn delete_table_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.delete_table_column();
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
     }
 
     pub(super) fn apply_effects(
