@@ -1,11 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Entity, FontStyle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, PaintQuad, ParentElement, SharedString,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, StyledText, TextStyle, UnderlineStyle,
-    WhiteSpace, Window, canvas, div, fill, point, px, size,
+    InteractiveElement, IntoElement, MouseButton, ObjectFit, PaintQuad, ParentElement,
+    SharedString, StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage, StyledText,
+    TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div, fill, img, point, px, size,
 };
 use gpui_component::{
     ActiveTheme,
@@ -13,7 +18,8 @@ use gpui_component::{
 };
 
 use crate::{
-    BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, SelectionState,
+    BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, RenderSpanMeta,
+    SelectionState,
     core::{
         controller::EditorSnapshot,
         table::{TABLE_COLUMN_GAP, TableModel},
@@ -56,6 +62,12 @@ struct RenderedFragment {
     kind: RenderSpanKind,
     text: String,
     style: crate::RenderInlineStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResolvedImageSource {
+    Path(PathBuf),
+    Uri(String),
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +142,15 @@ impl MarkdownEditor {
             self.focus_input(window, cx);
             return;
         };
+
+        if should_render_image_preview(&block, self.snapshot.selection.range()) {
+            let effects = self.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState::collapsed(image_edit_cursor_offset(&block)),
+            });
+            self.apply_effects(window, cx, effects);
+            self.focus_input(window, cx);
+            return;
+        }
 
         let local_visible_offset = visible_byte_offset_for_click_position(
             &self.snapshot.display_map.blocks,
@@ -328,6 +349,7 @@ fn render_display_block(
     let block_click_view = view.clone();
     let show_table_toolbar =
         matches!(block.kind, BlockKind::Table) && selection_is_within_render_block(snapshot, block);
+    let show_image_preview = should_render_image_preview(block, snapshot.selection.range());
 
     let text_content = if show_placeholder {
         div()
@@ -349,6 +371,7 @@ fn render_display_block(
                 palette,
                 window,
             ),
+            _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -849,6 +872,94 @@ fn styled_text_for_block(
     StyledText::new(text).with_runs(runs)
 }
 
+fn render_image_block(
+    snapshot: &EditorSnapshot,
+    block: &RenderBlock,
+    palette: RenderPalette,
+) -> AnyElement {
+    let Some(RenderSpanMeta::Image { src, alt, .. }) =
+        standalone_image_span(block).and_then(|span| span.meta.as_ref())
+    else {
+        return image_placeholder(
+            "Image preview unavailable".to_string(),
+            Some("Unsupported markdown image block".to_string()),
+            palette,
+        );
+    };
+
+    let Some(resolved_source) = resolve_image_source(src, document_base_dir(snapshot)) else {
+        return image_placeholder(
+            alt_if_present(alt, "Image path missing"),
+            Some("Add a local or remote image path.".to_string()),
+            palette,
+        );
+    };
+
+    let fallback_title = alt_if_present(alt, "Image unavailable");
+    let fallback_detail = src.clone();
+    let loading_title = alt_if_present(alt, "Loading image");
+
+    let image = match resolved_source {
+        ResolvedImageSource::Path(path) => img(path),
+        ResolvedImageSource::Uri(uri) => img(uri),
+    }
+    .w_full()
+    .max_h(px(420.))
+    .object_fit(ObjectFit::Contain)
+    .with_fallback(move || {
+        image_placeholder(
+            fallback_title.clone(),
+            Some(fallback_detail.clone()),
+            palette,
+        )
+    })
+    .with_loading(move || image_placeholder(loading_title.clone(), None, palette));
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .p_2()
+        .child(div().w_full().overflow_hidden().child(image))
+        .into_any_element()
+}
+
+fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalette) -> AnyElement {
+    div()
+        .w_full()
+        .min_h(px(180.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .px_4()
+        .py_5()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .text_color(palette.muted_text_color)
+        .child(
+            div()
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .font_weight(FontWeight::MEDIUM)
+                .child(title),
+        )
+        .when_some(detail, |this, detail| {
+            this.child(
+                div()
+                    .text_sm()
+                    .line_height(px(BODY_LINE_HEIGHT))
+                    .child(detail),
+            )
+        })
+        .into_any_element()
+}
+
 fn render_table_block(
     block: &RenderBlock,
     source_text: String,
@@ -1216,6 +1327,87 @@ fn selection_is_within_render_block(snapshot: &EditorSnapshot, block: &RenderBlo
     range.start >= block.content_range.start && range.end <= block.content_range.end
 }
 
+fn selection_touches_render_block(selection: std::ops::Range<usize>, block: &RenderBlock) -> bool {
+    if selection.is_empty() {
+        return selection.start > block.content_range.start
+            && selection.start < block.content_range.end;
+    }
+
+    selection.start < block.content_range.end && block.content_range.start < selection.end
+}
+
+fn should_render_image_preview(block: &RenderBlock, selection: std::ops::Range<usize>) -> bool {
+    standalone_image_span(block).is_some() && !selection_touches_render_block(selection, block)
+}
+
+fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
+    let mut visible_spans = rendered_spans(block).filter(|span| !span.visible_text.is_empty());
+    let span = visible_spans.next()?;
+    if visible_spans.next().is_some() {
+        return None;
+    }
+
+    matches!(span.meta, Some(RenderSpanMeta::Image { .. }))
+        .then_some(span)
+        .filter(|span| span.visible_text == rendered_text_for_block(block))
+}
+
+fn image_edit_cursor_offset(block: &RenderBlock) -> usize {
+    (block.content_range.start + 1).min(block.content_range.end)
+}
+
+fn document_base_dir(snapshot: &EditorSnapshot) -> Option<&Path> {
+    snapshot
+        .path
+        .as_ref()
+        .or(snapshot.suggested_path.as_ref())
+        .and_then(|path| path.parent())
+}
+
+fn resolve_image_source(src: &str, base_dir: Option<&Path>) -> Option<ResolvedImageSource> {
+    let src = src.trim();
+    if src.is_empty() {
+        return None;
+    }
+
+    if looks_like_image_uri(src) {
+        return Some(ResolvedImageSource::Uri(src.to_string()));
+    }
+
+    let path = if let Some(rest) = src.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(src))
+    } else {
+        PathBuf::from(src)
+    };
+
+    if path.is_absolute() {
+        return Some(ResolvedImageSource::Path(path));
+    }
+
+    Some(ResolvedImageSource::Path(
+        base_dir
+            .map(|base_dir| base_dir.join(&path))
+            .unwrap_or(path),
+    ))
+}
+
+fn looks_like_image_uri(src: &str) -> bool {
+    ["http://", "https://", "file://", "data:"]
+        .into_iter()
+        .any(|prefix| src.starts_with(prefix))
+}
+
+fn alt_if_present(alt: &str, fallback: &str) -> String {
+    if alt.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        alt.to_string()
+    }
+}
+
 fn render_blockquote_lines(
     block: &RenderBlock,
     palette: RenderPalette,
@@ -1580,4 +1772,90 @@ fn wrap_boundary_index(line: &gpui::WrappedLine, boundary: &gpui::WrapBoundary) 
     let run = &line.runs()[boundary.run_ix];
     let glyph = &run.glyphs[boundary.glyph_ix];
     glyph.index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ResolvedImageSource, image_edit_cursor_offset, looks_like_image_uri, resolve_image_source,
+        selection_touches_render_block, should_render_image_preview,
+    };
+    use crate::{
+        BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
+        RenderSpanMeta,
+    };
+    use std::path::{Path, PathBuf};
+
+    fn standalone_image_block(block_visible_text: &str, span_visible_text: &str) -> RenderBlock {
+        RenderBlock {
+            id: 1,
+            kind: BlockKind::Paragraph,
+            source_range: 0..18,
+            content_range: 0..18,
+            visible_range: 0..block_visible_text.len(),
+            visible_text: block_visible_text.to_string(),
+            spans: vec![RenderSpan {
+                kind: RenderSpanKind::Text,
+                source_range: 0..18,
+                visible_range: 0..span_visible_text.len(),
+                source_text: "![alt](img.png)".to_string(),
+                visible_text: span_visible_text.to_string(),
+                hidden: false,
+                style: RenderInlineStyle::default(),
+                meta: Some(RenderSpanMeta::Image {
+                    src: "img.png".to_string(),
+                    alt: "alt".to_string(),
+                    title: None,
+                }),
+            }],
+            embedded: Some(EmbeddedNodeKind::Image),
+        }
+    }
+
+    #[test]
+    fn resolves_relative_image_paths_from_document_directory() {
+        let resolved = resolve_image_source("assets/cover.png", Some(Path::new("/tmp/docs")));
+        assert_eq!(
+            resolved,
+            Some(ResolvedImageSource::Path(PathBuf::from(
+                "/tmp/docs/assets/cover.png"
+            )))
+        );
+    }
+
+    #[test]
+    fn leaves_remote_image_urls_as_uris() {
+        let resolved = resolve_image_source("https://example.com/image.png", None);
+        assert_eq!(
+            resolved,
+            Some(ResolvedImageSource::Uri(
+                "https://example.com/image.png".to_string()
+            ))
+        );
+        assert!(looks_like_image_uri("https://example.com/image.png"));
+    }
+
+    #[test]
+    fn image_preview_is_disabled_when_selection_touches_block() {
+        let block = standalone_image_block("[image: alt]", "[image: alt]");
+        assert!(should_render_image_preview(&block, 20..20));
+        assert!(!selection_touches_render_block(0..0, &block));
+        assert!(should_render_image_preview(&block, 0..0));
+        assert!(!selection_touches_render_block(18..18, &block));
+        assert!(should_render_image_preview(&block, 18..18));
+        assert!(selection_touches_render_block(4..4, &block));
+        assert!(!should_render_image_preview(&block, 4..8));
+    }
+
+    #[test]
+    fn image_preview_still_renders_when_block_visible_text_keeps_trailing_newline() {
+        let block = standalone_image_block("[image: alt]\n", "[image: alt]");
+        assert!(should_render_image_preview(&block, 20..20));
+    }
+
+    #[test]
+    fn image_click_moves_cursor_inside_markdown_syntax() {
+        let block = standalone_image_block("[image: alt]", "[image: alt]");
+        assert_eq!(image_edit_cursor_offset(&block), 1);
+    }
 }

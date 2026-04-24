@@ -640,7 +640,9 @@ impl<'a> BlockBuilder<'a> {
             BlockKind::FootnoteDefinition | BlockKind::Footnote => {
                 Some(EmbeddedNodeKind::FootnoteDefinition)
             }
-            _ => None,
+            _ => {
+                standalone_image_embedded(&self.block.kind, &self.spans, &self.block.content_range)
+            }
         };
 
         RenderBlock {
@@ -947,9 +949,15 @@ impl<'a> BlockBuilder<'a> {
             let reveal_range = token.reveal_range.clone().map(|reveal_range| {
                 source_start + reveal_range.start..source_start + reveal_range.end
             });
+            let reveals_source =
+                should_reveal_inline_source(&token.meta, &range, reveal_range.as_ref(), self);
             let hidden = token.hidden && !self.should_reveal_inline(&range, reveal_range.as_ref());
             if !hidden {
-                visible.push_str(&token.visible_text);
+                if reveals_source {
+                    visible.push_str(&token.source_text);
+                } else {
+                    visible.push_str(&token.visible_text);
+                }
             }
         }
         visible
@@ -962,9 +970,13 @@ impl<'a> BlockBuilder<'a> {
             let reveal_range = token.reveal_range.clone().map(|reveal_range| {
                 source_start + reveal_range.start..source_start + reveal_range.end
             });
+            let reveals_source =
+                should_reveal_inline_source(&token.meta, &range, reveal_range.as_ref(), self);
             let hidden = token.hidden && !self.should_reveal_inline(&range, reveal_range.as_ref());
             let visible_text = if hidden {
                 String::new()
+            } else if reveals_source {
+                token.source_text.clone()
             } else {
                 token.visible_text.clone()
             };
@@ -980,6 +992,8 @@ impl<'a> BlockBuilder<'a> {
                 hidden,
                 if hidden {
                     RenderInlineStyle::default()
+                } else if reveals_source {
+                    style
                 } else {
                     merge_inline_styles(style, token.style)
                 },
@@ -1449,6 +1463,47 @@ fn parse_link_destination_and_title(raw: &str) -> (String, Option<String>) {
     (target, title)
 }
 
+fn standalone_image_embedded(
+    block_kind: &BlockKind,
+    spans: &[RenderSpan],
+    content_range: &Range<usize>,
+) -> Option<EmbeddedNodeKind> {
+    if !matches!(block_kind, BlockKind::Paragraph | BlockKind::Raw) {
+        return None;
+    }
+
+    let visible_spans = spans.iter().filter(|span| {
+        !span.visible_text.is_empty()
+            && span.source_range.start < content_range.end
+            && !(span.kind == RenderSpanKind::LineBreak
+                && span.source_range.end == content_range.end)
+    });
+    let rendered_visible_text = visible_spans
+        .clone()
+        .map(|span| span.visible_text.as_str())
+        .collect::<String>();
+    let mut visible_spans = visible_spans;
+    let span = visible_spans.next()?;
+    if visible_spans.next().is_some() {
+        return None;
+    }
+
+    matches!(span.meta, Some(RenderSpanMeta::Image { .. }))
+        .then_some(())
+        .filter(|_| span.visible_text == rendered_visible_text)
+        .map(|_| EmbeddedNodeKind::Image)
+}
+
+fn should_reveal_inline_source(
+    meta: &Option<RenderSpanMeta>,
+    range: &Range<usize>,
+    reveal_range: Option<&Range<usize>>,
+    builder: &BlockBuilder<'_>,
+) -> bool {
+    matches!(meta, Some(RenderSpanMeta::Image { .. }))
+        && builder.should_reveal_inline(range, reveal_range)
+}
+
 fn parse_math_span(rest: &str) -> Option<(&str, &str, bool)> {
     if let Some(tail) = rest.strip_prefix("$$") {
         let end = tail.find("$$")?;
@@ -1640,6 +1695,27 @@ mod tests {
             Some(EmbeddedNodeKind::CodeBlock { .. })
         ));
         assert_eq!(map.visible_text, "fn main() {}\n");
+    }
+
+    #[test]
+    fn standalone_image_is_marked_as_embedded_node() {
+        let doc = DocumentBuffer::from_text("![cover](assets/cover.png)");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+        assert!(matches!(
+            map.blocks[0].embedded,
+            Some(EmbeddedNodeKind::Image)
+        ));
+        assert_eq!(map.visible_text, "[image: cover]");
+    }
+
+    #[test]
+    fn standalone_image_with_trailing_newline_is_marked_as_embedded_node() {
+        let doc = DocumentBuffer::from_text("![cover](assets/cover.png)\n");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+        assert!(matches!(
+            map.blocks[0].embedded,
+            Some(EmbeddedNodeKind::Image)
+        ));
     }
 
     #[test]
@@ -1854,6 +1930,25 @@ mod tests {
             DisplayMap::from_document(&doc, Some(&selection), HiddenSyntaxPolicy::SelectionAware);
 
         assert_eq!(revealed.visible_text, "[官网](https://box86.org/)");
+        assert_eq!(revealed.source_selection_to_visible(&selection).cursor(), 4);
+    }
+
+    #[test]
+    fn image_markup_is_revealed_when_cursor_is_inside_image_syntax() {
+        let doc = DocumentBuffer::from_text("![cover](assets/cover.png)");
+        let hidden = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+        assert_eq!(hidden.visible_text, "[image: cover]");
+
+        let selection = SelectionModel {
+            anchor_byte: 4,
+            head_byte: 4,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+        let revealed =
+            DisplayMap::from_document(&doc, Some(&selection), HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(revealed.visible_text, "![cover](assets/cover.png)");
         assert_eq!(revealed.source_selection_to_visible(&selection).cursor(), 4);
     }
 
