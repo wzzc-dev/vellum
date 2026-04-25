@@ -42,6 +42,8 @@ impl VellumApp {
         let view = cx.entity().downgrade();
         let selected_path = self.workspace.selected_file.clone();
         let foreground = cx.theme().foreground;
+        let renaming_path = self.renaming_path.clone();
+        let rename_input = self.rename_input.clone();
 
         let entries = match self.workspace.tree_items() {
             Ok(items) => flatten_tree_items(&items, 0),
@@ -61,6 +63,7 @@ impl VellumApp {
                             let path = entry.path.clone();
                             let is_selected_file = selected_path.as_ref() == Some(&path);
                             let is_folder = entry.is_folder;
+                            let is_renaming = renaming_path.as_ref() == Some(&path);
 
                             let label = if is_folder {
                                 if entry.is_expanded {
@@ -72,6 +75,49 @@ impl VellumApp {
                                 entry.label.clone()
                             };
 
+                            let content = if is_renaming {
+                                if let Some(input) = rename_input.as_ref() {
+                                    div()
+                                        .w_full()
+                                        .on_key_down({
+                                            let view = view.clone();
+                                            move |event: &gpui::KeyDownEvent, _, cx| {
+                                                if event.keystroke.key.as_str() == "escape" {
+                                                    if let Some(entity) = view.upgrade() {
+                                                        let _ = entity.update(cx, |this, cx| {
+                                                            this.cancel_rename(cx);
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        })
+                                        .child(
+                                            Input::new(input)
+                                                .w_full()
+                                                .text_sm()
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .w_full()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .text_color(foreground)
+                                        .truncate()
+                                        .child(label)
+                                        .into_any_element()
+                                }
+                            } else {
+                                div()
+                                    .w_full()
+                                    .min_w(px(0.))
+                                    .overflow_hidden()
+                                    .text_color(foreground)
+                                    .truncate()
+                                    .child(label)
+                                    .into_any_element()
+                            };
+
                             let item = ListItem::new(ix)
                                 .selected(is_selected_file)
                                 .rounded(px(6.))
@@ -79,27 +125,21 @@ impl VellumApp {
                                 .w_full()
                                 .pr_2()
                                 .pl(px(8. + entry.depth as f32 * 14.))
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .text_color(foreground)
-                                        .truncate()
-                                        .child(label),
-                                )
-                                .on_click({
-                                    let view = view.clone();
-                                    let path = path.clone();
-                                    move |_, window, cx| {
-                                        if path.is_file() {
-                                            if let Some(entity) = view.upgrade() {
-                                                let _ = entity.update(cx, |this, cx| {
-                                                    this.open_file_in_current_tab(path.clone(), window, cx);
-                                                });
+                                .child(content)
+                                .when(!is_renaming, |this| {
+                                    this.on_click({
+                                        let view = view.clone();
+                                        let path = path.clone();
+                                        move |_, window, cx| {
+                                            if path.is_file() {
+                                                if let Some(entity) = view.upgrade() {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.open_file_in_current_tab(path.clone(), window, cx);
+                                                    });
+                                                }
                                             }
                                         }
-                                    }
+                                    })
                                 });
 
                             let menu_item = item.context_menu({

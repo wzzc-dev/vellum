@@ -512,6 +512,18 @@ impl VellumApp {
             state.set_value(file_name, window, cx);
             state
         });
+        let subscription = cx.subscribe(&input, |this: &mut Self, _, event: &InputEvent, cx| {
+            match event {
+                InputEvent::PressEnter { .. } => {
+                    this.confirm_rename_without_window(cx);
+                }
+                InputEvent::Blur => {
+                    this.confirm_rename_without_window(cx);
+                }
+                _ => {}
+            }
+        });
+        self.find_input_subscriptions.push(subscription);
         self.renaming_path = Some(path);
         self.rename_input = Some(input);
         cx.notify();
@@ -532,6 +544,7 @@ impl VellumApp {
             return;
         };
         let Some(input) = self.rename_input.take() else {
+            self.renaming_path = Some(path);
             return;
         };
 
@@ -564,13 +577,58 @@ impl VellumApp {
             return;
         }
 
-        // Update any open tabs that reference this file
         for tab in self.tabs.iter_mut() {
             if tab.editor.read(cx).document_path() == Some(&path) {
                 let _ = tab.editor.update(cx, |editor, cx| {
                     editor.open_path(new_path.clone(), window, cx)
                 });
             }
+        }
+
+        if self.workspace.selected_file.as_ref() == Some(&path) {
+            self.workspace.selected_file = Some(new_path.clone());
+        }
+
+        self.refresh_tree(cx);
+        cx.notify();
+    }
+
+    pub(super) fn confirm_rename_without_window(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.renaming_path.take() else {
+            return;
+        };
+        let Some(input) = self.rename_input.take() else {
+            self.renaming_path = Some(path);
+            return;
+        };
+
+        let new_name = input.read(cx).value().to_string();
+        if new_name.is_empty() {
+            cx.notify();
+            return;
+        }
+
+        let Some(parent) = path.parent() else {
+            cx.notify();
+            return;
+        };
+
+        let new_path = parent.join(&new_name);
+        if new_path == path {
+            cx.notify();
+            return;
+        }
+
+        if new_path.exists() {
+            self.set_status(format!("A file named \"{}\" already exists", new_name));
+            cx.notify();
+            return;
+        }
+
+        if let Err(err) = fs::rename(&path, &new_path) {
+            self.set_status(format!("Failed to rename: {err}"));
+            cx.notify();
+            return;
         }
 
         if self.workspace.selected_file.as_ref() == Some(&path) {
