@@ -4,6 +4,8 @@
 
 Vellum is a desktop Markdown editor built with Rust and `gpui`.
 
+![Vellum screenshot](./docs/vellum-screenshot.png)
+
 ## Current Features
 
 - WYSIWYG

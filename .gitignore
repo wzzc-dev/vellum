@@ -1,2 +1,6 @@
 /target
 .idea/*
+.tocodex/
+.trae/
+.tmp-cache/
+.tmp-home/
