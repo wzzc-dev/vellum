@@ -5,8 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+dirs = "6"
 editor = { path = "../editor" }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
 rfd = "0.15"
+vellum-plugin = { path = "../plugin" }
 workspace = { path = "../workspace" }

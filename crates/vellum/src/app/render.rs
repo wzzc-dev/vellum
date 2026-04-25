@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
-use gpui::{AnyElement, StatefulInteractiveElement as _, prelude::FluentBuilder as _, uniform_list};
+use gpui::{AnyElement, ElementId, StatefulInteractiveElement as _, prelude::FluentBuilder as _, uniform_list};
+use gpui_component::Disableable;
 use gpui_component::{
     Selectable, button::ButtonGroup, input::Input, menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
@@ -452,14 +453,401 @@ impl VellumApp {
             .into_any_element()
     }
 
+    fn render_plugin_panel(&mut self, panel_id: u32, cx: &mut Context<Self>) -> AnyElement {
+        let ui_node = self.plugin_manager.panel_ui(panel_id).cloned();
+        match ui_node {
+            Some(node) => self.render_ui_node(&node, cx),
+            None => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("No content")
+                .into_any_element(),
+        }
+    }
+
+    fn render_ui_node(&mut self, node: &vellum_plugin::ui::UiNode, cx: &mut Context<Self>) -> AnyElement {
+        match node {
+            vellum_plugin::ui::UiNode::Column { children, gap, padding, scrollable } => {
+                let mut el = div().flex().flex_col().w_full();
+                if let Some(g) = gap {
+                    el = el.gap(px(*g));
+                }
+                if let Some(p) = padding {
+                    el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
+                }
+                for child in children {
+                    el = el.child(self.render_ui_node(child, cx));
+                }
+                if *scrollable {
+                    el.overflow_y_scrollbar().into_any_element()
+                } else {
+                    el.into_any_element()
+                }
+            }
+            vellum_plugin::ui::UiNode::Row { children, gap, padding } => {
+                let mut el = div().flex().flex_row().w_full();
+                if let Some(g) = gap {
+                    el = el.gap(px(*g));
+                }
+                if let Some(p) = padding {
+                    el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
+                }
+                for child in children {
+                    el = el.child(self.render_ui_node(child, cx));
+                }
+                el.into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Text { content, style } => {
+                let mut el = div().text_sm().child(content.clone());
+                if style.bold.unwrap_or(false) {
+                    el = el.font_weight(gpui::FontWeight::BOLD);
+                }
+                if style.italic.unwrap_or(false) {
+                    el = el.italic();
+                }
+                if style.monospace.unwrap_or(false) {
+                    el = el.font_family("monospace");
+                }
+                if let Some(size) = style.size {
+                    el = el.text_size(px(size));
+                }
+                if let Some(color) = &style.color {
+                    if color == "muted-foreground" {
+                        el = el.text_color(cx.theme().muted_foreground);
+                    }
+                }
+                el.into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Heading { content, level } => {
+                let size = match level {
+                    1 => 24.0, 2 => 20.0, 3 => 16.0, _ => 14.0,
+                };
+                div()
+                    .text_size(px(size))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(content.clone())
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Button { id, label, variant, disabled, .. } => {
+                let btn = Button::new(ElementId::Name(format!("plugin-btn-{}", id).into()))
+                    .label(label.clone());
+                let btn = match variant {
+                    vellum_plugin::ui::ButtonVariant::Primary => btn.primary(),
+                    vellum_plugin::ui::ButtonVariant::Secondary => btn.ghost(),
+                    vellum_plugin::ui::ButtonVariant::Ghost => btn.ghost(),
+                    vellum_plugin::ui::ButtonVariant::Danger => btn.danger(),
+                };
+                let btn = btn.disabled(*disabled);
+                let view = cx.entity().downgrade();
+                let event_id = id.clone();
+                btn.on_click(move |_, _, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.plugin_manager.handle_ui_event(
+                                vellum_plugin::ui::UiEvent::ButtonClicked {
+                                    element_id: event_id.clone(),
+                                },
+                            );
+                            cx.notify();
+                        });
+                    }
+                }).into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Badge { label, severity } => {
+                let color = match severity {
+                    Some(vellum_plugin::ui::Severity::Error) => cx.theme().danger,
+                    Some(vellum_plugin::ui::Severity::Warning) => cx.theme().warning,
+                    Some(vellum_plugin::ui::Severity::Info) => cx.theme().primary,
+                    _ => cx.theme().muted_foreground,
+                };
+                div()
+                    .px_1()
+                    .rounded(px(4.))
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(color)
+                    .child(label.clone())
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Separator => {
+                div().w_full().h(px(1.)).bg(cx.theme().border.opacity(0.18)).into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Spacer => {
+                div().flex_1().into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Link { id, label } => {
+                let view = cx.entity().downgrade();
+                let event_id = id.clone();
+                div()
+                    .id(ElementId::Name(format!("plugin-link-{}", id).into()))
+                    .text_color(cx.theme().primary)
+                    .text_sm()
+                    .cursor_pointer()
+                    .hover(|s| s.underline())
+                    .child(label.clone())
+                    .on_click(move |_, _, cx| {
+                        if let Some(entity) = view.upgrade() {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.plugin_manager.handle_ui_event(
+                                    vellum_plugin::ui::UiEvent::LinkClicked {
+                                        element_id: event_id.clone(),
+                                    },
+                                );
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Disclosure { label, open, children } => {
+                let key = format!("disclosure-{}", label);
+                let is_open = self.disclosure_state.get(&key).copied().unwrap_or(*open);
+                let icon = if is_open { "▾" } else { "▸" };
+                let view = cx.entity().downgrade();
+                let key_for_click = key.clone();
+                let mut el = div().flex().flex_col().gap_1().w_full();
+                el = el.child(
+                    div()
+                        .id(ElementId::Name(key.clone().into()))
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(cx.theme().primary))
+                        .child(icon)
+                        .child(label.clone())
+                        .on_click(move |_, _, cx| {
+                            if let Some(entity) = view.upgrade() {
+                                let _ = entity.update(cx, |this, cx| {
+                                    let current = this.disclosure_state.get(&key_for_click).copied().unwrap_or(false);
+                                    this.disclosure_state.insert(key_for_click.clone(), !current);
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                );
+                if is_open {
+                    for child in children {
+                        el = el.child(self.render_ui_node(child, cx));
+                    }
+                }
+                el.into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Checkbox { id, label, checked } => {
+                let _ = id;
+                let check = if *checked { "☑" } else { "☐" };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_sm()
+                    .child(check)
+                    .child(label.clone())
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Progress { value, label } => {
+                let pct = (*value * 100.0) as f32;
+                let mut el = div().flex().flex_col().gap_1().w_full();
+                el = el.child(
+                    div()
+                        .w_full()
+                        .h(px(6.))
+                        .rounded(px(3.))
+                        .bg(cx.theme().secondary.opacity(0.3))
+                        .child(
+                            div()
+                                .w(gpui::px(pct * 3.0))
+                                .h_full()
+                                .rounded(px(3.))
+                                .bg(cx.theme().primary),
+                        ),
+                );
+                if let Some(l) = label {
+                    el = el.child(div().text_xs().text_color(cx.theme().muted_foreground).child(l.clone()));
+                }
+                el.into_any_element()
+            }
+            vellum_plugin::ui::UiNode::TextInput { id, placeholder, value, .. } => {
+                let _ = (id, placeholder, value);
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("[text input]")
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Select { id, options, selected } => {
+                let _ = (id, options, selected);
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("[select]")
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Toggle { id, label, active } => {
+                let _ = (id, active);
+                div()
+                    .text_sm()
+                    .child(label.clone())
+                    .into_any_element()
+            }
+            vellum_plugin::ui::UiNode::List { items } => {
+                let mut el = div().flex().flex_col().gap_1().w_full();
+                for item in items {
+                    el = el.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_sm()
+                            .child(item.label.clone()),
+                    );
+                }
+                el.into_any_element()
+            }
+            vellum_plugin::ui::UiNode::Conditional { condition, when_true, when_false } => {
+                if *condition {
+                    self.render_ui_node(when_true, cx)
+                } else if let Some(when_false) = when_false {
+                    self.render_ui_node(when_false, cx)
+                } else {
+                    div().into_any_element()
+                }
+            }
+        }
+    }
+
+    fn render_plugins_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let manifests = self.loaded_plugin_manifests();
+        let disabled = self.disabled_plugin_ids.clone();
+
+        let mut content = div().flex().flex_col().gap_2().w_full();
+
+        if manifests.is_empty() && disabled.is_empty() {
+            content = content.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No plugins loaded"),
+            );
+            content = content.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Place .wasm files in ~/Library/Application Support/dev.vellum/plugins/"),
+            );
+        }
+
+        for manifest in &manifests {
+            let plugin_id = manifest.id.clone();
+            let is_enabled = !disabled.contains(&plugin_id);
+            let view = cx.entity().downgrade();
+            let id_for_toggle = plugin_id.clone();
+
+            let toggle_label = if is_enabled { "Disable" } else { "Enable" };
+            let toggle_btn = Button::new(ElementId::Name(format!("plugin-toggle-{}", plugin_id).into()))
+                .label(toggle_label)
+                .ghost()
+                .on_click(move |_, _, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.toggle_plugin(id_for_toggle.clone(), cx);
+                        });
+                    }
+                });
+
+            content = content.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(cx.theme().border.opacity(0.18))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(manifest.name.clone()),
+                            )
+                            .child(toggle_btn),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("v{} by {}", manifest.version, manifest.author)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(manifest.description.clone()),
+                    ),
+            );
+        }
+
+        for plugin_id in &disabled {
+            if !manifests.iter().any(|m| &m.id == plugin_id) {
+                let view = cx.entity().downgrade();
+                let id_for_toggle = plugin_id.clone();
+                let toggle_btn = Button::new(ElementId::Name(format!("plugin-toggle-{}", plugin_id).into()))
+                    .label("Enable")
+                    .ghost()
+                    .on_click(move |_, _, cx| {
+                        if let Some(entity) = view.upgrade() {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.toggle_plugin(id_for_toggle.clone(), cx);
+                            });
+                        }
+                    });
+
+                content = content.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .p_2()
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(cx.theme().border.opacity(0.18))
+                        .opacity(0.5)
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(format!("{} (disabled)", plugin_id)),
+                        )
+                        .child(toggle_btn),
+                );
+            }
+        }
+
+        content.into_any_element()
+    }
+
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let body = match self.sidebar_view {
             SidebarView::Files => self.render_file_tree(cx),
             SidebarView::Outline => self.render_outline(cx),
+            SidebarView::Plugins => self.render_plugins_panel(cx),
+            SidebarView::Plugin(panel_id) => self.render_plugin_panel(panel_id, cx),
         };
 
-        let tabs = ButtonGroup::new("workspace-sidebar-tabs")
+        let mut tabs = ButtonGroup::new("workspace-sidebar-tabs")
             .compact()
             .ghost()
             .child(
@@ -471,17 +859,44 @@ impl VellumApp {
                 Button::new("sidebar-outline")
                     .label("Outline")
                     .selected(self.sidebar_view == SidebarView::Outline),
-            )
-            .on_click(move |selected: &Vec<usize>, _, app| {
-                let target = if selected.contains(&1) {
-                    SidebarView::Outline
+            );
+
+        for (_i, panel) in self.plugin_manager.sidebar_panels().iter().enumerate() {
+            let panel_id = panel.id;
+            tabs = tabs.child(
+                Button::new(ElementId::Name(format!("sidebar-plugin-{}", panel_id).into()))
+                    .label(panel.label.clone())
+                    .selected(self.sidebar_view == SidebarView::Plugin(panel_id)),
+            );
+        }
+
+        let tabs = tabs.on_click(move |selected: &Vec<usize>, _, cx| {
+            let target = if selected.contains(&0) {
+                SidebarView::Files
+            } else if selected.contains(&1) {
+                SidebarView::Outline
+            } else {
+                let plugin_panels_count = {
+                    let view = view.read(cx);
+                    view.plugin_manager.sidebar_panels().len()
+                };
+                let plugin_index = selected.iter().find(|&&i| i >= 2).copied().unwrap_or(2) - 2;
+                if plugin_index < plugin_panels_count {
+                    let view = view.read(cx);
+                    let panels = view.plugin_manager.sidebar_panels();
+                    if let Some(panel) = panels.get(plugin_index) {
+                        SidebarView::Plugin(panel.id)
+                    } else {
+                        SidebarView::Files
+                    }
                 } else {
                     SidebarView::Files
-                };
-                let _ = view.update(app, |this, cx| {
-                    this.set_sidebar_view(target, cx);
-                });
+                }
+            };
+            let _ = view.update(cx, |this, cx| {
+                this.set_sidebar_view(target, cx);
             });
+        });
 
         div()
             .id("workspace-sidebar")
@@ -575,6 +990,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_previous_tab))
             .on_action(cx.listener(Self::on_next_tab))
+            .on_action(cx.listener(Self::on_manage_plugins))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)
@@ -589,6 +1005,9 @@ impl Render for VellumApp {
                             .pr_3()
                             .when(!cfg!(target_os = "macos"), |this| {
                                 this.child(self.render_app_menu(cx))
+                            })
+                            .when(!cfg!(target_os = "macos"), |this| {
+                                this.child(self.render_plugins_menu(cx))
                             })
                             .child(
                                 div()

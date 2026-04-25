@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -31,6 +32,7 @@ use gpui_component::{
 };
 use rfd::FileDialog;
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
+use vellum_plugin::PluginManager;
 
 mod commands;
 mod document_io;
@@ -59,6 +61,7 @@ actions!(
         CloseTab,
         PreviousTab,
         NextTab,
+        ManagePlugins,
     ]
 );
 
@@ -77,6 +80,8 @@ enum SidebarView {
     #[default]
     Files,
     Outline,
+    Plugins,
+    Plugin(u32),
 }
 
 /// A single find match: byte offset range in the source document.
@@ -122,6 +127,10 @@ struct VellumApp {
     // --- file tree rename state ---
     renaming_path: Option<PathBuf>,
     rename_input: Option<Entity<InputState>>,
+    // --- plugin system ---
+    plugin_manager: PluginManager,
+    disabled_plugin_ids: Vec<String>,
+    disclosure_state: HashMap<String, bool>,
 }
 
 pub fn run() -> Result<()> {
@@ -224,6 +233,13 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             this.on_next_tab(&NextTab, window, cx);
         });
     });
+    let window = main_window;
+    cx.on_action(move |_: &ManagePlugins, cx| {
+        update_vellum_app_from_menu(window, cx, |this, _window, cx| {
+            this.sidebar_visible = true;
+            this.set_sidebar_view(SidebarView::Plugins, cx);
+        });
+    });
     cx.set_menus(vec![
         Menu {
             name: "Vellum".into(),
@@ -315,6 +331,12 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Status Bar", ToggleStatusBar),
+            ],
+        },
+        Menu {
+            name: "Plugins".into(),
+            items: vec![
+                MenuItem::action("Manage Plugins...", ManagePlugins),
             ],
         },
     ]);
@@ -410,9 +432,37 @@ impl VellumApp {
             find_input_subscriptions: vec![editor_subscription, find_input_subscription, replace_input_subscription, outline_input_subscription],
             renaming_path: None,
             rename_input: None,
+            plugin_manager: PluginManager::new().unwrap_or_else(|e| {
+                eprintln!("failed to initialize plugin manager: {}", e);
+                PluginManager::new().unwrap()
+            }),
+            disabled_plugin_ids: Vec::new(),
+            disclosure_state: HashMap::new(),
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
+
+        if let Some(plugin_dir) = dirs::data_dir().map(|d| d.join("dev.vellum").join("plugins")) {
+            if let Ok(manifests) = this.plugin_manager.load_plugins_from_dir(&plugin_dir) {
+                for manifest in &manifests {
+                    eprintln!("loaded plugin: {} v{}", manifest.name, manifest.version);
+                }
+            }
+        }
+
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let local_plugin_dir = exe_dir.join("plugins");
+                if local_plugin_dir.exists() {
+                    if let Ok(manifests) = this.plugin_manager.load_plugins_from_dir(&local_plugin_dir) {
+                        for manifest in &manifests {
+                            eprintln!("loaded plugin: {} v{}", manifest.name, manifest.version);
+                        }
+                    }
+                }
+            }
+        }
+
         this
     }
 
@@ -505,6 +555,14 @@ impl VellumApp {
                     this.shell_status_message.clear();
                 }
                 this.refresh_find_matches();
+
+                let text = snapshot.document_text.clone();
+                let path = snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string());
+                this.plugin_manager.update_document(text.clone(), path.clone());
+                this.plugin_manager.dispatch_event(
+                    vellum_plugin::event::EventData::DocumentChanged { text, path },
+                );
+
                 cx.notify();
             });
             self.find_input_subscriptions.push(subscription);

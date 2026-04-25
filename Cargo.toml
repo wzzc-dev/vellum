@@ -1,4 +1,4 @@
 [workspace]
 resolver = "3"
-members = ["crates/editor", "crates/vellum", "crates/workspace"]
+members = ["crates/editor", "crates/vellum", "crates/workspace", "crates/plugin", "crates/plugin-sdk", "plugins/markdown-lint"]
 default-members = ["crates/vellum"]

@@ -171,4 +171,14 @@ impl VellumApp {
             self.switch_to_tab(index, window, cx);
         }
     }
+
+    pub(super) fn on_manage_plugins(
+        &mut self,
+        _: &ManagePlugins,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_visible = true;
+        self.set_sidebar_view(SidebarView::Plugins, cx);
+    }
 }

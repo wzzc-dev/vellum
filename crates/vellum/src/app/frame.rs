@@ -172,6 +172,30 @@ impl VellumApp {
         cx.notify();
     }
 
+    pub(super) fn toggle_plugin(&mut self, plugin_id: String, cx: &mut Context<Self>) {
+        if self.disabled_plugin_ids.contains(&plugin_id) {
+            self.disabled_plugin_ids.retain(|id| id != &plugin_id);
+            if let Some(plugin_dir) = dirs::data_dir().map(|d| d.join("dev.vellum").join("plugins")) {
+                let wasm_path = plugin_dir.join(format!("{}.wasm", plugin_id));
+                if wasm_path.exists() {
+                    if let Err(e) = self.plugin_manager.load_plugin(&wasm_path) {
+                        eprintln!("failed to reload plugin {}: {}", plugin_id, e);
+                    }
+                }
+            }
+        } else {
+            self.disabled_plugin_ids.push(plugin_id.clone());
+            if let Err(e) = self.plugin_manager.unload_plugin(&plugin_id) {
+                eprintln!("failed to unload plugin {}: {}", plugin_id, e);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn loaded_plugin_manifests(&self) -> Vec<vellum_plugin::PluginManifest> {
+        self.plugin_manager.loaded_manifests()
+    }
+
     pub(super) fn document_label(&self) -> String {
         let mut label = self.editor_snapshot.display_name.clone();
         if self.editor_snapshot.dirty {
@@ -272,6 +296,90 @@ impl VellumApp {
                             });
                         }
                     }))
+                    .separator()
+                    .item(PopupMenuItem::new("Plugins").icon(IconName::Settings).on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.sidebar_visible = true;
+                                this.set_sidebar_view(SidebarView::Plugins, cx);
+                            });
+                        }
+                    }))
+            })
+    }
+
+    pub(super) fn render_plugins_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let manifests = self.loaded_plugin_manifests();
+        let disabled = self.disabled_plugin_ids.clone();
+
+        Button::new("plugins-menu")
+            .icon(IconName::Settings)
+            .ghost()
+            .compact()
+            .tooltip("Plugins")
+            .dropdown_menu(move |menu, _, _| {
+                let view = view.clone();
+                let mut menu = menu.min_w(px(220.));
+
+                menu = menu.item(
+                    PopupMenuItem::new("Manage Plugins")
+                        .icon(IconName::LayoutDashboard)
+                        .on_click({
+                            let view = view.clone();
+                            move |_, _, cx| {
+                                let _ = view.update(cx, |this, cx| {
+                                    this.sidebar_visible = true;
+                                    this.set_sidebar_view(SidebarView::Plugins, cx);
+                                });
+                            }
+                        }),
+                );
+
+                menu = menu.separator();
+
+                if manifests.is_empty() && disabled.is_empty() {
+                    menu = menu.item(
+                        PopupMenuItem::new("No plugins loaded").disabled(true),
+                    );
+                } else {
+                    for manifest in &manifests {
+                        let is_enabled = !disabled.contains(&manifest.id);
+                        let plugin_id = manifest.id.clone();
+                        let label = if is_enabled {
+                            format!("✓ {} — {}", manifest.name, manifest.version)
+                        } else {
+                            format!("  {} — {} (disabled)", manifest.name, manifest.version)
+                        };
+                        menu = menu.item(PopupMenuItem::new(label).on_click({
+                            let view = view.clone();
+                            let pid = plugin_id.clone();
+                            move |_, _, cx| {
+                                let _ = view.update(cx, |this, cx| {
+                                    this.toggle_plugin(pid.clone(), cx);
+                                });
+                            }
+                        }));
+                    }
+
+                    for plugin_id in &disabled {
+                        if !manifests.iter().any(|m| &m.id == plugin_id) {
+                            let label = format!("  {} (disabled)", plugin_id);
+                            menu = menu.item(PopupMenuItem::new(label).on_click({
+                                let view = view.clone();
+                                let pid = plugin_id.clone();
+                                move |_, _, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.toggle_plugin(pid.clone(), cx);
+                                    });
+                                }
+                            }));
+                        }
+                    }
+                }
+
+                menu
             })
     }
 
