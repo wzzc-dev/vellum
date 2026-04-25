@@ -2,6 +2,7 @@ use std::{ops::Range, path::PathBuf, time::SystemTime};
 
 use anyhow::Result;
 use gpui::{Context, Window};
+use gpui_component::input::{Copy, Cut, Paste, SelectAll};
 
 use crate::{
     EditCommand, EditorViewMode,
@@ -11,6 +12,21 @@ use crate::{
 use super::view::MarkdownEditor;
 
 impl MarkdownEditor {
+    pub fn cut_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(Cut), cx);
+    }
+
+    pub fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(Copy), cx);
+    }
+
+    pub fn paste_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(Paste), cx);
+    }
+
+    pub fn select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(SelectAll), cx);
+    }
     pub fn set_view_mode(
         &mut self,
         view_mode: EditorViewMode,
@@ -204,7 +220,13 @@ impl MarkdownEditor {
         self.snapshot = self.controller.snapshot();
         self.sync_input_from_snapshot(window, cx);
         if effects.changed || effects.selection_changed {
+            if effects.selection_changed {
+                self.reset_cursor_blink(window, cx);
+            }
             self.emit_changed(cx);
+        }
+        if effects.selection_changed {
+            self.scroll_cursor_into_view(cx);
         }
     }
 }

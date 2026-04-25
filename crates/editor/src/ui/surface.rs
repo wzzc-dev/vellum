@@ -16,6 +16,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme,
     button::{Button, ButtonVariants as _},
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
 };
 
 use crate::{
@@ -48,6 +49,18 @@ struct RenderPalette {
     border_color: Hsla,
     blockquote_bar: Hsla,
     code_surface_background: Hsla,
+    code_keyword_color: Hsla,
+    code_function_color: Hsla,
+    code_string_color: Hsla,
+    code_number_color: Hsla,
+    code_comment_color: Hsla,
+    code_type_color: Hsla,
+    code_constant_color: Hsla,
+    code_variable_color: Hsla,
+    code_operator_color: Hsla,
+    code_tag_color: Hsla,
+    code_attribute_color: Hsla,
+    code_escape_color: Hsla,
 }
 
 #[derive(Clone)]
@@ -423,21 +436,43 @@ pub(super) fn render_document_surface(
     view: &Entity<MarkdownEditor>,
     snapshot: &EditorSnapshot,
     input_focused: bool,
+    cursor_blink_visible: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
     scroll_handle: ScrollHandle,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
 ) -> AnyElement {
     let display_blocks = Rc::new(snapshot.display_map.blocks.clone());
+    let fg = cx.theme().foreground;
+    let is_dark = fg.l > 0.5;
+
+    let (keyword_hue, string_hue, number_hue, comment_hue, type_hue, constant_hue, function_hue, tag_hue, attribute_hue, escape_hue) = if is_dark {
+        (210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0)
+    } else {
+        (210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0)
+    };
+
     let palette = RenderPalette {
-        text_color: cx.theme().foreground,
+        text_color: fg,
         muted_text_color: cx.theme().muted_foreground,
-        selection_color: cx.theme().foreground.opacity(0.14),
-        caret_color: cx.theme().foreground,
-        code_background: cx.theme().foreground.opacity(0.08),
-        border_color: cx.theme().foreground.opacity(0.12),
-        blockquote_bar: cx.theme().foreground.opacity(0.18),
-        code_surface_background: cx.theme().foreground.opacity(0.04),
+        selection_color: fg.opacity(0.14),
+        caret_color: fg,
+        code_background: fg.opacity(0.08),
+        border_color: fg.opacity(0.12),
+        blockquote_bar: fg.opacity(0.18),
+        code_surface_background: fg.opacity(0.04),
+        code_keyword_color: Hsla { h: keyword_hue, s: 0.7, l: if is_dark { 0.72 } else { 0.48 }, a: 1.0 },
+        code_function_color: Hsla { h: function_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
+        code_string_color: Hsla { h: string_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
+        code_number_color: Hsla { h: number_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
+        code_comment_color: Hsla { h: comment_hue, s: 0.3, l: if is_dark { 0.55 } else { 0.42 }, a: 1.0 },
+        code_type_color: Hsla { h: type_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
+        code_constant_color: Hsla { h: constant_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
+        code_variable_color: Hsla { h: 0.0, s: 0.0, l: if is_dark { 0.82 } else { 0.2 }, a: 1.0 },
+        code_operator_color: Hsla { h: 0.0, s: 0.0, l: if is_dark { 0.72 } else { 0.35 }, a: 1.0 },
+        code_tag_color: Hsla { h: tag_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
+        code_attribute_color: Hsla { h: attribute_hue, s: 0.45, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
+        code_escape_color: Hsla { h: escape_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
     };
 
     if snapshot.display_map.blocks.is_empty() {
@@ -483,6 +518,7 @@ pub(super) fn render_document_surface(
             block_index,
             &block,
             input_focused,
+            cursor_blink_visible,
             block_bounds.clone(),
             scroll_handle.clone(),
             palette,
@@ -499,6 +535,7 @@ fn render_display_block(
     block_index: usize,
     block: &RenderBlock,
     input_focused: bool,
+    cursor_blink_visible: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
     scroll_handle: ScrollHandle,
     palette: RenderPalette,
@@ -574,6 +611,7 @@ fn render_display_block(
                         &overlay_block,
                         &visible_selection,
                         input_focused,
+                        cursor_blink_visible,
                         bounds,
                         palette,
                         window,
@@ -711,10 +749,16 @@ fn render_display_block(
         content
     };
 
+    let context_menu_view = view.clone();
+    let context_block_kind = block.kind.clone();
+
     div()
         .id(("display-block", block.id))
         .w_full()
         .py(px(presentation.row_spacing_y))
+        .context_menu(move |menu, _, _| {
+            build_editor_context_menu(menu, &context_menu_view, &context_block_kind)
+        })
         .child(
             div()
                 .id(("surface-hit-target", block_id))
@@ -767,6 +811,7 @@ fn build_block_overlay(
     block: &RenderBlock,
     selection: &SelectionState,
     input_focused: bool,
+    cursor_blink_visible: bool,
     bounds: Bounds<gpui::Pixels>,
     palette: RenderPalette,
     window: &mut Window,
@@ -778,7 +823,7 @@ fn build_block_overlay(
             selection_quads_for_block(blocks, block_index, block, range, bounds, palette, window)
         })
         .unwrap_or_default();
-    let caret_quad = if input_focused && selection.is_collapsed() {
+    let caret_quad = if input_focused && cursor_blink_visible && selection.is_collapsed() {
         caret_quad_for_block(
             blocks,
             block_index,
@@ -1058,7 +1103,7 @@ fn styled_text_for_block(
 
     for span in rendered_spans(block).filter(|span| !span.visible_text.is_empty()) {
         let mut style = base_style.clone();
-        apply_fragment_style(&mut style, span.kind.clone(), span.style, palette);
+        apply_fragment_style(&mut style, span.kind.clone(), span.style, span.meta.as_ref(), palette);
         runs.push(style.to_run(span.visible_text.len()));
     }
 
@@ -1196,6 +1241,7 @@ fn apply_fragment_style(
     style: &mut TextStyle,
     kind: RenderSpanKind,
     inline_style: crate::RenderInlineStyle,
+    meta: Option<&crate::RenderSpanMeta>,
     palette: RenderPalette,
 ) {
     if matches!(
@@ -1207,6 +1253,32 @@ fn apply_fragment_style(
     if matches!(kind, RenderSpanKind::TaskMarker) {
         style.font_weight = FontWeight::MEDIUM;
         style.color = palette.muted_text_color;
+    }
+
+    if let Some(crate::RenderSpanMeta::CodeToken { token_type }) = meta {
+        use crate::core::CodeTokenType;
+        match token_type {
+            CodeTokenType::Keyword => style.color = palette.code_keyword_color,
+            CodeTokenType::Function => {
+                style.color = palette.code_function_color;
+            }
+            CodeTokenType::String => style.color = palette.code_string_color,
+            CodeTokenType::Number => style.color = palette.code_number_color,
+            CodeTokenType::Comment => {
+                style.color = palette.code_comment_color;
+                style.font_style = FontStyle::Italic;
+            }
+            CodeTokenType::Type => style.color = palette.code_type_color,
+            CodeTokenType::Constant => style.color = palette.code_constant_color,
+            CodeTokenType::Variable => style.color = palette.code_variable_color,
+            CodeTokenType::Operator => style.color = palette.code_operator_color,
+            CodeTokenType::Punctuation => style.color = palette.code_operator_color,
+            CodeTokenType::Property => style.color = palette.code_function_color,
+            CodeTokenType::Tag => style.color = palette.code_tag_color,
+            CodeTokenType::Attribute => style.color = palette.code_attribute_color,
+            CodeTokenType::Escape => style.color = palette.code_escape_color,
+            CodeTokenType::Default => {}
+        }
     }
 
     if inline_style.strong {
@@ -1671,7 +1743,7 @@ fn styled_text_for_line(
     for fragment in &line.fragments {
         text.push_str(&fragment.text);
         let mut style = base_style.clone();
-        apply_fragment_style(&mut style, fragment.kind.clone(), fragment.style, palette);
+        apply_fragment_style(&mut style, fragment.kind.clone(), fragment.style, None, palette);
         runs.push(style.to_run(fragment.text.len()));
     }
 
@@ -2023,6 +2095,215 @@ fn wrap_boundary_index(line: &gpui::WrappedLine, boundary: &gpui::WrapBoundary) 
     let run = &line.runs()[boundary.run_ix];
     let glyph = &run.glyphs[boundary.glyph_ix];
     glyph.index
+}
+
+fn build_editor_context_menu(
+    menu: PopupMenu,
+    view: &Entity<MarkdownEditor>,
+    block_kind: &BlockKind,
+) -> PopupMenu {
+    let view = view.clone();
+
+    let is_code_block = matches!(block_kind, BlockKind::CodeFence { .. });
+    let is_table = matches!(block_kind, BlockKind::Table);
+
+    let mut menu = menu
+        .item(PopupMenuItem::new("Cut").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.cut_selection(window, cx);
+                });
+            }
+        }))
+        .item(PopupMenuItem::new("Copy").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.copy_selection(window, cx);
+                });
+            }
+        }))
+        .item(PopupMenuItem::new("Paste").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.paste_at_cursor(window, cx);
+                });
+            }
+        }))
+        .separator()
+        .item(PopupMenuItem::new("Select All").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.select_all(window, cx);
+                });
+            }
+        }));
+
+    if !is_code_block {
+        menu = menu
+            .separator()
+            .item(PopupMenuItem::new("Bold").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("**", "**", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Italic").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("*", "*", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Strikethrough").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("~~", "~~", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Inline Code").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("`", "`", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Link").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("[", "](url)", window, cx);
+                    });
+                }
+            }));
+    }
+
+    if !is_code_block && !is_table {
+        menu = menu
+            .separator()
+            .item(PopupMenuItem::new("Heading 1").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_heading(1, window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Heading 2").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_heading(2, window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Heading 3").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_heading(3, window, cx);
+                    });
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Quote").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_blockquote(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Ordered List").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_list(true, window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Unordered List").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_list(false, window, cx);
+                    });
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Code Block").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_code_fence(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Table").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_table(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Horizontal Rule").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_horizontal_rule(window, cx);
+                    });
+                }
+            }));
+    }
+
+    if is_table {
+        menu = menu
+            .separator()
+            .item(PopupMenuItem::new("Insert Row").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_table_row(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Delete Row").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.delete_table_row(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Insert Column").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_table_column(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Delete Column").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.delete_table_column(window, cx);
+                    });
+                }
+            }));
+    }
+
+    menu
 }
 
 #[cfg(test)]

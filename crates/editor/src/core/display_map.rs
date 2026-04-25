@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use super::{
+    code_highlight::CodeHighlighter,
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel},
     syntax::InlineStyle,
     table::{TABLE_COLUMN_GAP, TableCellRef, TableModel, str_display_width},
@@ -64,6 +65,9 @@ pub enum RenderSpanMeta {
     },
     ReferenceLink {
         label: String,
+    },
+    CodeToken {
+        token_type: super::code_highlight::CodeTokenType,
     },
 }
 
@@ -664,7 +668,13 @@ impl<'a> BlockBuilder<'a> {
             BlockKind::Blockquote => self.push_blockquote(&text),
             BlockKind::List => self.push_list(&text),
             BlockKind::Table => self.push_table(&text),
-            BlockKind::CodeFence { .. } => self.push_code_fence(&text),
+            BlockKind::CodeFence { .. } => {
+                let language = match &self.block.kind {
+                    BlockKind::CodeFence { language } => language.clone(),
+                    _ => None,
+                };
+                self.push_code_fence(&text, language.as_deref());
+            }
             _ => self.push_inline_text(
                 self.block.content_range.start,
                 &text,
@@ -788,7 +798,7 @@ impl<'a> BlockBuilder<'a> {
         }
     }
 
-    fn push_code_fence(&mut self, text: &str) {
+    fn push_code_fence(&mut self, text: &str, language: Option<&str>) {
         let lines = split_inclusive_lines(text);
         if lines.is_empty() {
             return;
@@ -805,20 +815,54 @@ impl<'a> BlockBuilder<'a> {
         }
 
         if lines.len() > 1 {
-            for middle in &lines[1..lines.len().saturating_sub(1)] {
-                self.push_span(
-                    RenderSpanKind::Text,
-                    source_offset..source_offset + middle.len(),
-                    middle.to_string(),
-                    middle.to_string(),
-                    false,
-                    RenderInlineStyle {
-                        code: true,
-                        ..RenderInlineStyle::default()
-                    },
-                    None,
-                );
-                source_offset += middle.len();
+            let code_content: String = lines[1..lines.len().saturating_sub(1)].join("");
+            let highlight_result = language.and_then(|lang| {
+                static HIGHLIGHTER: std::sync::OnceLock<CodeHighlighter> = std::sync::OnceLock::new();
+                let highlighter = HIGHLIGHTER.get_or_init(CodeHighlighter::new);
+                highlighter.highlight(lang, &code_content)
+            });
+
+            if let Some(result) = highlight_result {
+                let code_start_offset = source_offset;
+                for span in &result.spans {
+                    let span_source_start = code_start_offset + span.start;
+                    let span_source_end = code_start_offset + span.end;
+                    let span_text = &code_content[span.start..span.end];
+                    if span_text.is_empty() {
+                        continue;
+                    }
+                    self.push_span(
+                        RenderSpanKind::Text,
+                        span_source_start..span_source_end,
+                        span_text.to_string(),
+                        span_text.to_string(),
+                        false,
+                        RenderInlineStyle {
+                            code: true,
+                            ..RenderInlineStyle::default()
+                        },
+                        Some(RenderSpanMeta::CodeToken {
+                            token_type: span.token_type,
+                        }),
+                    );
+                }
+                source_offset += code_content.len();
+            } else {
+                for middle in &lines[1..lines.len().saturating_sub(1)] {
+                    self.push_span(
+                        RenderSpanKind::Text,
+                        source_offset..source_offset + middle.len(),
+                        middle.to_string(),
+                        middle.to_string(),
+                        false,
+                        RenderInlineStyle {
+                            code: true,
+                            ..RenderInlineStyle::default()
+                        },
+                        None,
+                    );
+                    source_offset += middle.len();
+                }
             }
 
             if let Some(last) = lines.last() {

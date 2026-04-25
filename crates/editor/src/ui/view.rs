@@ -1,10 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, ScrollHandle, StatefulInteractiveElement, Styled, Subscription, VisualContext, Window,
-    div, px,
+    App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, IsZero,
+    ParentElement, Render, ScrollHandle, StatefulInteractiveElement, Styled, Subscription,
+    VisualContext, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme,
@@ -23,7 +23,7 @@ use crate::{
 
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
-    input_bridge::build_document_input, surface::render_document_surface,
+    input_bridge::build_document_input, surface::{render_document_surface, rendered_visible_end},
 };
 
 #[derive(Debug, Clone)]
@@ -49,6 +49,8 @@ pub struct MarkdownEditor {
     pub(super) block_bounds: Rc<RefCell<HashMap<u64, gpui::Bounds<gpui::Pixels>>>>,
     pub(super) drag_selection_anchor: Option<SurfaceSelectionAnchor>,
     pub(super) scroll_handle: ScrollHandle,
+    cursor_blink_visible: bool,
+    cursor_blink_generation: u64,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -93,6 +95,8 @@ impl MarkdownEditor {
             block_bounds: Rc::new(RefCell::new(HashMap::new())),
             drag_selection_anchor: None,
             scroll_handle: ScrollHandle::new(),
+            cursor_blink_visible: true,
+            cursor_blink_generation: 0,
         }
     }
 
@@ -448,6 +452,64 @@ impl MarkdownEditor {
         });
         self.input_focused = true;
     }
+
+    pub(crate) fn reset_cursor_blink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_blink_visible = true;
+        self.cursor_blink_generation = self.cursor_blink_generation.wrapping_add(1);
+        self.schedule_cursor_blink(window, cx);
+    }
+
+    fn schedule_cursor_blink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let generation = self.cursor_blink_generation;
+        let view = cx.entity();
+        window
+            .spawn(cx, async move |cx| {
+                gpui::Timer::after(Duration::from_millis(530)).await;
+                let _ = cx.update_window_entity(&view, |this, window, cx| {
+                    if this.cursor_blink_generation != generation {
+                        return;
+                    }
+                    this.cursor_blink_visible = !this.cursor_blink_visible;
+                    cx.notify();
+                    this.schedule_cursor_blink(window, cx);
+                });
+            })
+            .detach();
+    }
+
+    pub(crate) fn scroll_cursor_into_view(&mut self, cx: &mut Context<Self>) {
+        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
+            let cursor = self.snapshot.visible_selection.cursor();
+            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+        }).map(|block| block.id);
+
+        let Some(block_id) = cursor_block_id else {
+            return;
+        };
+
+        let Some(block_bounds) = self.block_bounds.borrow().get(&block_id).copied() else {
+            return;
+        };
+
+        let viewport = self.scroll_handle.bounds();
+        if viewport.size.width.is_zero() || viewport.size.height.is_zero() {
+            return;
+        }
+
+        let current_offset = self.scroll_handle.offset();
+        let mut new_offset = current_offset;
+
+        if block_bounds.top() < viewport.top() {
+            new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
+        } else if block_bounds.bottom() > viewport.bottom() {
+            new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+        }
+
+        if new_offset != current_offset {
+            self.scroll_handle.set_offset(new_offset);
+            cx.notify();
+        }
+    }
 }
 
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
@@ -600,6 +662,7 @@ impl Render for MarkdownEditor {
                                            &view,
                                            &self.snapshot,
                                            self.input_focused,
+                                           self.cursor_blink_visible,
                                            self.block_bounds.clone(),
                                            self.scroll_handle.clone(),
                                            window,

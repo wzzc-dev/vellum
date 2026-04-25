@@ -10,6 +10,15 @@ gpui-component = "0.5.1"
 ropey = "1.6"
 tree-sitter = "0.25.10"
 tree-sitter-md = "0.5.3"
+tree-sitter-rust = "0.24"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-html = "0.23"
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
