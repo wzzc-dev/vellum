@@ -126,6 +126,42 @@ impl VellumApp {
         }
     }
 
+    pub(super) fn open_file_in_current_tab(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_markdown_path(&path) {
+            self.set_status(format!("Ignored non-Markdown file {}", path.display()));
+            cx.notify();
+            return;
+        }
+
+        let open_result = self
+            .active_editor_entity()
+            .update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
+        match open_result {
+            Ok(()) => {
+                if let Some(root) = path.parent().map(|parent| parent.to_path_buf()) {
+                    if self.app_state.workspace_root.as_ref() != Some(&root) {
+                        if self.set_workspace_root(Some(root), cx) {
+                            self.refresh_tree(cx);
+                        }
+                    }
+                }
+                self.workspace.selected_file = Some(path.clone());
+                let _ = write_last_opened_path(&path);
+                self.clear_status();
+                cx.notify();
+            }
+            Err(err) => {
+                self.set_status(format!("Failed to open {}: {err}", path.display()));
+                cx.notify();
+            }
+        }
+    }
+
     pub(super) fn create_new_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let suggested_path = self
             .app_state

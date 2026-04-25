@@ -95,7 +95,7 @@ impl VellumApp {
                                         if path.is_file() {
                                             if let Some(entity) = view.upgrade() {
                                                 let _ = entity.update(cx, |this, cx| {
-                                                    this.open_file(path.clone(), window, cx);
+                                                    this.open_file_in_current_tab(path.clone(), window, cx);
                                                 });
                                             }
                                         }
@@ -642,7 +642,7 @@ fn build_file_tree_context_menu(
             }))
     } else {
         menu
-            .item(PopupMenuItem::new("Open").on_click({
+            .item(PopupMenuItem::new("Open in New Tab").on_click({
                 let view = view.clone();
                 let path = path.clone();
                 move |_, window, cx| {
