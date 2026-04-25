@@ -1,9 +1,9 @@
 use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
 use gpui_component::{
-    Selectable, Sizable as _, button::ButtonGroup, menu::DropdownMenu as _,
-    tab::{Tab, TabBar, TabVariant},
+    Selectable, Sizable as _, button::ButtonGroup, menu::{ContextMenuExt, DropdownMenu as _, PopupMenuItem},
 };
 
+use super::render::build_tab_context_menu;
 use super::*;
 
 impl VellumApp {
@@ -406,10 +406,23 @@ impl VellumApp {
     ) -> impl IntoElement {
         let view = cx.entity().downgrade();
         let active_index = self.active_tab_index;
+        let tab_count = self.tabs.len();
+        let border_color = cx.theme().border.opacity(0.18);
+        let muted_foreground = cx.theme().muted_foreground;
+        let foreground = cx.theme().foreground;
+        let background = cx.theme().background;
+        let active_bg = cx.theme().secondary.opacity(0.10);
+        let hover_bg = cx.theme().secondary.opacity(0.06);
 
-        TabBar::new("editor-tabs")
-            .with_variant(TabVariant::Tab)
-            .selected_index(active_index)
+        div()
+            .id("editor-tab-bar")
+            .w_full()
+            .h(px(36.))
+            .flex()
+            .items_center()
+            .border_b_1()
+            .border_color(border_color)
+            .bg(background)
             .children(self.tabs.iter().enumerate().map(|(i, tab)| {
                 let path = tab.editor.read(cx).document_path();
                 let title = match path {
@@ -422,24 +435,53 @@ impl VellumApp {
                 } else {
                     title
                 };
-                let view = view.clone();
-                Tab::new()
-                    .label(label)
-                    .selected(i == active_index)
+                let is_active = i == active_index;
+                let view_for_click = view.clone();
+                let view_for_menu = view.clone();
+
+                let tab_el = div()
+                    .id(("tab", i))
+                    .h_full()
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .text_sm()
+                    .cursor_pointer()
+                    .border_b_2()
+                    .border_color(if is_active {
+                        cx.theme().primary
+                    } else {
+                        gpui::Hsla::transparent_black()
+                    })
+                    .bg(if is_active { active_bg } else { background })
+                    .hover(move |style| {
+                        if is_active {
+                            style
+                        } else {
+                            style.bg(hover_bg)
+                        }
+                    })
+                    .text_color(if is_active { foreground } else { muted_foreground })
+                    .child(
+                        div()
+                            .max_w(px(160.))
+                            .overflow_hidden()
+                            .truncate()
+                            .child(label),
+                    )
                     .on_click(move |_, window, cx| {
-                        if let Some(entity) = view.upgrade() {
+                        if let Some(entity) = view_for_click.upgrade() {
                             let _ = entity.update(cx, |this, cx| {
                                 this.switch_to_tab(i, window, cx);
                             });
                         }
-                    })
-            }))
-            .on_click(move |ix, window, cx| {
-                if let Some(entity) = view.upgrade() {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.switch_to_tab(*ix, window, cx);
                     });
-                }
-            })
+
+                tab_el.context_menu({
+                    move |menu, _, _| {
+                        build_tab_context_menu(menu, view_for_menu.clone(), i, tab_count)
+                    }
+                })
+            }))
     }
 }

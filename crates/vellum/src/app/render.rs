@@ -701,3 +701,47 @@ fn build_file_tree_context_menu(
             }))
     }
 }
+
+pub(super) fn build_tab_context_menu(
+    menu: PopupMenu,
+    view: gpui::WeakEntity<VellumApp>,
+    tab_index: usize,
+    tab_count: usize,
+) -> PopupMenu {
+    let mut menu = menu
+        .item(PopupMenuItem::new("Close").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.close_tab(tab_index, window, cx);
+                    });
+                }
+            }
+        }));
+
+    if tab_count > 1 {
+        menu = menu.item(PopupMenuItem::new("Close Others").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.close_other_tabs(tab_index, window, cx);
+                    });
+                }
+            }
+        }));
+        menu = menu.item(PopupMenuItem::new("Close All").on_click({
+            let view = view.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.close_all_tabs(window, cx);
+                    });
+                }
+            }
+        }));
+    }
+
+    menu
+}

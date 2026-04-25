@@ -26,9 +26,8 @@ use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
     button::{Button, ButtonVariants as _},
     list::ListItem,
-    menu::PopupMenuItem,
     resizable::{h_resizable, resizable_panel},
-    tree::{TreeState, tree},
+    tree::TreeState,
 };
 use rfd::FileDialog;
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
@@ -445,6 +444,44 @@ impl VellumApp {
         if self.active_tab_index >= self.tabs.len() {
             self.active_tab_index = self.tabs.len() - 1;
         }
+        self.subscribe_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+            return;
+        }
+        self.tabs.remove(index);
+        if self.active_tab_index > index {
+            self.active_tab_index -= 1;
+        } else if self.active_tab_index >= self.tabs.len() {
+            self.active_tab_index = self.tabs.len() - 1;
+        }
+        self.subscribe_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn close_other_tabs(&mut self, keep_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if keep_index >= self.tabs.len() {
+            return;
+        }
+        let keep = self.tabs.remove(keep_index);
+        self.tabs.clear();
+        self.tabs.push(keep);
+        self.active_tab_index = 0;
+        self.subscribe_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        let keep = self.tabs.remove(self.active_tab_index.min(self.tabs.len() - 1));
+        self.tabs.clear();
+        self.tabs.push(keep);
+        self.active_tab_index = 0;
         self.subscribe_active_editor(window, cx);
         cx.notify();
     }
