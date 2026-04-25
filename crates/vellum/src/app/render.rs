@@ -1,56 +1,123 @@
-use gpui::{AnyElement, StatefulInteractiveElement as _, prelude::FluentBuilder as _};
-use gpui_component::{Selectable, button::ButtonGroup, input::Input, scroll::ScrollableElement};
+use std::rc::Rc;
+
+use gpui::{AnyElement, StatefulInteractiveElement as _, prelude::FluentBuilder as _, uniform_list};
+use gpui_component::{
+    Selectable, button::ButtonGroup, input::Input, menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    scroll::ScrollableElement,
+};
 
 use super::*;
 
+#[derive(Debug, Clone)]
+struct FileTreeEntry {
+    path: PathBuf,
+    label: String,
+    depth: usize,
+    is_folder: bool,
+    is_expanded: bool,
+}
+
+fn flatten_tree_items(items: &[gpui_component::tree::TreeItem], depth: usize) -> Vec<FileTreeEntry> {
+    let mut result = Vec::new();
+    for item in items {
+        let path = PathBuf::from(item.id.as_ref());
+        let is_folder = !item.children.is_empty();
+        let is_expanded = item.is_expanded();
+        result.push(FileTreeEntry {
+            path: path.clone(),
+            label: item.label.to_string(),
+            depth,
+            is_folder,
+            is_expanded,
+        });
+        if is_folder && is_expanded {
+            result.extend(flatten_tree_items(&item.children, depth + 1));
+        }
+    }
+    result
+}
+
 impl VellumApp {
     fn render_file_tree(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let view = cx.entity();
+        let view = cx.entity().downgrade();
         let selected_path = self.workspace.selected_file.clone();
         let foreground = cx.theme().foreground;
 
-        tree(&self.tree_state, move |ix, entry, selected, _, _| {
-            let path = PathBuf::from(entry.item().id.as_ref());
-            let label = if entry.is_folder() {
-                if entry.is_expanded() {
-                    format!("v {}", entry.item().label)
-                } else {
-                    format!("> {}", entry.item().label)
-                }
-            } else {
-                entry.item().label.to_string()
-            };
-            let is_selected_file = selected_path.as_ref() == Some(&path);
+        let entries = match self.workspace.tree_items() {
+            Ok(items) => flatten_tree_items(&items, 0),
+            Err(_) => Vec::new(),
+        };
+        let entries = Rc::new(entries);
 
-            ListItem::new(ix)
-                .selected(selected || is_selected_file)
-                .rounded(px(6.))
-                .text_sm()
-                .w_full()
-                .pr_2()
-                .pl(px(8. + entry.depth() as f32 * 14.))
-                .child(
-                    div()
-                        .w_full()
-                        .min_w(px(0.))
-                        .overflow_hidden()
-                        .text_color(foreground)
-                        .truncate()
-                        .child(label),
-                )
-                .on_click({
-                    let view = view.clone();
-                    move |_, window, cx| {
-                        if path.is_file() {
-                            let _ = view.update(cx, |this, cx| {
-                                this.open_file(path.clone(), window, cx);
+        div()
+            .size_full()
+            .child(
+                uniform_list("file-tree", entries.len(), {
+                    let entries = entries.clone();
+                    move |visible_range, _window, _cx| {
+                        let mut items = Vec::with_capacity(visible_range.len());
+                        for ix in visible_range {
+                            let entry = &entries[ix];
+                            let path = entry.path.clone();
+                            let is_selected_file = selected_path.as_ref() == Some(&path);
+                            let is_folder = entry.is_folder;
+
+                            let label = if is_folder {
+                                if entry.is_expanded {
+                                    format!("v {}", entry.label)
+                                } else {
+                                    format!("> {}", entry.label)
+                                }
+                            } else {
+                                entry.label.clone()
+                            };
+
+                            let item = ListItem::new(ix)
+                                .selected(is_selected_file)
+                                .rounded(px(6.))
+                                .text_sm()
+                                .w_full()
+                                .pr_2()
+                                .pl(px(8. + entry.depth as f32 * 14.))
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .text_color(foreground)
+                                        .truncate()
+                                        .child(label),
+                                )
+                                .on_click({
+                                    let view = view.clone();
+                                    let path = path.clone();
+                                    move |_, window, cx| {
+                                        if path.is_file() {
+                                            if let Some(entity) = view.upgrade() {
+                                                let _ = entity.update(cx, |this, cx| {
+                                                    this.open_file(path.clone(), window, cx);
+                                                });
+                                            }
+                                        }
+                                    }
+                                });
+
+                            let menu_item = item.context_menu({
+                                let view = view.clone();
+                                let path = path.clone();
+                                move |menu, _, _| {
+                                    build_file_tree_context_menu(menu, view.clone(), path.clone(), is_folder)
+                                }
                             });
+
+                            items.push(menu_item.into_any_element());
                         }
+                        items
                     }
                 })
-        })
-        .size_full()
-        .into_any_element()
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     fn render_outline(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -494,5 +561,143 @@ impl Render for VellumApp {
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))
             .when_some(status_bar, |this, status_bar| this.child(status_bar))
+    }
+}
+
+fn build_file_tree_context_menu(
+    menu: PopupMenu,
+    view: gpui::WeakEntity<VellumApp>,
+    path: PathBuf,
+    is_folder: bool,
+) -> PopupMenu {
+    if is_folder {
+        menu
+            .item(PopupMenuItem::new("New File").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.create_new_file_in_folder(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+            .item(PopupMenuItem::new("New Folder").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.create_new_folder(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Copy Path").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.copy_path_to_clipboard(&path, window, cx);
+                        });
+                    }
+                }
+            }))
+            .item(PopupMenuItem::new("Reveal in Finder").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, _, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, _cx| {
+                            this.reveal_in_finder(&path);
+                        });
+                    }
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Rename").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.start_rename(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+            .item(PopupMenuItem::new("Delete").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.delete_file(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+    } else {
+        menu
+            .item(PopupMenuItem::new("Open").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.open_file(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Copy Path").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.copy_path_to_clipboard(&path, window, cx);
+                        });
+                    }
+                }
+            }))
+            .item(PopupMenuItem::new("Reveal in Finder").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, _, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, _cx| {
+                            this.reveal_in_finder(&path);
+                        });
+                    }
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Rename").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.start_rename(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
+            .item(PopupMenuItem::new("Delete").on_click({
+                let view = view.clone();
+                let path = path.clone();
+                move |_, window, cx| {
+                    if let Some(entity) = view.upgrade() {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.delete_file(path.clone(), window, cx);
+                        });
+                    }
+                }
+            }))
     }
 }

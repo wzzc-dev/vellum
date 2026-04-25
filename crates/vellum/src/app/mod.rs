@@ -120,6 +120,9 @@ struct VellumApp {
     /// Kept alive to keep subscriptions active.
     #[allow(dead_code)]
     find_input_subscriptions: Vec<Subscription>,
+    // --- file tree rename state ---
+    renaming_path: Option<PathBuf>,
+    rename_input: Option<Entity<InputState>>,
 }
 
 pub fn run() -> Result<()> {
@@ -406,6 +409,8 @@ impl VellumApp {
             replace_query_input,
             outline_filter_input,
             find_input_subscriptions: vec![editor_subscription, find_input_subscription, replace_input_subscription, outline_input_subscription],
+            renaming_path: None,
+            rename_input: None,
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
