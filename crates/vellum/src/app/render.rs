@@ -136,7 +136,7 @@ impl VellumApp {
                         let view = filter_view.clone();
                         move |_, window, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.editor.update(cx, |editor, cx| {
+                                this.active_editor_entity().update(cx, |editor, cx| {
                                     editor.select_block_start(block_id, window, cx);
                                 });
                             });
@@ -407,7 +407,10 @@ impl Render for VellumApp {
             .when(self.find_panel_visible, |this| {
                 this.child(self.render_find_bar(cx))
             })
-            .child(div().flex_1().min_h(px(0.)).child(self.editor.clone()))
+            .when(self.tabs.len() > 1, |this| {
+                this.child(self.render_tab_bar(window, cx))
+            })
+            .child(div().flex_1().min_h(px(0.)).child(self.active_editor_entity().clone()))
             .into_any_element();
 
         let body: AnyElement = if self.sidebar_visible {
@@ -462,6 +465,9 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_open_find_replace_panel))
             .on_action(cx.listener(Self::on_replace_one))
             .on_action(cx.listener(Self::on_replace_all))
+            .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(Self::on_previous_tab))
+            .on_action(cx.listener(Self::on_next_tab))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)

@@ -91,22 +91,22 @@ impl VellumApp {
             return;
         }
 
-        if self.editor_snapshot.dirty {
-            if let Err(err) = self.save_document(window, cx) {
-                self.set_status(format!("Save failed before open: {err}"));
-                cx.notify();
-                return;
-            }
-            if self.editor_snapshot.dirty {
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if tab.editor.read(cx).document_path() == Some(&path) {
+                self.switch_to_tab(i, window, cx);
                 return;
             }
         }
 
-        let open_result = self
-            .editor
-            .update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
+        let new_editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        let open_result = new_editor.update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
         match open_result {
             Ok(()) => {
+                self.tabs.push(EditorTab { editor: new_editor });
+                self.active_tab_index = self.tabs.len() - 1;
+                self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+                self.subscribe_active_editor(window, cx);
+
                 if let Some(root) = path.parent().map(|parent| parent.to_path_buf()) {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
                         if self.set_workspace_root(Some(root), cx) {
@@ -133,9 +133,16 @@ impl VellumApp {
             .as_ref()
             .map(|root| next_untitled_path(root));
 
-        self.editor.update(cx, |editor, cx| {
+        let new_editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        new_editor.update(cx, |editor, cx| {
             editor.new_untitled(suggested_path.clone(), window, cx);
         });
+
+        self.tabs.push(EditorTab { editor: new_editor });
+        self.active_tab_index = self.tabs.len() - 1;
+        self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+        self.subscribe_active_editor(window, cx);
+
         self.workspace.selected_file = suggested_path;
         self.clear_status();
         cx.notify();
@@ -150,7 +157,7 @@ impl VellumApp {
             return self.save_document_as(window, cx);
         }
 
-        if let Err(err) = self.editor.update(cx, |editor, cx| editor.save(window, cx)) {
+        if let Err(err) = self.active_editor_entity().update(cx, |editor, cx| editor.save(window, cx)) {
             if err
                 .to_string()
                 .contains("cannot save without a target path")
@@ -160,7 +167,7 @@ impl VellumApp {
             return Err(err);
         }
 
-        let saved_path = self.editor.read(cx).document_path().cloned();
+        let saved_path = self.active_editor_entity().read(cx).document_path().cloned();
         if let Some(path) = saved_path {
             self.workspace.selected_file = Some(path.clone());
             let _ = write_last_opened_path(&path);
@@ -188,7 +195,7 @@ impl VellumApp {
             return Ok(());
         };
 
-        self.editor
+        self.active_editor_entity()
             .update(cx, |editor, cx| editor.save_as(path.clone(), window, cx))?;
 
         let mut refreshed_tree = false;
@@ -262,7 +269,7 @@ impl VellumApp {
                 WorkspaceEvent::Changed(_) | WorkspaceEvent::Unknown => {}
             }
 
-            let reload_path = self.editor.update(cx, |editor, cx| {
+            let reload_path = self.active_editor_entity().update(cx, |editor, cx| {
                 editor.apply_file_event(map_workspace_event_for_editor(&event), window, cx)
             });
 
@@ -279,7 +286,7 @@ impl VellumApp {
             let modified_at = fs::metadata(&path)
                 .ok()
                 .and_then(|meta| meta.modified().ok());
-            self.editor.update(cx, |editor, cx| {
+            self.active_editor_entity().update(cx, |editor, cx| {
                 editor.apply_disk_state(path.clone(), disk_text.clone(), modified_at, window, cx);
             });
         }

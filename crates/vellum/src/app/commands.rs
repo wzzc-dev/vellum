@@ -38,7 +38,7 @@ impl VellumApp {
     ) {
         self.open_find_panel();
         if let Some(offset) = self.navigate_find_match(false) {
-            self.editor.update(cx, |editor, cx| {
+            self.active_editor_entity().update(cx, |editor, cx| {
                 editor.select_source_offset(offset, window, cx);
             });
         }
@@ -53,7 +53,7 @@ impl VellumApp {
     ) {
         self.open_find_panel();
         if let Some(offset) = self.navigate_find_match(true) {
-            self.editor.update(cx, |editor, cx| {
+            self.active_editor_entity().update(cx, |editor, cx| {
                 editor.select_source_offset(offset, window, cx);
             });
         }
@@ -133,5 +133,42 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.set_status_bar_pinned(!self.status_bar_pinned, window, cx);
+    }
+
+    pub(super) fn on_close_tab(
+        &mut self,
+        _: &CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_active_tab(window, cx);
+    }
+
+    pub(super) fn on_previous_tab(
+        &mut self,
+        _: &PreviousTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tabs.len() > 1 {
+            let index = if self.active_tab_index == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab_index - 1
+            };
+            self.switch_to_tab(index, window, cx);
+        }
+    }
+
+    pub(super) fn on_next_tab(
+        &mut self,
+        _: &NextTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tabs.len() > 1 {
+            let index = (self.active_tab_index + 1) % self.tabs.len();
+            self.switch_to_tab(index, window, cx);
+        }
     }
 }

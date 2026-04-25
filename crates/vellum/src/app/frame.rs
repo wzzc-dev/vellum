@@ -1,5 +1,8 @@
 use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
-use gpui_component::{Selectable, Sizable as _, button::ButtonGroup, menu::DropdownMenu as _};
+use gpui_component::{
+    Selectable, Sizable as _, button::ButtonGroup, menu::DropdownMenu as _,
+    tab::{Tab, TabBar, TabVariant},
+};
 
 use super::*;
 
@@ -263,7 +266,7 @@ impl VellumApp {
                         let view = view.clone();
                         move |_, window, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.editor.update(cx, |editor, cx| {
+                                this.active_editor_entity().update(cx, |editor, cx| {
                                     editor.toggle_view_mode(window, cx);
                                 });
                             });
@@ -378,7 +381,7 @@ impl VellumApp {
                                     editor::EditorViewMode::LivePreview
                                 };
                                 let _ = view.update(app, |this, cx| {
-                                    this.editor.update(cx, |editor, cx| {
+                                    this.active_editor_entity().update(cx, |editor, cx| {
                                         editor.set_view_mode(target, window, cx);
                                     });
                                 });
@@ -394,5 +397,49 @@ impl VellumApp {
                             .child(doc_status),
                     ),
             )
+    }
+
+    pub(super) fn render_tab_bar(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        let active_index = self.active_tab_index;
+
+        TabBar::new("editor-tabs")
+            .with_variant(TabVariant::Tab)
+            .selected_index(active_index)
+            .children(self.tabs.iter().enumerate().map(|(i, tab)| {
+                let path = tab.editor.read(cx).document_path();
+                let title = match path {
+                    Some(p) => p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                    None => "Untitled".to_string(),
+                };
+                let is_dirty = tab.editor.read(cx).snapshot().dirty;
+                let label = if is_dirty {
+                    format!("● {}", title)
+                } else {
+                    title
+                };
+                let view = view.clone();
+                Tab::new()
+                    .label(label)
+                    .selected(i == active_index)
+                    .on_click(move |_, window, cx| {
+                        if let Some(entity) = view.upgrade() {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.switch_to_tab(i, window, cx);
+                            });
+                        }
+                    })
+            }))
+            .on_click(move |ix, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.switch_to_tab(*ix, window, cx);
+                    });
+                }
+            })
     }
 }

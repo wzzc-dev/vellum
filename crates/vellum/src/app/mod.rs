@@ -56,7 +56,10 @@ actions!(
         FindPreviousMatch,
         OpenFindReplacePanel,
         ReplaceOne,
-        ReplaceAll
+        ReplaceAll,
+        CloseTab,
+        PreviousTab,
+        NextTab,
     ]
 );
 
@@ -83,11 +86,16 @@ pub(super) struct FindMatch {
     pub(super) range: std::ops::Range<usize>,
 }
 
+struct EditorTab {
+    editor: Entity<MarkdownEditor>,
+}
+
 struct VellumApp {
     app_state: AppState,
     workspace: WorkspaceState,
     tree_state: Entity<TreeState>,
-    editor: Entity<MarkdownEditor>,
+    tabs: Vec<EditorTab>,
+    active_tab_index: usize,
     focus_handle: FocusHandle,
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
@@ -155,6 +163,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-g", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-w", CloseTab, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -193,6 +204,24 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             this.request_open_folder(window, cx);
         });
     });
+    let window = main_window;
+    cx.on_action(move |_: &CloseTab, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.on_close_tab(&CloseTab, window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &PreviousTab, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.on_previous_tab(&PreviousTab, window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &NextTab, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.on_next_tab(&NextTab, window, cx);
+        });
+    });
     cx.set_menus(vec![
         Menu {
             name: "Vellum".into(),
@@ -212,6 +241,8 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::separator(),
                 MenuItem::action("Save", SaveNow),
                 MenuItem::action("Save As...", SaveAs),
+                MenuItem::separator(),
+                MenuItem::action("Close Tab", CloseTab),
             ],
         },
         Menu {
@@ -352,7 +383,8 @@ impl VellumApp {
             app_state: AppState::default(),
             workspace: WorkspaceState::new(),
             tree_state,
-            editor,
+            tabs: vec![EditorTab { editor }],
+            active_tab_index: 0,
             focus_handle,
             editor_snapshot,
             sidebar_visible: true,
@@ -378,6 +410,63 @@ impl VellumApp {
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
         this
+    }
+
+    fn active_editor(&self) -> Option<&Entity<MarkdownEditor>> {
+        self.tabs.get(self.active_tab_index).map(|tab| &tab.editor)
+    }
+
+    fn active_editor_entity(&self) -> Entity<MarkdownEditor> {
+        self.tabs[self.active_tab_index].editor.clone()
+    }
+
+    fn active_editor_mut(&mut self) -> Option<&mut Entity<MarkdownEditor>> {
+        self.tabs.get_mut(self.active_tab_index).map(|tab| &mut tab.editor)
+    }
+
+    fn open_editor_tab(&mut self, editor: Entity<MarkdownEditor>, window: &mut Window, cx: &mut Context<Self>) {
+        let new_tab = EditorTab { editor };
+        self.tabs.push(new_tab);
+        self.active_tab_index = self.tabs.len() - 1;
+        self.subscribe_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        self.tabs.remove(self.active_tab_index);
+        if self.active_tab_index >= self.tabs.len() {
+            self.active_tab_index = self.tabs.len() - 1;
+        }
+        self.subscribe_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn switch_to_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index < self.tabs.len() && index != self.active_tab_index {
+            self.active_tab_index = index;
+            self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+            self.subscribe_active_editor(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn subscribe_active_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor() {
+            let editor = editor.clone();
+            let subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                let EditorEvent::Changed(snapshot) = event;
+                this.editor_snapshot = snapshot.clone();
+                if !snapshot.status_message.is_empty() {
+                    this.shell_status_message.clear();
+                }
+                this.refresh_find_matches();
+                cx.notify();
+            });
+            self.find_input_subscriptions.push(subscription);
+        }
     }
 
     fn start_background_tasks(view: &Entity<Self>, window: &mut Window, cx: &mut App) {
@@ -490,7 +579,7 @@ impl VellumApp {
         };
         let range = find_match.range.clone();
         let replacement = self.replace_query.clone();
-        self.editor.update(cx, |editor, cx| {
+        self.active_editor_entity().update(cx, |editor, cx| {
             editor.replace_source_range(range, replacement, window, cx);
         });
     }
@@ -503,7 +592,7 @@ impl VellumApp {
         for find_match in self.find_matches.iter().rev() {
             let range = find_match.range.clone();
             let replacement = replacement.clone();
-            self.editor.update(cx, |editor, cx| {
+            self.active_editor_entity().update(cx, |editor, cx| {
                 editor.replace_source_range(range, replacement, window, cx);
             });
         }
