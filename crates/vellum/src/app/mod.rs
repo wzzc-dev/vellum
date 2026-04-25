@@ -34,11 +34,14 @@ use rfd::FileDialog;
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 use vellum_plugin::PluginManager;
 
+use webview::WebViewManager;
+
 mod commands;
 mod document_io;
 mod frame;
 mod layout;
 mod render;
+mod webview;
 
 actions!(
     vellum,
@@ -131,6 +134,7 @@ struct VellumApp {
     plugin_manager: PluginManager,
     disabled_plugin_ids: Vec<String>,
     disclosure_state: HashMap<String, bool>,
+    webview_manager: WebViewManager,
 }
 
 pub fn run() -> Result<()> {
@@ -438,6 +442,7 @@ impl VellumApp {
             }),
             disabled_plugin_ids: Vec::new(),
             disclosure_state: HashMap::new(),
+            webview_manager: WebViewManager::new(),
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);

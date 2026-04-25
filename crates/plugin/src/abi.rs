@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::decoration::{Decoration, OverlayPanel, RegisteredPanel, Tooltip};
+use crate::decoration::{Decoration, OverlayPanel, ProtocolResponse, RegisteredPanel, Tooltip, WebViewRequest};
 use crate::ui::UiNode;
 
 pub enum PendingEdit {
@@ -29,6 +29,9 @@ pub struct HostState {
     pub active_overlay: Option<OverlayPanel>,
     pub active_tooltip: Option<Tooltip>,
     pub pending_edits: Vec<PendingEdit>,
+    pub next_webview_id: u32,
+    pub pending_webview_requests: Vec<WebViewRequest>,
+    pub protocol_responses: HashMap<u32, ProtocolResponse>,
 }
 
 impl HostState {
@@ -50,6 +53,9 @@ impl HostState {
             active_overlay: None,
             active_tooltip: None,
             pending_edits: Vec::new(),
+            next_webview_id: 1,
+            pending_webview_requests: Vec::new(),
+            protocol_responses: HashMap::new(),
         }
     }
 
@@ -76,5 +82,13 @@ impl HostState {
 
     pub fn take_edits(&mut self) -> Vec<PendingEdit> {
         std::mem::take(&mut self.pending_edits)
+    }
+
+    pub fn take_webview_requests(&mut self) -> Vec<WebViewRequest> {
+        std::mem::take(&mut self.pending_webview_requests)
+    }
+
+    pub fn set_protocol_response(&mut self, webview_id: u32, response: ProtocolResponse) {
+        self.protocol_responses.insert(webview_id, response);
     }
 }

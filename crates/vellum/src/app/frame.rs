@@ -185,6 +185,7 @@ impl VellumApp {
             }
         } else {
             self.disabled_plugin_ids.push(plugin_id.clone());
+            self.webview_manager.remove_all();
             if let Err(e) = self.plugin_manager.unload_plugin(&plugin_id) {
                 eprintln!("failed to unload plugin {}: {}", plugin_id, e);
             }

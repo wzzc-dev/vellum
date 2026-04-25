@@ -64,6 +64,15 @@ impl PluginRuntime {
         linker
             .func_wrap("env", "host_replace_range", host_replace_range_impl)
             .context("failed to define host_replace_range")?;
+        linker
+            .func_wrap("env", "host_create_webview", host_create_webview_impl)
+            .context("failed to define host_create_webview")?;
+        linker
+            .func_wrap("env", "host_navigate_webview", host_navigate_webview_impl)
+            .context("failed to define host_navigate_webview")?;
+        linker
+            .func_wrap("env", "host_respond_webview_request", host_respond_webview_request_impl)
+            .context("failed to define host_respond_webview_request")?;
 
         Ok(Self { engine, linker })
     }
@@ -306,5 +315,47 @@ fn host_replace_range_impl(
         start: start as usize,
         end: end as usize,
         text,
+    });
+}
+
+fn host_create_webview_impl(
+    mut caller: wasmi::Caller<HostState>,
+    url_ptr: u32,
+    url_len: u32,
+    _allow_scripts: u32,
+    _allow_devtools: u32,
+) -> u32 {
+    let url = read_string_from_caller(&caller, url_ptr, url_len);
+    let data = caller.data_mut();
+    let webview_id = data.next_webview_id;
+    data.next_webview_id += 1;
+    data.pending_webview_requests.push(crate::decoration::WebViewRequest {
+        webview_id,
+        url,
+    });
+    webview_id
+}
+
+fn host_navigate_webview_impl(
+    _caller: wasmi::Caller<HostState>,
+    _webview_id: u32,
+    _url_ptr: u32,
+    _url_len: u32,
+) {
+}
+
+fn host_respond_webview_request_impl(
+    mut caller: wasmi::Caller<HostState>,
+    webview_id: u32,
+    mime_ptr: u32,
+    mime_len: u32,
+    body_ptr: u32,
+    body_len: u32,
+) {
+    let mime_type = read_string_from_caller(&caller, mime_ptr, mime_len);
+    let body = read_bytes_from_caller(&caller, body_ptr, body_len);
+    caller.data_mut().set_protocol_response(webview_id, crate::decoration::ProtocolResponse {
+        mime_type,
+        body,
     });
 }

@@ -29,6 +29,9 @@ unsafe extern "C" {
     fn host_hide_tooltip();
     fn host_insert_text(text_ptr: u32, text_len: u32);
     fn host_replace_range(start: u32, end: u32, text_ptr: u32, text_len: u32);
+    fn host_create_webview(url_ptr: u32, url_len: u32, allow_scripts: u32, allow_devtools: u32) -> u32;
+    fn host_navigate_webview(webview_id: u32, url_ptr: u32, url_len: u32);
+    fn host_respond_webview_request(webview_id: u32, mime_ptr: u32, mime_len: u32, body_ptr: u32, body_len: u32);
 }
 
 pub fn alloc_and_write(data: &[u8]) -> u32 {
@@ -216,5 +219,35 @@ pub fn replace_range(start: usize, end: usize, text: &str) {
         let ptr = alloc_and_write(bytes);
         host_replace_range(start as u32, end as u32, ptr, bytes.len() as u32);
         dealloc(ptr, bytes.len() as u32);
+    }
+}
+
+pub fn create_webview(url: &str, allow_scripts: bool, allow_devtools: bool) -> u32 {
+    unsafe {
+        let bytes = url.as_bytes();
+        let ptr = alloc_and_write(bytes);
+        let id = host_create_webview(ptr, bytes.len() as u32, allow_scripts as u32, allow_devtools as u32);
+        dealloc(ptr, bytes.len() as u32);
+        id
+    }
+}
+
+pub fn navigate_webview(webview_id: u32, url: &str) {
+    unsafe {
+        let bytes = url.as_bytes();
+        let ptr = alloc_and_write(bytes);
+        host_navigate_webview(webview_id, ptr, bytes.len() as u32);
+        dealloc(ptr, bytes.len() as u32);
+    }
+}
+
+pub fn respond_webview_request(webview_id: u32, mime_type: &str, body: &[u8]) {
+    unsafe {
+        let mime_bytes = mime_type.as_bytes();
+        let mime_ptr = alloc_and_write(mime_bytes);
+        let body_ptr = alloc_and_write(body);
+        host_respond_webview_request(webview_id, mime_ptr, mime_bytes.len() as u32, body_ptr, body.len() as u32);
+        dealloc(mime_ptr, mime_bytes.len() as u32);
+        dealloc(body_ptr, body.len() as u32);
     }
 }

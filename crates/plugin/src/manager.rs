@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use wasmi::{Instance, Store};
 
 use crate::abi::{HostState, PendingEdit};
-use crate::decoration::{Decoration, OverlayPanel, RegisteredPanel, Tooltip};
+use crate::decoration::{Decoration, OverlayPanel, ProtocolResponse, RegisteredPanel, Tooltip, WebViewRequest};
 use crate::event::{EventData, EventType};
 use crate::manifest::PluginManifest;
 use crate::memory;
@@ -34,6 +34,8 @@ pub struct PluginManager {
     pending_edits: Vec<PendingEdit>,
     document_text: String,
     document_path: Option<String>,
+    webview_requests: Vec<WebViewRequest>,
+    protocol_responses: HashMap<u32, ProtocolResponse>,
 }
 
 impl PluginManager {
@@ -52,6 +54,8 @@ impl PluginManager {
             pending_edits: Vec::new(),
             document_text: String::new(),
             document_path: None,
+            webview_requests: Vec::new(),
+            protocol_responses: HashMap::new(),
         })
     }
 
@@ -178,7 +182,7 @@ impl PluginManager {
             }
 
             let plugin = &mut self.loaded_plugins[i];
-            Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits);
+            Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits, &mut self.webview_requests);
         }
     }
 
@@ -190,7 +194,7 @@ impl PluginManager {
                 "plugin_execute_command",
             ) {
                 let _ = func.call(&mut plugin.store, command_id);
-                Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits);
+                Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits, &mut self.webview_requests);
                 return true;
             }
         }
@@ -211,7 +215,7 @@ impl PluginManager {
             }
 
             let plugin = &mut self.loaded_plugins[i];
-            Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits);
+            Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits, &mut self.webview_requests);
         }
     }
 
@@ -277,6 +281,32 @@ impl PluginManager {
         std::mem::take(&mut self.pending_edits)
     }
 
+    pub fn take_webview_requests(&mut self) -> Vec<WebViewRequest> {
+        std::mem::take(&mut self.webview_requests)
+    }
+
+    pub fn set_protocol_response(&mut self, webview_id: u32, response: ProtocolResponse) {
+        self.protocol_responses.insert(webview_id, response);
+    }
+
+    pub fn dispatch_webview_request(&mut self, request: WebViewRequest) {
+        let encoded = protocol::encode_webview_request(&request);
+
+        for i in 0..self.loaded_plugins.len() {
+            let plugin = &mut self.loaded_plugins[i];
+            if let Ok(func) = plugin.instance.get_typed_func::<(u32, u32), ()>(
+                &plugin.store,
+                "plugin_handle_webview_request",
+            ) {
+                let data_ptr = Self::write_to_plugin_memory_internal(plugin, &encoded);
+                let _ = func.call(&mut plugin.store, (data_ptr, encoded.len() as u32));
+            }
+
+            let plugin = &mut self.loaded_plugins[i];
+            Self::collect_plugin_state_internal(plugin, &mut self.panel_uis, &mut self.decorations, &mut self.active_overlay, &mut self.active_tooltip, &mut self.pending_status_message, &mut self.pending_edits, &mut self.webview_requests);
+        }
+    }
+
     pub fn shutdown_all(&mut self) {
         for plugin in &mut self.loaded_plugins {
             Self::call_shutdown_internal(plugin);
@@ -339,6 +369,7 @@ impl PluginManager {
         active_tooltip: &mut Option<Tooltip>,
         status_message: &mut Option<String>,
         pending_edits: &mut Vec<PendingEdit>,
+        webview_requests: &mut Vec<WebViewRequest>,
     ) {
         let state = plugin.store.data_mut();
 
@@ -365,6 +396,11 @@ impl PluginManager {
         let edits = state.take_edits();
         if !edits.is_empty() {
             pending_edits.extend(edits);
+        }
+
+        let requests = state.take_webview_requests();
+        if !requests.is_empty() {
+            webview_requests.extend(requests);
         }
     }
 }

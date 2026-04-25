@@ -77,3 +77,15 @@ pub struct RegisteredPanel {
     pub icon: String,
     pub plugin_id: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolResponse {
+    pub mime_type: String,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebViewRequest {
+    pub webview_id: u32,
+    pub url: String,
+}

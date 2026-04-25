@@ -1,4 +1,4 @@
-use crate::decoration::{Tooltip, TooltipPosition};
+use crate::decoration::{ProtocolResponse, Tooltip, TooltipPosition, WebViewRequest};
 use crate::event::EventData;
 use crate::host;
 use crate::ui::UiEvent;
@@ -13,6 +13,9 @@ pub trait Plugin: Default + 'static {
     fn handle_ui_event(&mut self, _event: UiEvent, _ctx: &mut PluginContext) {}
     fn handle_hover(&mut self, hover_data: &str, _ctx: &mut PluginContext) -> Option<Tooltip> {
         let _ = hover_data;
+        None
+    }
+    fn handle_webview_request(&mut self, _request: WebViewRequest, _ctx: &mut PluginContext) -> Option<ProtocolResponse> {
         None
     }
 }
@@ -82,6 +85,18 @@ impl PluginContext {
 
     pub fn hide_tooltip(&mut self) {
         host::hide_tooltip();
+    }
+
+    pub fn create_webview(&mut self, url: &str, allow_scripts: bool, allow_devtools: bool) -> u32 {
+        host::create_webview(url, allow_scripts, allow_devtools)
+    }
+
+    pub fn navigate_webview(&mut self, webview_id: u32, url: &str) {
+        host::navigate_webview(webview_id, url);
+    }
+
+    pub fn respond_webview_request(&mut self, webview_id: u32, mime_type: &str, body: &[u8]) {
+        host::respond_webview_request(webview_id, mime_type, body);
     }
 }
 
@@ -172,6 +187,21 @@ macro_rules! vellum_plugin {
                     }
                 } else {
                     0
+                }
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn plugin_handle_webview_request(data_ptr: u32, data_len: u32) {
+            unsafe {
+                if let Some(instance) = &mut PLUGIN_INSTANCE {
+                    let bytes = core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize);
+                    let request = match postcard::from_bytes::<$crate::decoration::WebViewRequest>(bytes) {
+                        Ok(r) => r,
+                        Err(_) => return,
+                    };
+                    let mut ctx = $crate::plugin::PluginContext::new();
+                    <$plugin_type>::handle_webview_request(instance, request, &mut ctx);
                 }
             }
         }

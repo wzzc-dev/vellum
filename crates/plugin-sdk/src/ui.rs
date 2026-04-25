@@ -76,6 +76,12 @@ pub enum UiNode {
         id: String,
         label: String,
     },
+    WebView {
+        id: String,
+        url: String,
+        allow_scripts: bool,
+        allow_devtools: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +177,7 @@ pub enum UiEvent {
     LinkClicked { element_id: String },
     ListItemClicked { element_id: String, item_id: String },
     DisclosureToggled { element_id: String, open: bool },
+    WebViewMessage { element_id: String, message: String },
 }
 
 impl UiNode {
@@ -263,6 +270,10 @@ impl UiNode {
             id: id.into(),
             label: label.into(),
         }
+    }
+
+    pub fn webview(id: &str, url: &str) -> WebViewBuilder {
+        WebViewBuilder::new(id, url)
     }
 }
 
@@ -534,6 +545,43 @@ impl DisclosureBuilder {
             label: self.label,
             open: self.open,
             children: self.children,
+        }
+    }
+}
+
+pub struct WebViewBuilder {
+    id: String,
+    url: String,
+    allow_scripts: bool,
+    allow_devtools: bool,
+}
+
+impl WebViewBuilder {
+    pub fn new(id: &str, url: &str) -> Self {
+        Self {
+            id: id.into(),
+            url: url.into(),
+            allow_scripts: false,
+            allow_devtools: false,
+        }
+    }
+
+    pub fn allow_scripts(mut self, allow: bool) -> Self {
+        self.allow_scripts = allow;
+        self
+    }
+
+    pub fn allow_devtools(mut self, allow: bool) -> Self {
+        self.allow_devtools = allow;
+        self
+    }
+
+    pub fn build(self) -> UiNode {
+        UiNode::WebView {
+            id: self.id,
+            url: self.url,
+            allow_scripts: self.allow_scripts,
+            allow_devtools: self.allow_devtools,
         }
     }
 }

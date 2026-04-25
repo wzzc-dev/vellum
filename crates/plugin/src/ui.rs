@@ -76,6 +76,12 @@ pub enum UiNode {
         id: String,
         label: String,
     },
+    WebView {
+        id: String,
+        url: String,
+        allow_scripts: bool,
+        allow_devtools: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,4 +177,5 @@ pub enum UiEvent {
     LinkClicked { element_id: String },
     ListItemClicked { element_id: String, item_id: String },
     DisclosureToggled { element_id: String, open: bool },
+    WebViewMessage { element_id: String, message: String },
 }

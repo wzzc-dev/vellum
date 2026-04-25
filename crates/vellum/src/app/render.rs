@@ -453,10 +453,10 @@ impl VellumApp {
             .into_any_element()
     }
 
-    fn render_plugin_panel(&mut self, panel_id: u32, cx: &mut Context<Self>) -> AnyElement {
+    fn render_plugin_panel(&mut self, panel_id: u32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let ui_node = self.plugin_manager.panel_ui(panel_id).cloned();
         match ui_node {
-            Some(node) => self.render_ui_node(&node, cx),
+            Some(node) => self.render_ui_node(&node, window, cx),
             None => div()
                 .size_full()
                 .flex()
@@ -469,7 +469,7 @@ impl VellumApp {
         }
     }
 
-    fn render_ui_node(&mut self, node: &vellum_plugin::ui::UiNode, cx: &mut Context<Self>) -> AnyElement {
+    fn render_ui_node(&mut self, node: &vellum_plugin::ui::UiNode, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match node {
             vellum_plugin::ui::UiNode::Column { children, gap, padding, scrollable } => {
                 let mut el = div().flex().flex_col().w_full();
@@ -480,7 +480,7 @@ impl VellumApp {
                     el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
                 }
                 for child in children {
-                    el = el.child(self.render_ui_node(child, cx));
+                    el = el.child(self.render_ui_node(child, window, cx));
                 }
                 if *scrollable {
                     el.overflow_y_scrollbar().into_any_element()
@@ -497,7 +497,7 @@ impl VellumApp {
                     el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
                 }
                 for child in children {
-                    el = el.child(self.render_ui_node(child, cx));
+                    el = el.child(self.render_ui_node(child, window, cx));
                 }
                 el.into_any_element()
             }
@@ -634,7 +634,7 @@ impl VellumApp {
                 );
                 if is_open {
                     for child in children {
-                        el = el.child(self.render_ui_node(child, cx));
+                        el = el.child(self.render_ui_node(child, window, cx));
                     }
                 }
                 el.into_any_element()
@@ -712,11 +712,35 @@ impl VellumApp {
             }
             vellum_plugin::ui::UiNode::Conditional { condition, when_true, when_false } => {
                 if *condition {
-                    self.render_ui_node(when_true, cx)
+                    self.render_ui_node(when_true, window, cx)
                 } else if let Some(when_false) = when_false {
-                    self.render_ui_node(when_false, cx)
+                    self.render_ui_node(when_false, window, cx)
                 } else {
                     div().into_any_element()
+                }
+            }
+            vellum_plugin::ui::UiNode::WebView { id, url, allow_scripts, allow_devtools } => {
+                if let Some(webview_entity) = self.webview_manager.get_or_create(
+                    id, url, *allow_scripts, *allow_devtools, window, cx,
+                ) {
+                    div()
+                        .id(ElementId::Name(format!("webview-{}", id).into()))
+                        .w_full()
+                        .h(px(300.0))
+                        .child(webview_entity)
+                        .into_any_element()
+                } else {
+                    div()
+                        .id(ElementId::Name(format!("webview-{}", id).into()))
+                        .w_full()
+                        .h(px(300.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("WebView: {}", url))
+                        .into_any_element()
                 }
             }
         }
@@ -838,13 +862,13 @@ impl VellumApp {
         content.into_any_element()
     }
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let body = match self.sidebar_view {
             SidebarView::Files => self.render_file_tree(cx),
             SidebarView::Outline => self.render_outline(cx),
             SidebarView::Plugins => self.render_plugins_panel(cx),
-            SidebarView::Plugin(panel_id) => self.render_plugin_panel(panel_id, cx),
+            SidebarView::Plugin(panel_id) => self.render_plugin_panel(panel_id, window, cx),
         };
 
         let mut tabs = ButtonGroup::new("workspace-sidebar-tabs")
@@ -946,7 +970,7 @@ impl Render for VellumApp {
                             resizable_panel()
                                 .size(px(240.))
                                 .size_range(px(180.)..px(360.))
-                                .child(self.render_sidebar(cx)),
+                                .child(self.render_sidebar(window, cx)),
                         )
                         .child(resizable_panel().child(editor_panel)),
                 )

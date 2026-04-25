@@ -1,5 +1,6 @@
 use vellum_plugin_sdk::decoration::{
-    Decoration, DecorationKind, Tooltip, TooltipPosition, UnderlineStyle,
+    Decoration, DecorationKind, ProtocolResponse, Tooltip, TooltipPosition, UnderlineStyle,
+    WebViewRequest,
 };
 use vellum_plugin_sdk::event::{EventData, EventType};
 use vellum_plugin_sdk::ui::{ButtonVariant, Severity, TextStyle, UiEvent, UiNode};
@@ -149,6 +150,23 @@ impl Plugin for MarkdownLintPlugin {
                 .build(),
             position: TooltipPosition::Above,
         })
+    }
+
+    fn handle_webview_request(
+        &mut self,
+        request: WebViewRequest,
+        ctx: &mut PluginContext,
+    ) -> Option<ProtocolResponse> {
+        if request.url.contains("/preview") {
+            let text = ctx.document_text();
+            let html = markdown_to_html(&text);
+            Some(ProtocolResponse {
+                mime_type: "text/html".into(),
+                body: html.into_bytes(),
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -303,6 +321,18 @@ impl MarkdownLintPlugin {
             ));
         }
 
+        root = root.child(
+            UiNode::disclosure("Preview")
+                .open(false)
+                .child(
+                    UiNode::webview("md-preview", "https://example.com")
+                        .allow_scripts(false)
+                        .allow_devtools(false)
+                        .build(),
+                )
+                .build(),
+        );
+
         ctx.set_panel_ui(self.panel_id, root.build());
     }
 }
@@ -423,6 +453,28 @@ fn run_lint(text: &str) -> Vec<LintDiagnostic> {
     }
 
     diagnostics
+}
+
+fn markdown_to_html(text: &str) -> String {
+    let mut body = String::new();
+    for line in text.lines() {
+        if line.starts_with("# ") {
+            body.push_str(&format!("<h1>{}</h1>", &line[2..]));
+        } else if line.starts_with("## ") {
+            body.push_str(&format!("<h2>{}</h2>", &line[3..]));
+        } else if line.starts_with("### ") {
+            body.push_str(&format!("<h3>{}</h3>", &line[4..]));
+        } else if line.trim().is_empty() {
+            body.push_str("<br/>");
+        } else {
+            let escaped = line.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            body.push_str(&format!("<p>{}</p>", escaped));
+        }
+    }
+    format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>body{{font-family:sans-serif;padding:12px;font-size:14px;}}</style></head><body>{}</body></html>",
+        body
+    )
 }
 
 vellum_plugin_sdk::vellum_plugin!(MarkdownLintPlugin);
