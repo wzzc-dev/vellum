@@ -133,6 +133,8 @@ pub struct EditorSnapshot {
     pub blocks: Vec<BlockSnapshot>,
     pub outline: Vec<OutlineItem>,
     pub view_mode: EditorViewMode,
+    pub find_matches: Vec<std::ops::Range<usize>>,
+    pub active_find_index: Option<usize>,
 }
 
 impl EditorSnapshot {
@@ -722,6 +724,8 @@ impl EditorController {
             blocks,
             outline,
             view_mode: self.view_mode,
+            find_matches: Vec::new(),
+            active_find_index: None,
         }
     }
 

@@ -642,23 +642,25 @@ impl VellumApp {
         if self.find_query.is_empty() {
             self.find_matches.clear();
             self.active_find_index = None;
-            return;
+        } else {
+            self.find_matches = find_matches(&self.editor_snapshot.document_text, &self.find_query)
+                .into_iter()
+                .map(|range| FindMatch { range })
+                .collect();
+
+            self.active_find_index = if self.find_matches.is_empty() {
+                None
+            } else {
+                let current_cursor = self.editor_snapshot.selection.cursor();
+                self.find_matches
+                    .iter()
+                    .position(|item| item.range.start <= current_cursor && current_cursor <= item.range.end)
+                    .or(Some(0))
+            };
         }
 
-        self.find_matches = find_matches(&self.editor_snapshot.document_text, &self.find_query)
-            .into_iter()
-            .map(|range| FindMatch { range })
-            .collect();
-
-        self.active_find_index = if self.find_matches.is_empty() {
-            None
-        } else {
-            let current_cursor = self.editor_snapshot.selection.cursor();
-            self.find_matches
-                .iter()
-                .position(|item| item.range.start <= current_cursor && current_cursor <= item.range.end)
-                .or(Some(0))
-        };
+        self.editor_snapshot.find_matches = self.find_matches.iter().map(|m| m.range.clone()).collect();
+        self.editor_snapshot.active_find_index = self.active_find_index;
     }
 
     fn navigate_find_match(&mut self, backwards: bool) -> Option<usize> {

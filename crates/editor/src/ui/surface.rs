@@ -49,6 +49,8 @@ struct RenderPalette {
     border_color: Hsla,
     blockquote_bar: Hsla,
     code_surface_background: Hsla,
+    find_match_color: Hsla,
+    find_active_match_color: Hsla,
     code_keyword_color: Hsla,
     code_function_color: Hsla,
     code_string_color: Hsla,
@@ -65,6 +67,7 @@ struct RenderPalette {
 
 #[derive(Clone)]
 struct BlockOverlay {
+    find_highlight_quads: Vec<PaintQuad>,
     selection_quads: Vec<PaintQuad>,
     caret_quad: Option<PaintQuad>,
 }
@@ -461,6 +464,8 @@ pub(super) fn render_document_surface(
         border_color: fg.opacity(0.12),
         blockquote_bar: fg.opacity(0.18),
         code_surface_background: fg.opacity(0.04),
+        find_match_color: fg.opacity(0.12),
+        find_active_match_color: fg.opacity(0.30),
         code_keyword_color: Hsla { h: keyword_hue, s: 0.7, l: if is_dark { 0.72 } else { 0.48 }, a: 1.0 },
         code_function_color: Hsla { h: function_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
         code_string_color: Hsla { h: string_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
@@ -550,6 +555,23 @@ fn render_display_block(
         && snapshot.display_map.visible_text.is_empty()
         && !input_focused;
     let visible_selection = snapshot.visible_selection.clone();
+    let find_matches = snapshot.find_matches.clone();
+    let active_find_index = snapshot.active_find_index;
+    let display_map = &snapshot.display_map;
+    let visible_find_ranges: Vec<(std::ops::Range<usize>, bool)> = find_matches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, source_range)| {
+            let visible_start = display_map.source_to_visible(source_range.start);
+            let visible_end = display_map.source_to_visible(source_range.end);
+            if visible_start < visible_end {
+                let is_active = active_find_index == Some(i);
+                Some((visible_start..visible_end, is_active))
+            } else {
+                None
+            }
+        })
+        .collect();
     let block_id = block.id;
     let block_clone = block.clone();
     let overlay_block = block.clone();
@@ -615,10 +637,14 @@ fn render_display_block(
                         cursor_blink_visible,
                         bounds,
                         palette,
+                        &visible_find_ranges,
                         window,
                     )
                 },
                 move |_, overlay, window, _| {
+                    for quad in overlay.find_highlight_quads {
+                        window.paint_quad(quad);
+                    }
                     for quad in overlay.selection_quads {
                         window.paint_quad(quad);
                     }
@@ -815,8 +841,18 @@ fn build_block_overlay(
     cursor_blink_visible: bool,
     bounds: Bounds<gpui::Pixels>,
     palette: RenderPalette,
+    visible_find_ranges: &[(std::ops::Range<usize>, bool)],
     window: &mut Window,
 ) -> BlockOverlay {
+    let find_highlight_quads = find_highlight_quads_for_block(
+        blocks,
+        block_index,
+        block,
+        visible_find_ranges,
+        bounds,
+        palette,
+        window,
+    );
     let selection_range = selection_range_in_block(block, selection);
     let selection_quads = selection_range
         .filter(|range| !range.is_empty())
@@ -839,9 +875,140 @@ fn build_block_overlay(
     };
 
     BlockOverlay {
+        find_highlight_quads,
         selection_quads,
         caret_quad,
     }
+}
+
+fn find_highlight_quads_for_block(
+    blocks: &[RenderBlock],
+    block_index: usize,
+    block: &RenderBlock,
+    visible_find_ranges: &[(std::ops::Range<usize>, bool)],
+    bounds: Bounds<gpui::Pixels>,
+    palette: RenderPalette,
+    window: &mut Window,
+) -> Vec<PaintQuad> {
+    let block_visible_end = rendered_visible_end(block);
+    let mut quads = Vec::new();
+    for (visible_range, is_active) in visible_find_ranges {
+        let start = visible_range.start.max(block.visible_range.start);
+        let end = visible_range.end.min(block_visible_end);
+        if start >= end {
+            continue;
+        }
+        let local_range =
+            start.saturating_sub(block.visible_range.start)..end.saturating_sub(block.visible_range.start);
+        let color = if *is_active {
+            palette.find_active_match_color
+        } else {
+            palette.find_match_color
+        };
+        let match_quads = highlight_quads_for_block_range(
+            blocks,
+            block_index,
+            block,
+            local_range,
+            bounds,
+            color,
+            window,
+        );
+        quads.extend(match_quads);
+    }
+    quads
+}
+
+fn highlight_quads_for_block_range(
+    blocks: &[RenderBlock],
+    block_index: usize,
+    block: &RenderBlock,
+    range: std::ops::Range<usize>,
+    bounds: Bounds<gpui::Pixels>,
+    color: Hsla,
+    window: &mut Window,
+) -> Vec<PaintQuad> {
+    let presentation = block_presentation(&block.kind);
+    let line_height = px(presentation.line_height);
+    let text_x_offset = text_content_x_offset(block);
+    if let Some(line_count) = surface_empty_block_line_count(blocks, block_index) {
+        if range.is_empty() || line_count == 0 {
+            return Vec::new();
+        }
+        let start_line = range.start.min(line_count.saturating_sub(1));
+        let end_line = range.end.saturating_sub(1).min(line_count.saturating_sub(1));
+        let width = (bounds.size.width - text_x_offset).max(px(1.));
+        let mut quads = Vec::new();
+        let mut y_offset = px(0.);
+        for line_index in 0..line_count {
+            if line_index >= start_line && line_index <= end_line {
+                quads.push(fill(
+                    Bounds::new(
+                        point(bounds.left() + text_x_offset, bounds.top() + y_offset),
+                        size(width, line_height),
+                    ),
+                    color,
+                ));
+            }
+            y_offset += line_height;
+        }
+        return quads;
+    }
+    let text_width = (bounds.size.width - text_x_offset).max(px(0.));
+    let lines = shape_block_lines(block, text_width, window);
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let mut quads = Vec::new();
+    let mut byte_offset = 0usize;
+    let mut y_offset = px(0.);
+    for (line_ix, line) in lines.iter().enumerate() {
+        let line_len = line.len();
+        let line_range = byte_offset..byte_offset + line_len;
+        if range.start < line_range.end && line_range.start < range.end {
+            let local_start = range.start.saturating_sub(line_range.start);
+            let local_end = (range.end.min(line_range.end)).saturating_sub(line_range.start);
+            let mut wrap_start = 0usize;
+            let mut wrap_y = px(0.);
+
+            for wrap_end in line
+                .wrap_boundaries()
+                .iter()
+                .map(|boundary| wrap_boundary_index(line, boundary))
+                .chain(std::iter::once(line.len()))
+            {
+                let start = local_start.max(wrap_start);
+                let end = local_end.min(wrap_end);
+                if start < end {
+                    let start_position = line
+                        .position_for_index(start, line_height)
+                        .unwrap_or_else(|| point(px(0.), wrap_y));
+                    let end_position = line
+                        .position_for_index(end, line_height)
+                        .unwrap_or_else(|| point(px(0.), wrap_y));
+                    quads.push(fill(
+                        Bounds::new(
+                            point(
+                                bounds.left() + text_x_offset + start_position.x,
+                                bounds.top() + y_offset + start_position.y,
+                            ),
+                            size((end_position.x - start_position.x).max(px(1.)), line_height),
+                        ),
+                        color,
+                    ));
+                }
+                wrap_start = wrap_end;
+                wrap_y += line_height;
+            }
+        }
+        y_offset += line.size(line_height).height;
+        byte_offset += line_len;
+        if line_ix + 1 < lines.len() {
+            byte_offset += 1;
+        }
+    }
+    quads
 }
 
 fn selection_range_in_block(
