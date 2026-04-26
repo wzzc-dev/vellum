@@ -212,6 +212,45 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    fn on_file_drop(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for path in paths.paths() {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let is_image = matches!(
+                ext.as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
+            );
+            if is_image {
+                let relative = self.relative_image_path(path);
+                let markdown = format!("![]({})", relative);
+                let effects = self
+                    .controller
+                    .dispatch(EditCommand::ReplaceSelection { text: markdown });
+                if effects.changed {
+                    self.schedule_autosave(window, cx);
+                }
+                self.apply_effects(window, cx, effects);
+            }
+        }
+    }
+
+    pub(crate) fn relative_image_path(&self, image_path: &std::path::Path) -> String {
+        if let Some(doc_dir) = self.controller.current_document_dir() {
+            if let Ok(relative) = image_path.strip_prefix(&doc_dir) {
+                return format!("./{}", relative.display());
+            }
+        }
+        image_path.display().to_string()
+    }
+
     pub(crate) fn insert_code_fence(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::InsertCodeFence);
         if effects.changed {
@@ -589,6 +628,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_insert_horizontal_rule))
             .on_action(cx.listener(Self::on_insert_code_fence))
             .on_action(cx.listener(Self::on_insert_table))
+            .on_drop::<gpui::ExternalPaths>(cx.listener(Self::on_file_drop))
             .capture_action({
                 let enter_view = view.clone();
                 move |action: &Enter, window, app: &mut App| {

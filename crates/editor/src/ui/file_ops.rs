@@ -21,7 +21,56 @@ impl MarkdownEditor {
     }
 
     pub fn paste_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            for entry in item.entries() {
+                if let gpui::ClipboardEntry::Image(image) = entry {
+                    if let Some(path) = self.save_clipboard_image(image, cx) {
+                        let relative = self.relative_image_path(&path);
+                        let markdown = format!("![]({})", relative);
+                        let effects = self
+                            .controller
+                            .dispatch(EditCommand::ReplaceSelection { text: markdown });
+                        if effects.changed {
+                            self.schedule_autosave(window, cx);
+                        }
+                        self.apply_effects(window, cx, effects);
+                        return;
+                    }
+                }
+            }
+        }
         window.dispatch_action(Box::new(Paste), cx);
+    }
+
+    fn save_clipboard_image(
+        &self,
+        image: &gpui::Image,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        let doc_dir = self.controller.current_document_dir()?;
+        let assets_dir = doc_dir.join("assets");
+        std::fs::create_dir_all(&assets_dir).ok()?;
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let format = image.format();
+        let ext = match format {
+            gpui::ImageFormat::Png => "png",
+            gpui::ImageFormat::Jpeg => "jpg",
+            gpui::ImageFormat::Gif => "gif",
+            gpui::ImageFormat::Webp => "webp",
+            gpui::ImageFormat::Bmp => "bmp",
+            gpui::ImageFormat::Tiff => "tiff",
+            gpui::ImageFormat::Svg => "svg",
+        };
+
+        let filename = format!("paste-{}.{}", timestamp, ext);
+        let path = assets_dir.join(&filename);
+        std::fs::write(&path, image.bytes()).ok()?;
+        Some(path)
     }
 
     pub fn select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
