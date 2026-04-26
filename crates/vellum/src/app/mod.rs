@@ -132,6 +132,7 @@ struct VellumApp {
     active_find_index: Option<usize>,
     find_case_sensitive: bool,
     find_whole_word: bool,
+    find_regex: bool,
     replace_visible: bool,
     replace_query: String,
     outline_filter: String,
@@ -452,6 +453,7 @@ impl VellumApp {
             active_find_index: None,
             find_case_sensitive: false,
             find_whole_word: false,
+            find_regex: false,
             replace_visible: false,
             replace_query: String::new(),
             outline_filter: String::new(),
@@ -657,6 +659,7 @@ impl VellumApp {
                 &self.find_query,
                 self.find_case_sensitive,
                 self.find_whole_word,
+                self.find_regex,
             )
             .into_iter()
             .map(|range| FindMatch { range })
@@ -751,12 +754,29 @@ fn find_matches_ext(
     needle: &str,
     case_sensitive: bool,
     whole_word: bool,
+    use_regex: bool,
 ) -> Vec<std::ops::Range<usize>> {
     if needle.is_empty() {
         return Vec::new();
     }
 
-    if !case_sensitive {
+    if use_regex {
+        let pattern = if whole_word {
+            format!(r"\b(?:{})\b", needle)
+        } else {
+            needle.to_string()
+        };
+        let re = regex::RegexBuilder::new(&pattern)
+            .case_insensitive(!case_sensitive)
+            .build();
+        match re {
+            Ok(re) => re
+                .find_iter(haystack)
+                .map(|m| m.start()..m.end())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    } else if !case_sensitive {
         let needle_lower = needle.to_lowercase();
         let haystack_lower = haystack.to_lowercase();
         let mut results = Vec::new();

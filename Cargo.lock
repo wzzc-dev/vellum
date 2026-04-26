@@ -7731,6 +7731,7 @@ dependencies = [
  "editor",
  "gpui",
  "gpui-component",
+ "regex",
  "rfd",
  "vellum-plugin",
  "workspace",

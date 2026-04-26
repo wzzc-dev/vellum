@@ -363,6 +363,30 @@ impl VellumApp {
             )
             .child(
                 div()
+                    .id("find-regex-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_sm()
+                    .when(self.find_regex, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
+                    .when(!self.find_regex, |this| this.text_color(cx.theme().muted_foreground))
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.find_regex = !this.find_regex;
+                                this.refresh_find_matches();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child(".*"),
+            )
+            .child(
+                div()
                     .flex_shrink_0()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
