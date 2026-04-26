@@ -51,6 +51,7 @@ pub struct MarkdownEditor {
     pub(super) scroll_handle: ScrollHandle,
     cursor_blink_visible: bool,
     cursor_blink_generation: u64,
+    pub(super) typewriter_mode: bool,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -97,11 +98,28 @@ impl MarkdownEditor {
             scroll_handle: ScrollHandle::new(),
             cursor_blink_visible: true,
             cursor_blink_generation: 0,
+            typewriter_mode: false,
         }
     }
 
     pub fn snapshot(&self) -> EditorSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn toggle_typewriter_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.typewriter_mode = !self.typewriter_mode;
+        if self.typewriter_mode {
+            self.scroll_cursor_into_view(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn set_typewriter_mode(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.typewriter_mode = enabled;
+        if self.typewriter_mode {
+            self.scroll_cursor_into_view(cx);
+        }
+        cx.notify();
     }
 
     pub(super) fn emit_changed(&mut self, cx: &mut Context<Self>) {
@@ -499,10 +517,19 @@ impl MarkdownEditor {
         let current_offset = self.scroll_handle.offset();
         let mut new_offset = current_offset;
 
-        if block_bounds.top() < viewport.top() {
-            new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
-        } else if block_bounds.bottom() > viewport.bottom() {
-            new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+        if self.typewriter_mode {
+            let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
+            let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
+            let delta = block_center_y - viewport_center_y;
+            if delta.abs() > px(1.) {
+                new_offset.y = current_offset.y - delta;
+            }
+        } else {
+            if block_bounds.top() < viewport.top() {
+                new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
+            } else if block_bounds.bottom() > viewport.bottom() {
+                new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+            }
         }
 
         if new_offset != current_offset {
@@ -545,6 +572,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_focus_prev_block))
             .on_action(cx.listener(Self::on_focus_next_block))
             .on_action(cx.listener(Self::on_toggle_source_mode))
+            .on_action(cx.listener(Self::on_toggle_typewriter_mode))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))

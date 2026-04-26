@@ -7,7 +7,7 @@ use crate::{
     InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection, PromoteBlock, RedoEdit,
     SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
-    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, UndoEdit,
+    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleTypewriterMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -93,6 +93,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-/", ToggleSourceMode, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-/", ToggleSourceMode, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-j", ToggleTypewriterMode, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-j", ToggleTypewriterMode, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-z", UndoEdit, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -209,6 +213,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(
             "ctrl-/",
             ToggleSourceMode,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-j",
+            ToggleTypewriterMode,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-j",
+            ToggleTypewriterMode,
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
         #[cfg(target_os = "macos")]
@@ -346,6 +362,15 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_view_mode(window, cx);
+    }
+
+    pub(crate) fn on_toggle_typewriter_mode(
+        &mut self,
+        _: &ToggleTypewriterMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_typewriter_mode(window, cx);
     }
 
     pub(crate) fn on_toggle_heading1(

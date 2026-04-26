@@ -31,6 +31,7 @@ actions!(
         InsertHorizontalRule,
         InsertCodeFence,
         InsertTable,
+        ToggleTypewriterMode,
     ]
 );
 
