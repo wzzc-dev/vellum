@@ -32,6 +32,7 @@ actions!(
         InsertCodeFence,
         InsertTable,
         ToggleTypewriterMode,
+        GotoLine,
     ]
 );
 

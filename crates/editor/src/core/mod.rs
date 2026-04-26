@@ -4,7 +4,7 @@ pub(crate) mod display_map;
 pub(crate) mod document;
 pub(crate) mod syntax;
 pub(crate) mod table;
-pub(crate) mod text_ops;
+pub mod text_ops;
 
 pub use code_highlight::CodeTokenType;
 pub use controller::{

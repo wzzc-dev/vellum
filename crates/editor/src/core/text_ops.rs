@@ -362,7 +362,7 @@ pub(crate) fn pipe_table_enter_transform(
     })
 }
 
-pub(crate) fn byte_offset_for_line_column(
+pub fn byte_offset_for_line_column(
     text: &str,
     target_line: usize,
     target_column: usize,

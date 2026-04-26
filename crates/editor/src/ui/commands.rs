@@ -3,9 +3,9 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
-    BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, InsertCodeFence,
-    InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection, PromoteBlock, RedoEdit,
-    SecondaryEnter, ToggleBlockquote, ToggleBulletList,
+    BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, GotoLine,
+    InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection,
+    PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
     ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleTypewriterMode, UndoEdit,
 };
@@ -109,6 +109,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-y", RedoEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-enter", SecondaryEnter, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-l", GotoLine, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-l", GotoLine, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -371,6 +375,15 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_typewriter_mode(window, cx);
+    }
+
+    pub(crate) fn on_goto_line(
+        &mut self,
+        _: &GotoLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_goto_line(window, cx);
     }
 
     pub(crate) fn on_toggle_heading1(

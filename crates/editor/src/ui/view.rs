@@ -43,6 +43,7 @@ pub struct MarkdownEditor {
     pub(super) document_input: Entity<InputState>,
     _input_subscription: Subscription,
     _input_observer: Subscription,
+    _goto_line_subscription: Subscription,
     autosave_generation: u64,
     pub(super) syncing_input: bool,
     pub(super) input_focused: bool,
@@ -53,6 +54,8 @@ pub struct MarkdownEditor {
     cursor_blink_visible: bool,
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
+    goto_line_visible: bool,
+    goto_line_input: Entity<InputState>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -85,12 +88,32 @@ impl MarkdownEditor {
             });
         });
 
+        let goto_line_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Line number...")
+        });
+        let goto_line_view = cx.entity();
+        let goto_line_subscription = window.subscribe(
+            &goto_line_input,
+            cx,
+            move |_, event: &InputEvent, window, cx| {
+                let _ = goto_line_view.update(cx, |this, cx| {
+                    if let InputEvent::Change = event {
+                        let text = this.goto_line_input.read(cx).text().to_string();
+                        if text.contains('\n') {
+                            this.perform_goto_line(window, cx);
+                        }
+                    }
+                });
+            },
+        );
+
         Self {
             controller,
             snapshot,
             document_input,
             _input_subscription: input_subscription,
             _input_observer: input_observer,
+            _goto_line_subscription: goto_line_subscription,
             autosave_generation: 0,
             syncing_input: false,
             input_focused: false,
@@ -101,6 +124,8 @@ impl MarkdownEditor {
             cursor_blink_visible: true,
             cursor_blink_generation: 0,
             typewriter_mode: false,
+            goto_line_visible: false,
+            goto_line_input,
         }
     }
 
@@ -120,6 +145,39 @@ impl MarkdownEditor {
         self.typewriter_mode = enabled;
         if self.typewriter_mode {
             self.scroll_cursor_into_view(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.goto_line_visible = !self.goto_line_visible;
+        if self.goto_line_visible {
+            self.goto_line_input.update(cx, |input, cx| {
+                input.set_value(String::new(), window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    pub fn perform_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input_text = self.goto_line_input.read(cx).text().to_string();
+        self.goto_line_visible = false;
+
+        if let Ok(line_number) = input_text.trim().parse::<usize>() {
+            if line_number > 0 {
+                let text = &self.snapshot.document_text;
+                let offset = crate::core::text_ops::byte_offset_for_line_column(
+                    text,
+                    line_number.saturating_sub(1),
+                    0,
+                );
+                let selection = SelectionState::collapsed(offset);
+                let effects = self
+                    .controller
+                    .dispatch(EditCommand::SetSelection { selection });
+                self.apply_effects(window, cx, effects);
+                self.scroll_cursor_into_view(cx);
+            }
         }
         cx.notify();
     }
@@ -702,6 +760,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_focus_next_block))
             .on_action(cx.listener(Self::on_toggle_source_mode))
             .on_action(cx.listener(Self::on_toggle_typewriter_mode))
+            .on_action(cx.listener(Self::on_goto_line))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))
@@ -780,7 +839,38 @@ impl Render for MarkdownEditor {
                 }
             })
             .child(
-                div().size_full().flex().flex_col().child(
+                div().size_full().flex().flex_col()
+                    .when(self.goto_line_visible, |this| {
+                        this.child(
+                            div()
+                                .id("goto-line-bar")
+                                .w_full()
+                                .h(px(36.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .px(px(16.))
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .bg(cx.theme().background)
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Go to Line:"),
+                                )
+                                .child(
+                                    div().flex_1().child(
+                                        Input::new(&self.goto_line_input)
+                                            .appearance(true)
+                                            .bordered(true)
+                                            .focus_bordered(true)
+                                            .text_size(px(13.)),
+                                    ),
+                                )
+                        )
+                    })
+                    .child(
                     div()
                         .flex_1()
                         .id("editor-scroll-container")
