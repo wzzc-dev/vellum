@@ -126,6 +126,15 @@ impl VellumApp {
         self.toggle_sidebar_visibility(cx);
     }
 
+    pub(super) fn on_toggle_right_panel(
+        &mut self,
+        _: &ToggleRightPanel,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_right_panel_visibility(cx);
+    }
+
     pub(super) fn on_toggle_status_bar(
         &mut self,
         _: &ToggleStatusBar,

@@ -1034,6 +1034,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_save_now))
             .on_action(cx.listener(Self::on_save_as))
             .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(Self::on_toggle_right_panel))
             .on_action(cx.listener(Self::on_toggle_status_bar))
             .on_action(cx.listener(Self::on_open_find_panel))
             .on_action(cx.listener(Self::on_close_find_panel))

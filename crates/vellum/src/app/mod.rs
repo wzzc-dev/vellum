@@ -53,6 +53,7 @@ actions!(
         SaveAs,
         Quit,
         ToggleSidebar,
+        ToggleRightPanel,
         ToggleStatusBar,
         OpenFindPanel,
         CloseFindPanel,
@@ -191,6 +192,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-w", CloseTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-alt-\\", ToggleRightPanel, Some(APP_CONTEXT)),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -343,6 +345,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Toggle Source Mode", ToggleSourceMode),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
+                MenuItem::action("Toggle Right Panel", ToggleRightPanel),
                 MenuItem::action("Toggle Status Bar", ToggleStatusBar),
             ],
         },
