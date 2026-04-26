@@ -139,6 +139,62 @@ impl MarkdownEditor {
         task_marker_range_for_line(block, line_index)
     }
 
+    fn link_url_at_position(
+        &self,
+        block_id: u64,
+        position: gpui::Point<gpui::Pixels>,
+        window: &Window,
+    ) -> Option<String> {
+        let bounds = self.block_bounds.borrow().get(&block_id).copied()?;
+        let (block_index, block) = self
+            .snapshot
+            .display_map
+            .blocks
+            .iter()
+            .enumerate()
+            .find(|(_, block)| block.id == block_id)
+            .map(|(index, block)| (index, block.clone()))?;
+
+        let local_visible_offset = visible_byte_offset_for_click_position(
+            &self.snapshot.display_map.blocks,
+            block_index,
+            &block,
+            position,
+            bounds,
+            window,
+        );
+        let visible_offset = block.visible_range.start + local_visible_offset;
+
+        for span in &block.spans {
+            if span.visible_range.start <= visible_offset && visible_offset <= span.visible_range.end {
+                if let Some(crate::RenderSpanMeta::Link { target, .. }) = &span.meta {
+                    if !target.is_empty() {
+                        return Some(target.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub(super) fn link_url_at_cursor(&self) -> Option<String> {
+        let cursor = self.snapshot.visible_selection.cursor();
+        for block in &self.snapshot.display_map.blocks {
+            if block.visible_range.start <= cursor && cursor <= block.visible_range.end {
+                for span in &block.spans {
+                    if span.visible_range.start <= cursor && cursor <= span.visible_range.end {
+                        if let Some(crate::RenderSpanMeta::Link { target, .. }) = &span.meta {
+                            if !target.is_empty() {
+                                return Some(target.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn surface_selection_anchor_for_position(
         &self,
         block_id: u64,
@@ -220,6 +276,13 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.modifiers().platform {
+            if let Some(url) = self.link_url_at_position(block_id, event.position(), window) {
+                let _ = open::that(&url);
+                return;
+            }
+        }
+
         if let Some(range) = self.task_marker_hit_range(block_id, event.position()) {
             self.toggle_task_marker(range, window, cx);
             return;
@@ -783,8 +846,9 @@ fn render_display_block(
         .id(("display-block", block.id))
         .w_full()
         .py(px(presentation.row_spacing_y))
-        .context_menu(move |menu, _, _| {
-            build_editor_context_menu(menu, &context_menu_view, &context_block_kind)
+        .context_menu(move |menu, _, cx| {
+            let link_url = context_menu_view.read(cx).link_url_at_cursor();
+            build_editor_context_menu(menu, &context_menu_view, &context_block_kind, link_url)
         })
         .child(
             div()
@@ -2284,13 +2348,28 @@ fn build_editor_context_menu(
     menu: PopupMenu,
     view: &Entity<MarkdownEditor>,
     block_kind: &BlockKind,
+    link_url: Option<String>,
 ) -> PopupMenu {
     let view = view.clone();
 
     let is_code_block = matches!(block_kind, BlockKind::CodeFence { .. });
     let is_table = matches!(block_kind, BlockKind::Table);
 
-    let mut menu = menu
+    let mut menu = menu;
+
+    if let Some(url) = &link_url {
+        let url_clone = url.clone();
+        menu = menu.item(PopupMenuItem::new("Open Link").on_click(move |_, _, _| {
+            let _ = open::that(&url_clone);
+        }));
+        let url_clone = url.clone();
+        menu = menu.item(PopupMenuItem::new("Copy Link Address").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url_clone.clone()));
+        }));
+        menu = menu.separator();
+    }
+
+    menu = menu
         .item(PopupMenuItem::new("Cut").on_click({
             let view = view.clone();
             move |_, window, cx| {

@@ -1636,6 +1636,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "markdown",
+ "open",
  "ropey 1.6.0",
  "tree-sitter",
  "tree-sitter-c",
