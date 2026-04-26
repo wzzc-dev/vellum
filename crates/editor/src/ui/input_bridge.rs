@@ -13,6 +13,89 @@ use crate::{
     },
 };
 
+const AUTO_PAIR_OPENERS: &[(char, char)] = &[
+    ('(', ')'),
+    ('[', ']'),
+    ('{', '}'),
+    ('"', '"'),
+    ('\'', '\''),
+];
+
+fn closing_char_for_opener(c: char) -> Option<char> {
+    AUTO_PAIR_OPENERS
+        .iter()
+        .find(|(open, _)| *open == c)
+        .map(|(_, close)| *close)
+}
+
+fn is_auto_pair_closer(c: char) -> bool {
+    AUTO_PAIR_OPENERS.iter().any(|(_, close)| *close == c)
+}
+
+fn detect_auto_pair_opportunity(
+    old_visible: &str,
+    new_visible: &str,
+    old_selection: &SelectionState,
+) -> Option<char> {
+    if !old_selection.is_collapsed() {
+        return None;
+    }
+
+    let (range, replacement) = compute_document_diff(old_visible, new_visible)?;
+    if !range.is_empty() || replacement.chars().count() != 1 {
+        return None;
+    }
+
+    let inserted = replacement.chars().next()?;
+    closing_char_for_opener(inserted)
+}
+
+fn detect_overclose_opportunity(
+    old_visible: &str,
+    new_visible: &str,
+    old_selection: &SelectionState,
+) -> bool {
+    if !old_selection.is_collapsed() {
+        return false;
+    }
+
+    let Some((range, replacement)) = compute_document_diff(old_visible, new_visible) else {
+        return false;
+    };
+    if !range.is_empty() || replacement.chars().count() != 1 {
+        return false;
+    }
+
+    let Some(typed) = replacement.chars().next() else {
+        return false;
+    };
+    if !is_auto_pair_closer(typed) {
+        return false;
+    }
+
+    let cursor = old_selection.cursor();
+    let char_after = old_visible[cursor..].chars().next();
+    char_after == Some(typed)
+}
+
+fn apply_auto_pair_to_source(
+    source_text: &str,
+    selection: SelectionState,
+    close_char: char,
+) -> (String, SelectionState) {
+    if !selection.is_collapsed() {
+        return (source_text.to_string(), selection);
+    }
+
+    let cursor = selection.cursor();
+    let mut new_text = String::with_capacity(source_text.len() + close_char.len_utf8());
+    new_text.push_str(&source_text[..cursor]);
+    new_text.push(close_char);
+    new_text.push_str(&source_text[cursor..]);
+
+    (new_text, selection)
+}
+
 use super::{
     surface::{
         caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
@@ -120,13 +203,55 @@ impl MarkdownEditor {
         let mirrored_selection = mirrored_input_selection(&self.snapshot);
 
         let effects = if visible_text != self.snapshot.display_map.visible_text {
-            let Some((text, selection)) =
-                reconcile_visible_input_change(&self.snapshot, &visible_text)
-            else {
-                return;
-            };
-            self.controller
-                .dispatch(EditCommand::SyncDocumentState { text, selection })
+            let overclose = detect_overclose_opportunity(
+                &self.snapshot.display_map.visible_text,
+                &visible_text,
+                &mirrored_selection,
+            );
+
+            if overclose {
+                let cursor = mirrored_selection.cursor();
+                let char_len = self.snapshot.display_map.visible_text[cursor..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                let new_cursor = cursor + char_len;
+
+                self.syncing_input = true;
+                self.document_input.update(cx, |input, cx| {
+                    input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
+                });
+                self.syncing_input = false;
+
+                let mut new_visible_selection = SelectionState::collapsed(new_cursor);
+                new_visible_selection.preferred_column = visible_selection.preferred_column;
+                let selection = selection_from_visible_input(&self.snapshot, &new_visible_selection);
+
+                self.controller
+                    .dispatch(EditCommand::SetSelection { selection })
+            } else {
+                let auto_pair_close = detect_auto_pair_opportunity(
+                    &self.snapshot.display_map.visible_text,
+                    &visible_text,
+                    &mirrored_selection,
+                );
+
+                let Some((text, selection)) =
+                    reconcile_visible_input_change(&self.snapshot, &visible_text)
+                else {
+                    return;
+                };
+
+                let (text, selection) = if let Some(close_char) = auto_pair_close {
+                    apply_auto_pair_to_source(&text, selection, close_char)
+                } else {
+                    (text, selection)
+                };
+
+                self.controller
+                    .dispatch(EditCommand::SyncDocumentState { text, selection })
+            }
         } else if visible_selection != mirrored_selection {
             let selection = selection_from_visible_input(&self.snapshot, &visible_selection);
             self.controller

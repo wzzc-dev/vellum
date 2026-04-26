@@ -373,6 +373,10 @@ impl MarkdownEditor {
             return false;
         }
 
+        if self.try_delete_backward_auto_pair(window, cx) {
+            return true;
+        }
+
         let effects = self.controller.dispatch(EditCommand::DeleteBackward);
         if !effects.changed && !effects.selection_changed {
             return false;
@@ -383,6 +387,50 @@ impl MarkdownEditor {
         }
         self.apply_effects(window, cx, effects);
         true
+    }
+
+    fn try_delete_backward_auto_pair(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let snapshot = &self.snapshot;
+        if !snapshot.selection.is_collapsed() {
+            return false;
+        }
+
+        let cursor = snapshot.selection.cursor();
+        let text = &snapshot.document_text;
+        if cursor == 0 {
+            return false;
+        }
+
+        let char_before = text[..cursor].chars().last();
+        let char_after = text[cursor..].chars().next();
+
+        if let (Some(before), Some(after)) = (char_before, char_after) {
+            let is_pair = matches!(
+                (before, after),
+                ('(', ')') | ('[', ']') | ('{', '}') | ('"', '"') | ('\'', '\'')
+            );
+            if is_pair {
+                let before_len = before.len_utf8();
+                let after_len = after.len_utf8();
+                let effects = self
+                    .controller
+                    .dispatch(EditCommand::DeleteSurroundingPair {
+                        before_len,
+                        after_len,
+                    });
+                if effects.changed {
+                    self.schedule_autosave(window, cx);
+                }
+                self.apply_effects(window, cx, effects);
+                return true;
+            }
+        }
+
+        false
     }
 
     fn handle_delete_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {

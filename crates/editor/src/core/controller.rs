@@ -189,6 +189,10 @@ pub enum EditCommand {
     },
     DeleteBackward,
     DeleteForward,
+    DeleteSurroundingPair {
+        before_len: usize,
+        after_len: usize,
+    },
     /// Toggle heading at the given depth (1–6). If the current block is already
     /// a heading at that depth, it reverts to a plain paragraph (depth 0).
     /// Passing depth 0 always converts to paragraph.
@@ -908,6 +912,9 @@ impl EditorController {
             } => self.move_caret_to_adjacent_block(direction, preferred_column),
             EditCommand::DeleteBackward => self.delete_backward(),
             EditCommand::DeleteForward => self.delete_forward(),
+            EditCommand::DeleteSurroundingPair { before_len, after_len } => {
+                self.delete_surrounding_pair(before_len, after_len)
+            }
             EditCommand::ToggleHeading { depth } => self.toggle_heading(depth),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
@@ -1531,6 +1538,21 @@ impl EditorController {
             String::new(),
             SelectionState::collapsed(cursor),
             "Deleted text",
+        )
+    }
+
+    fn delete_surrounding_pair(&mut self, before_len: usize, after_len: usize) -> EditorEffects {
+        let cursor = self.selection.cursor();
+        let start = cursor.saturating_sub(before_len);
+        let end = cursor + after_len;
+        if start >= end || end > self.document.text().len() {
+            return EditorEffects::default();
+        }
+        self.apply_edit(
+            start..end,
+            String::new(),
+            SelectionState::collapsed(start),
+            "Deleted auto-pair",
         )
     }
 
