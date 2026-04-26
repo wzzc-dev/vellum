@@ -21,6 +21,7 @@ pub(crate) struct InlineStyle {
     pub(crate) strikethrough: bool,
     pub(crate) code: bool,
     pub(crate) link: bool,
+    pub(crate) highlight: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -626,7 +627,7 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
             }
         }
 
-        if let Some((delimiter, advance)) = [("**", 2usize), ("__", 2usize), ("~~", 2usize)]
+        if let Some((delimiter, advance)) = [("**", 2usize), ("__", 2usize), ("~~", 2usize), ("==", 2usize)]
             .into_iter()
             .find(|(delimiter, _)| rest.starts_with(*delimiter))
         {
@@ -635,6 +636,7 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
                 match delimiter {
                     "**" | "__" => nested.strong = true,
                     "~~" => nested.strikethrough = true,
+                    "==" => nested.highlight = true,
                     _ => {}
                 }
                 let inner_start = offset + advance;
@@ -698,7 +700,7 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '<'))
+            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '<' | '='))
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
         push_inline_text(segments, rest[..next_special].to_string(), style);

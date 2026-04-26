@@ -106,6 +106,7 @@ struct RenderPalette {
     find_match_color: Hsla,
     find_active_match_color: Hsla,
     link_color: Hsla,
+    highlight_background: Hsla,
     code_keyword_color: Hsla,
     code_function_color: Hsla,
     code_string_color: Hsla,
@@ -647,6 +648,11 @@ pub(super) fn render_document_surface(
             Hsla { h: 210. / 360., s: 0.8, l: 0.65, a: 1.0 }
         } else {
             Hsla { h: 210. / 360., s: 0.75, l: 0.45, a: 1.0 }
+        },
+        highlight_background: if is_dark {
+            Hsla { h: 45. / 360., s: 0.8, l: 0.5, a: 0.25 }
+        } else {
+            Hsla { h: 45. / 360., s: 0.9, l: 0.85, a: 0.5 }
         },
         code_keyword_color: Hsla { h: keyword_hue, s: 0.7, l: if is_dark { 0.72 } else { 0.48 }, a: 1.0 },
         code_function_color: Hsla { h: function_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
@@ -1680,6 +1686,9 @@ fn apply_fragment_style(
         }
         style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
         style.background_color = Some(palette.code_background);
+    }
+    if inline_style.highlight {
+        style.background_color = Some(palette.highlight_background);
     }
 }
 

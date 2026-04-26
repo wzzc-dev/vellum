@@ -19,6 +19,7 @@ pub struct RenderInlineStyle {
     pub strikethrough: bool,
     pub code: bool,
     pub link: bool,
+    pub highlight: bool,
 }
 
 impl From<&InlineStyle> for RenderInlineStyle {
@@ -29,6 +30,7 @@ impl From<&InlineStyle> for RenderInlineStyle {
             strikethrough: value.strikethrough,
             code: value.code,
             link: value.link,
+            highlight: value.highlight,
         }
     }
 }
@@ -1347,6 +1349,7 @@ fn parse_inline_tokens_into(
             ("**", 2usize, InlineMarker::Strong),
             ("__", 2usize, InlineMarker::Strong),
             ("~~", 2usize, InlineMarker::Strike),
+            ("==", 2usize, InlineMarker::Highlight),
         ]
         .into_iter()
         .find(|(delimiter, _, _)| rest.starts_with(*delimiter))
@@ -1359,6 +1362,7 @@ fn parse_inline_tokens_into(
                 match update {
                     InlineMarker::Strong => nested.strong = true,
                     InlineMarker::Strike => nested.strikethrough = true,
+                    InlineMarker::Highlight => nested.highlight = true,
                 }
                 parse_inline_tokens_into(
                     &text[inner_start..inner_end],
@@ -1518,7 +1522,7 @@ fn parse_inline_tokens_into(
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$'))
+            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '='))
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
@@ -1682,6 +1686,7 @@ fn parse_math_span(rest: &str) -> Option<(&str, &str, bool)> {
 enum InlineMarker {
     Strong,
     Strike,
+    Highlight,
 }
 
 fn heading_marker_len(text: &str) -> usize {
@@ -1817,6 +1822,7 @@ fn merge_inline_styles(base: RenderInlineStyle, overlay: RenderInlineStyle) -> R
         strikethrough: base.strikethrough || overlay.strikethrough,
         code: base.code || overlay.code,
         link: base.link || overlay.link,
+        highlight: base.highlight || overlay.highlight,
     }
 }
 
