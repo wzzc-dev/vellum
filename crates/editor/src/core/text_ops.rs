@@ -293,6 +293,7 @@ pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
             | BlockKind::Heading { .. }
             | BlockKind::List
             | BlockKind::Blockquote
+            | BlockKind::CodeFence { .. }
     )
 }
 
@@ -316,6 +317,7 @@ pub(crate) fn semantic_enter_transform(
         }
         BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
+        BlockKind::CodeFence { .. } => code_fence_enter_transform(&edited.text, edited.cursor_offset),
         _ => None,
     }
 }
@@ -520,6 +522,29 @@ fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnte
         replacement,
         cursor_offset,
     })
+}
+
+fn code_fence_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    let (line_start, line_end) = line_bounds(text, cursor_offset);
+    let line = &text[line_start..line_end];
+    let trimmed = line.trim();
+    if !is_closing_fence(trimmed) {
+        return None;
+    }
+    Some(exit_structured_line(text, line_start, line_end))
+}
+
+fn is_closing_fence(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let backtick_count = s.chars().take_while(|c| *c == '`').count();
+    if backtick_count >= 3 && backtick_count == s.len() {
+        return true;
+    }
+    let tilde_count = s.chars().take_while(|c| *c == '~').count();
+    tilde_count >= 3 && tilde_count == s.len()
 }
 
 fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
@@ -910,10 +935,10 @@ mod tests {
     fn semantic_enter_only_targets_supported_body_blocks() {
         assert!(supports_semantic_enter(&BlockKind::Paragraph));
         assert!(supports_semantic_enter(&BlockKind::List));
-        assert!(!supports_semantic_enter(&BlockKind::Table));
-        assert!(!supports_semantic_enter(&BlockKind::CodeFence {
+        assert!(supports_semantic_enter(&BlockKind::CodeFence {
             language: Some("rust".to_string()),
         }));
+        assert!(!supports_semantic_enter(&BlockKind::Table));
     }
 
     #[test]
