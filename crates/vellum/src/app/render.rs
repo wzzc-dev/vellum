@@ -315,6 +315,54 @@ impl VellumApp {
             .child(Input::new(&find_input).flex_1())
             .child(
                 div()
+                    .id("find-case-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_sm()
+                    .when(self.find_case_sensitive, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
+                    .when(!self.find_case_sensitive, |this| this.text_color(cx.theme().muted_foreground))
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.find_case_sensitive = !this.find_case_sensitive;
+                                this.refresh_find_matches();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child("Aa"),
+            )
+            .child(
+                div()
+                    .id("find-whole-word-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_sm()
+                    .when(self.find_whole_word, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
+                    .when(!self.find_whole_word, |this| this.text_color(cx.theme().muted_foreground))
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.find_whole_word = !this.find_whole_word;
+                                this.refresh_find_matches();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child("W"),
+            )
+            .child(
+                div()
                     .flex_shrink_0()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)

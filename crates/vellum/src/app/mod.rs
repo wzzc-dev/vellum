@@ -130,6 +130,8 @@ struct VellumApp {
     find_query: String,
     find_matches: Vec<FindMatch>,
     active_find_index: Option<usize>,
+    find_case_sensitive: bool,
+    find_whole_word: bool,
     replace_visible: bool,
     replace_query: String,
     outline_filter: String,
@@ -448,6 +450,8 @@ impl VellumApp {
             find_query: String::new(),
             find_matches: Vec::new(),
             active_find_index: None,
+            find_case_sensitive: false,
+            find_whole_word: false,
             replace_visible: false,
             replace_query: String::new(),
             outline_filter: String::new(),
@@ -648,10 +652,15 @@ impl VellumApp {
             self.find_matches.clear();
             self.active_find_index = None;
         } else {
-            self.find_matches = find_matches(&self.editor_snapshot.document_text, &self.find_query)
-                .into_iter()
-                .map(|range| FindMatch { range })
-                .collect();
+            self.find_matches = find_matches_ext(
+                &self.editor_snapshot.document_text,
+                &self.find_query,
+                self.find_case_sensitive,
+                self.find_whole_word,
+            )
+            .into_iter()
+            .map(|range| FindMatch { range })
+            .collect();
 
             self.active_find_index = if self.find_matches.is_empty() {
                 None
@@ -728,10 +737,50 @@ impl VellumApp {
     }
 }
 
-fn find_matches(haystack: &str, needle: &str) -> Vec<std::ops::Range<usize>> {
+fn is_whole_word(text: &str, start: usize, end: usize) -> bool {
+    let before_is_boundary = start == 0
+        || !text.as_bytes()[start - 1].is_ascii_alphanumeric()
+            && text.as_bytes()[start - 1] != b'_';
+    let after_is_boundary = end >= text.len()
+        || !text.as_bytes()[end].is_ascii_alphanumeric() && text.as_bytes()[end] != b'_';
+    before_is_boundary && after_is_boundary
+}
+
+fn find_matches_ext(
+    haystack: &str,
+    needle: &str,
+    case_sensitive: bool,
+    whole_word: bool,
+) -> Vec<std::ops::Range<usize>> {
     if needle.is_empty() {
         return Vec::new();
     }
 
-    haystack.match_indices(needle).map(|(start, matched)| start..start + matched.len()).collect()
+    if !case_sensitive {
+        let needle_lower = needle.to_lowercase();
+        let haystack_lower = haystack.to_lowercase();
+        let mut results = Vec::new();
+        let mut start = 0;
+        while let Some(pos) = haystack_lower[start..].find(&needle_lower) {
+            let abs_start = start + pos;
+            let abs_end = abs_start + needle.len();
+            if whole_word && !is_whole_word(haystack, abs_start, abs_end) {
+                start = abs_start + 1;
+                continue;
+            }
+            results.push(abs_start..abs_end);
+            start = abs_start + 1;
+        }
+        results
+    } else {
+        let mut results = Vec::new();
+        for (start, matched) in haystack.match_indices(needle) {
+            let end = start + matched.len();
+            if whole_word && !is_whole_word(haystack, start, end) {
+                continue;
+            }
+            results.push(start..end);
+        }
+        results
+    }
 }
