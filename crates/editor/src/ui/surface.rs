@@ -886,6 +886,30 @@ fn render_display_block(
             .into_any_element(),
         BlockKind::List => text_area,
         BlockKind::CodeFence { language } => {
+            let line_count = block.visible_text.lines().count().max(1);
+            let line_number_width = format!("{}", line_count).len().max(2);
+            let gutter_width = line_number_width as f32 * 8.0 + 16.0;
+
+            let line_numbers = (1..=line_count)
+                .map(|i| format!("{:>width$}", i, width = line_number_width))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let line_numbers_el = div()
+                .w(px(gutter_width))
+                .flex_shrink_0()
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height))
+                .font_family(MONOSPACE_FONT_FAMILY)
+                .text_color(palette.muted_text_color.opacity(0.5))
+                .pr(px(8.))
+                .child(line_numbers);
+
+            let code_content = div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(text_area);
+
             let mut code_surface = div()
                 .w_full()
                 .rounded(px(8.))
@@ -894,7 +918,9 @@ fn render_display_block(
                 .bg(palette.code_surface_background)
                 .px_3()
                 .py_2()
-                .child(text_area);
+                .flex()
+                .child(line_numbers_el)
+                .child(code_content);
 
             if let Some(language) = language.as_ref().filter(|language| !language.is_empty()) {
                 code_surface = div()
