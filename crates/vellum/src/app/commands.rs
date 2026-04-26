@@ -178,7 +178,6 @@ impl VellumApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sidebar_visible = true;
-        self.set_sidebar_view(SidebarView::Plugins, cx);
+        self.open_right_panel(RightPanelView::Plugins, cx);
     }
 }

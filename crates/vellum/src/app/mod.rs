@@ -83,6 +83,11 @@ enum SidebarView {
     #[default]
     Files,
     Outline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RightPanelView {
+    #[default]
     Plugins,
     Plugin(u32),
 }
@@ -107,6 +112,11 @@ struct VellumApp {
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
     sidebar_view: SidebarView,
+    right_panel_visible: bool,
+    right_panel_view: RightPanelView,
+    right_panel_toggle_visible: bool,
+    right_panel_toggle_hovered: bool,
+    right_panel_toggle_hide_generation: u64,
     status_bar_pinned: bool,
     status_bar_visible: bool,
     status_bar_hovered: bool,
@@ -240,8 +250,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     let window = main_window;
     cx.on_action(move |_: &ManagePlugins, cx| {
         update_vellum_app_from_menu(window, cx, |this, _window, cx| {
-            this.sidebar_visible = true;
-            this.set_sidebar_view(SidebarView::Plugins, cx);
+            this.open_right_panel(RightPanelView::Plugins, cx);
         });
     });
     cx.set_menus(vec![
@@ -417,6 +426,11 @@ impl VellumApp {
             editor_snapshot,
             sidebar_visible: true,
             sidebar_view: SidebarView::Files,
+            right_panel_visible: false,
+            right_panel_view: RightPanelView::Plugins,
+            right_panel_toggle_visible: false,
+            right_panel_toggle_hovered: false,
+            right_panel_toggle_hide_generation: 0,
             status_bar_pinned: true,
             status_bar_visible: true,
             status_bar_hovered: false,

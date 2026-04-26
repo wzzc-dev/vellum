@@ -862,16 +862,14 @@ impl VellumApp {
         content.into_any_element()
     }
 
-    fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let body = match self.sidebar_view {
             SidebarView::Files => self.render_file_tree(cx),
             SidebarView::Outline => self.render_outline(cx),
-            SidebarView::Plugins => self.render_plugins_panel(cx),
-            SidebarView::Plugin(panel_id) => self.render_plugin_panel(panel_id, window, cx),
         };
 
-        let mut tabs = ButtonGroup::new("workspace-sidebar-tabs")
+        let tabs = ButtonGroup::new("workspace-sidebar-tabs")
             .compact()
             .ghost()
             .child(
@@ -883,44 +881,17 @@ impl VellumApp {
                 Button::new("sidebar-outline")
                     .label("Outline")
                     .selected(self.sidebar_view == SidebarView::Outline),
-            );
-
-        for (_i, panel) in self.plugin_manager.sidebar_panels().iter().enumerate() {
-            let panel_id = panel.id;
-            tabs = tabs.child(
-                Button::new(ElementId::Name(format!("sidebar-plugin-{}", panel_id).into()))
-                    .label(panel.label.clone())
-                    .selected(self.sidebar_view == SidebarView::Plugin(panel_id)),
-            );
-        }
-
-        let tabs = tabs.on_click(move |selected: &Vec<usize>, _, cx| {
-            let target = if selected.contains(&0) {
-                SidebarView::Files
-            } else if selected.contains(&1) {
-                SidebarView::Outline
-            } else {
-                let plugin_panels_count = {
-                    let view = view.read(cx);
-                    view.plugin_manager.sidebar_panels().len()
-                };
-                let plugin_index = selected.iter().find(|&&i| i >= 2).copied().unwrap_or(2) - 2;
-                if plugin_index < plugin_panels_count {
-                    let view = view.read(cx);
-                    let panels = view.plugin_manager.sidebar_panels();
-                    if let Some(panel) = panels.get(plugin_index) {
-                        SidebarView::Plugin(panel.id)
-                    } else {
-                        SidebarView::Files
-                    }
+            )
+            .on_click(move |selected: &Vec<usize>, _, cx| {
+                let target = if selected.contains(&1) {
+                    SidebarView::Outline
                 } else {
                     SidebarView::Files
-                }
-            };
-            let _ = view.update(cx, |this, cx| {
-                this.set_sidebar_view(target, cx);
+                };
+                let _ = view.update(cx, |this, cx| {
+                    this.set_sidebar_view(target, cx);
+                });
             });
-        });
 
         div()
             .id("workspace-sidebar")
@@ -929,6 +900,64 @@ impl VellumApp {
             .min_h(px(0.))
             .bg(cx.theme().background)
             .border_r_1()
+            .border_color(cx.theme().border.opacity(0.18))
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(tabs)
+            .child(div().flex_1().min_h(px(0.)).child(body))
+    }
+
+    fn render_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let body = match self.right_panel_view {
+            RightPanelView::Plugins => self.render_plugins_panel(cx),
+            RightPanelView::Plugin(panel_id) => self.render_plugin_panel(panel_id, window, cx),
+        };
+
+        let mut tabs = ButtonGroup::new("workspace-right-panel-tabs")
+            .compact()
+            .ghost()
+            .child(
+                Button::new("right-panel-plugins")
+                    .label("Plugins")
+                    .selected(self.right_panel_view == RightPanelView::Plugins),
+            );
+
+        for panel in self.plugin_manager.sidebar_panels() {
+            let panel_id = panel.id;
+            tabs = tabs.child(
+                Button::new(ElementId::Name(format!("right-plugin-{}", panel_id).into()))
+                    .label(panel.label.clone())
+                    .selected(self.right_panel_view == RightPanelView::Plugin(panel_id)),
+            );
+        }
+
+        let tabs = tabs.on_click(move |selected: &Vec<usize>, _, cx| {
+            let target = if selected.contains(&0) {
+                RightPanelView::Plugins
+            } else {
+                let plugin_index = selected.iter().find(|&&i| i >= 1).copied().unwrap_or(1) - 1;
+                let view_ref = view.read(cx);
+                if let Some(panel) = view_ref.plugin_manager.sidebar_panels().get(plugin_index) {
+                    RightPanelView::Plugin(panel.id)
+                } else {
+                    RightPanelView::Plugins
+                }
+            };
+            let _ = view.update(cx, |this, cx| {
+                this.set_right_panel_view(target, cx);
+            });
+        });
+
+        div()
+            .id("workspace-right-panel")
+            .size_full()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .bg(cx.theme().background)
+            .border_l_1()
             .border_color(cx.theme().border.opacity(0.18))
             .p_3()
             .flex()
@@ -953,31 +982,33 @@ impl Render for VellumApp {
             .when(self.find_panel_visible, |this| {
                 this.child(self.render_find_bar(cx))
             })
-            .when(self.tabs.len() > 1, |this| {
-                this.child(self.render_tab_bar(window, cx))
-            })
             .child(div().flex_1().min_h(px(0.)).child(self.active_editor_entity().clone()))
             .into_any_element();
 
-        let body: AnyElement = if self.sidebar_visible {
-            div()
-                .size_full()
-                .min_w(px(0.))
-                .min_h(px(0.))
-                .child(
-                    h_resizable("vellum-layout")
-                        .child(
-                            resizable_panel()
-                                .size(px(240.))
-                                .size_range(px(180.)..px(360.))
-                                .child(self.render_sidebar(window, cx)),
-                        )
-                        .child(resizable_panel().child(editor_panel)),
-                )
-                .into_any_element()
-        } else {
-            editor_panel
-        };
+        let mut layout = h_resizable("vellum-layout");
+        if self.sidebar_visible {
+            layout = layout.child(
+                resizable_panel()
+                    .size(px(240.))
+                    .size_range(px(180.)..px(360.))
+                    .child(self.render_sidebar(window, cx)),
+            );
+        }
+        layout = layout.child(resizable_panel().child(editor_panel));
+        if self.right_panel_visible {
+            layout = layout.child(
+                resizable_panel()
+                    .size(px(240.))
+                    .size_range(px(180.)..px(360.))
+                    .child(self.render_right_panel(window, cx)),
+            );
+        }
+        let body: AnyElement = div()
+            .size_full()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .child(layout)
+            .into_any_element();
 
         let status_bar = if self.status_bar_visible {
             Some(self.render_status_bar(cx).into_any_element())
@@ -1023,23 +1054,91 @@ impl Render for VellumApp {
                         div()
                             .flex()
                             .items_center()
-                            .gap_3()
                             .w_full()
-                            .px_2()
-                            .pr_3()
-                            .when(!cfg!(target_os = "macos"), |this| {
-                                this.child(self.render_app_menu(cx))
+                            .min_w(px(0.))
+                            .h_full()
+                            .when(self.sidebar_visible, |this| {
+                                this.child(
+                                    div()
+                                        .w(px(240.))
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_2()
+                                        .when(!cfg!(target_os = "macos"), |this| {
+                                            this.child(self.render_app_menu(cx))
+                                        })
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .max_w(px(180.))
+                                                .truncate()
+                                                .child(self.document_label()),
+                                        ),
+                                )
                             })
-                            .when(!cfg!(target_os = "macos"), |this| {
-                                this.child(self.render_plugins_menu(cx))
+                            .when(!self.sidebar_visible, |this| {
+                                this.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_2()
+                                        .when(!cfg!(target_os = "macos"), |this| {
+                                            this.child(self.render_app_menu(cx))
+                                        })
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .max_w(px(220.))
+                                                .truncate()
+                                                .child(self.document_label()),
+                                        ),
+                                )
                             })
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(self.document_label()),
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .h_full()
+                                    .when(self.tabs.len() > 1, |this| {
+                                        this.child(self.render_tab_bar(window, cx))
+                                    }),
                             )
-                            .child(div().flex_1()),
+                            .when(self.right_panel_visible, |this| {
+                                this.child(
+                                    div()
+                                        .w(px(240.))
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_end()
+                                        .pr_2()
+                                        .child(self.render_right_panel_toggle(cx)),
+                                )
+                            })
+                            .when(!self.right_panel_visible, |this| {
+                                this.child(
+                                    div()
+                                        .id("right-panel-hit-area")
+                                        .w(px(40.))
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_end()
+                                        .pr_2()
+                                        .on_hover(cx.listener(Self::on_right_panel_hit_area_hover))
+                                        .child(self.render_right_panel_toggle(cx)),
+                                )
+                            }),
                     ),
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))

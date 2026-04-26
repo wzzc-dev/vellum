@@ -172,6 +172,80 @@ impl VellumApp {
         cx.notify();
     }
 
+    pub(super) fn toggle_right_panel_visibility(&mut self, cx: &mut Context<Self>) {
+        self.right_panel_visible = !self.right_panel_visible;
+        cx.notify();
+    }
+
+    pub(super) fn set_right_panel_view(&mut self, view: RightPanelView, cx: &mut Context<Self>) {
+        if self.right_panel_view == view && self.right_panel_visible {
+            return;
+        }
+
+        self.right_panel_visible = true;
+        self.right_panel_view = view;
+        cx.notify();
+    }
+
+    pub(super) fn open_right_panel(&mut self, view: RightPanelView, cx: &mut Context<Self>) {
+        self.set_right_panel_view(view, cx);
+    }
+
+    fn reveal_right_panel_toggle(&mut self, cx: &mut Context<Self>) {
+        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        if !self.right_panel_toggle_visible {
+            self.right_panel_toggle_visible = true;
+            cx.notify();
+        }
+    }
+
+    fn hide_right_panel_toggle(&mut self, cx: &mut Context<Self>) {
+        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        if self.right_panel_toggle_visible && !self.right_panel_visible {
+            self.right_panel_toggle_visible = false;
+            cx.notify();
+        }
+    }
+
+    fn schedule_right_panel_toggle_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.right_panel_visible || self.right_panel_toggle_hovered {
+            return;
+        }
+
+        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        let generation = self.right_panel_toggle_hide_generation;
+        let view = cx.entity();
+        window.spawn(cx, async move |cx| {
+            Timer::after(Duration::from_secs(3)).await;
+            let _ = view.update(cx, |this, cx| {
+                if this.right_panel_toggle_hide_generation == generation
+                    && !this.right_panel_visible
+                    && !this.right_panel_toggle_hovered
+                {
+                    this.right_panel_toggle_visible = false;
+                    cx.notify();
+                }
+            });
+        }).detach();
+    }
+
+    pub(super) fn on_right_panel_toggle_hover(&mut self, hovered: &bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.right_panel_toggle_hovered = *hovered;
+        if *hovered {
+            self.reveal_right_panel_toggle(cx);
+        } else {
+            self.schedule_right_panel_toggle_hide(window, cx);
+        }
+    }
+
+    pub(super) fn on_right_panel_hit_area_hover(&mut self, hovered: &bool, window: &mut Window, cx: &mut Context<Self>) {
+        if *hovered {
+            self.reveal_right_panel_toggle(cx);
+        } else if !self.right_panel_toggle_hovered {
+            self.schedule_right_panel_toggle_hide(window, cx);
+        }
+    }
+
     pub(super) fn toggle_plugin(&mut self, plugin_id: String, cx: &mut Context<Self>) {
         if self.disabled_plugin_ids.contains(&plugin_id) {
             self.disabled_plugin_ids.retain(|id| id != &plugin_id);
@@ -302,8 +376,7 @@ impl VellumApp {
                         let view = view.clone();
                         move |_, _, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.sidebar_visible = true;
-                                this.set_sidebar_view(SidebarView::Plugins, cx);
+                                this.open_right_panel(RightPanelView::Plugins, cx);
                             });
                         }
                     }))
@@ -331,8 +404,7 @@ impl VellumApp {
                             let view = view.clone();
                             move |_, _, cx| {
                                 let _ = view.update(cx, |this, cx| {
-                                    this.sidebar_visible = true;
-                                    this.set_sidebar_view(SidebarView::Plugins, cx);
+                                    this.open_right_panel(RightPanelView::Plugins, cx);
                                 });
                             }
                         }),
@@ -411,6 +483,48 @@ impl VellumApp {
             .on_click(move |_, _, cx| {
                 let _ = view.update(cx, |this, cx| {
                     this.toggle_sidebar_visibility(cx);
+                });
+            })
+    }
+
+    pub(super) fn render_right_panel_toggle(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let is_open = self.right_panel_visible;
+        let should_show = self.right_panel_toggle_visible || self.right_panel_visible;
+
+        let left_color = if is_open {
+            cx.theme().primary
+        } else {
+            cx.theme().foreground
+        };
+        let right_color = if is_open {
+            cx.theme().foreground
+        } else {
+            cx.theme().muted_foreground.opacity(0.4)
+        };
+
+        div()
+            .id("right-panel-toggle")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.))
+            .h_full()
+            .cursor_pointer()
+            .when(should_show, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .rounded(px(2.))
+                        .overflow_hidden()
+                        .child(div().w(px(7.)).h(px(10.)).bg(left_color))
+                        .child(div().w(px(7.)).h(px(10.)).bg(right_color)),
+                )
+            })
+            .on_hover(cx.listener(Self::on_right_panel_toggle_hover))
+            .on_click(move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.toggle_right_panel_visibility(cx);
                 });
             })
     }
