@@ -51,6 +51,7 @@ struct RenderPalette {
     code_surface_background: Hsla,
     find_match_color: Hsla,
     find_active_match_color: Hsla,
+    link_color: Hsla,
     code_keyword_color: Hsla,
     code_function_color: Hsla,
     code_string_color: Hsla,
@@ -529,6 +530,11 @@ pub(super) fn render_document_surface(
         code_surface_background: fg.opacity(0.04),
         find_match_color: fg.opacity(0.12),
         find_active_match_color: fg.opacity(0.30),
+        link_color: if is_dark {
+            Hsla { h: 210. / 360., s: 0.8, l: 0.65, a: 1.0 }
+        } else {
+            Hsla { h: 210. / 360., s: 0.75, l: 0.45, a: 1.0 }
+        },
         code_keyword_color: Hsla { h: keyword_hue, s: 0.7, l: if is_dark { 0.72 } else { 0.48 }, a: 1.0 },
         code_function_color: Hsla { h: function_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
         code_string_color: Hsla { h: string_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
@@ -1526,9 +1532,10 @@ fn apply_fragment_style(
         });
     }
     if inline_style.link {
+        style.color = palette.link_color;
         style.underline = Some(UnderlineStyle {
             thickness: px(1.),
-            color: Some(palette.text_color.opacity(0.7)),
+            color: Some(palette.link_color.opacity(0.5)),
             wavy: false,
         });
     }
