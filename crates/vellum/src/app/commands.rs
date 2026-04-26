@@ -144,6 +144,16 @@ impl VellumApp {
         self.set_status_bar_pinned(!self.status_bar_pinned, window, cx);
     }
 
+    pub(super) fn on_toggle_focus_mode(
+        &mut self,
+        _: &ToggleFocusMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_mode = !self.focus_mode;
+        cx.notify();
+    }
+
     pub(super) fn on_close_tab(
         &mut self,
         _: &CloseTab,

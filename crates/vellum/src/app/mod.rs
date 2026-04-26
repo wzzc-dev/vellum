@@ -55,6 +55,7 @@ actions!(
         ToggleSidebar,
         ToggleRightPanel,
         ToggleStatusBar,
+        ToggleFocusMode,
         OpenFindPanel,
         CloseFindPanel,
         FindNextMatch,
@@ -146,6 +147,7 @@ struct VellumApp {
     disabled_plugin_ids: Vec<String>,
     disclosure_state: HashMap<String, bool>,
     webview_manager: WebViewManager,
+    focus_mode: bool,
 }
 
 pub fn run() -> Result<()> {
@@ -193,6 +195,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-\\", ToggleRightPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -207,6 +210,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
         KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
     ]);
 }
 
@@ -460,6 +464,7 @@ impl VellumApp {
             disabled_plugin_ids: Vec::new(),
             disclosure_state: HashMap::new(),
             webview_manager: WebViewManager::new(),
+            focus_mode: false,
         };
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);

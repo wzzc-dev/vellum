@@ -972,6 +972,10 @@ impl Render for VellumApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.window_title());
 
+        let show_sidebar = self.sidebar_visible && !self.focus_mode;
+        let show_tabs = self.tabs.len() > 1 && !self.focus_mode;
+        let show_status_bar = self.status_bar_visible && !self.focus_mode;
+
         let editor_panel = div()
             .size_full()
             .min_w(px(0.))
@@ -986,7 +990,7 @@ impl Render for VellumApp {
             .into_any_element();
 
         let mut layout = h_resizable("vellum-layout");
-        if self.sidebar_visible {
+        if show_sidebar {
             layout = layout.child(
                 resizable_panel()
                     .size(px(240.))
@@ -995,7 +999,7 @@ impl Render for VellumApp {
             );
         }
         layout = layout.child(resizable_panel().child(editor_panel));
-        if self.right_panel_visible {
+        if self.right_panel_visible && !self.focus_mode {
             layout = layout.child(
                 resizable_panel()
                     .size(px(240.))
@@ -1010,7 +1014,7 @@ impl Render for VellumApp {
             .child(layout)
             .into_any_element();
 
-        let status_bar = if self.status_bar_visible {
+        let status_bar = if show_status_bar {
             Some(self.render_status_bar(cx).into_any_element())
         } else {
             None
@@ -1036,6 +1040,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_toggle_right_panel))
             .on_action(cx.listener(Self::on_toggle_status_bar))
+            .on_action(cx.listener(Self::on_toggle_focus_mode))
             .on_action(cx.listener(Self::on_open_find_panel))
             .on_action(cx.listener(Self::on_close_find_panel))
             .on_action(cx.listener(Self::on_find_next_match))
@@ -1058,7 +1063,7 @@ impl Render for VellumApp {
                             .w_full()
                             .min_w(px(0.))
                             .h_full()
-                            .when(self.sidebar_visible, |this| {
+                            .when(show_sidebar, |this| {
                                 this.child(
                                     div()
                                         .w(px(240.))
@@ -1081,7 +1086,7 @@ impl Render for VellumApp {
                                         ),
                                 )
                             })
-                            .when(!self.sidebar_visible, |this| {
+                            .when(!show_sidebar, |this| {
                                 this.child(
                                     div()
                                         .flex_shrink_0()
@@ -1108,11 +1113,11 @@ impl Render for VellumApp {
                                     .flex_1()
                                     .min_w(px(0.))
                                     .h_full()
-                                    .when(self.tabs.len() > 1, |this| {
+                                    .when(show_tabs, |this| {
                                         this.child(self.render_tab_bar(window, cx))
                                     }),
                             )
-                            .when(self.right_panel_visible, |this| {
+                            .when(self.right_panel_visible && !self.focus_mode, |this| {
                                 this.child(
                                     div()
                                         .w(px(240.))
@@ -1125,7 +1130,7 @@ impl Render for VellumApp {
                                         .child(self.render_right_panel_toggle(cx)),
                                 )
                             })
-                            .when(!self.right_panel_visible, |this| {
+                            .when(!self.right_panel_visible && !self.focus_mode, |this| {
                                 this.child(
                                     div()
                                         .id("right-panel-hit-area")
