@@ -293,6 +293,7 @@ impl VellumApp {
 
     pub(super) fn render_app_menu(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity();
+        let recent_files: Vec<PathBuf> = self.recent_files.iter().take(10).cloned().collect();
 
         Button::new("app-menu")
             .icon(IconName::Menu)
@@ -325,6 +326,41 @@ impl VellumApp {
                                 }
                             }),
                     )
+                    .when(!recent_files.is_empty(), |menu| {
+                        let recent_files = recent_files.clone();
+                        let mut menu = menu.separator();
+                        for (i, path) in recent_files.iter().enumerate() {
+                            let name = path
+                                .file_name()
+                                .and_then(|n: &std::ffi::OsStr| n.to_str())
+                                .unwrap_or("Unknown")
+                                .to_string();
+                            let label = if i == 0 {
+                                format!("① {}", name)
+                            } else if i == 1 {
+                                format!("② {}", name)
+                            } else if i == 2 {
+                                format!("③ {}", name)
+                            } else if i == 3 {
+                                format!("④ {}", name)
+                            } else if i == 4 {
+                                format!("⑤ {}", name)
+                            } else {
+                                format!("{}", name)
+                            };
+                            let path = path.clone();
+                            let view = view.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                                    let path = path.clone();
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.open_file(path, window, cx);
+                                    });
+                                })
+                            );
+                        }
+                        menu.separator()
+                    })
                     .item(
                         PopupMenuItem::new("New File")
                             .icon(IconName::Plus)

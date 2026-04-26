@@ -149,6 +149,7 @@ struct VellumApp {
     plugin_manager: PluginManager,
     // --- pending file opens from drag-drop ---
     pending_file_opens: Vec<PathBuf>,
+    recent_files: Vec<PathBuf>,
     disabled_plugin_ids: Vec<String>,
     disclosure_state: HashMap<String, bool>,
     webview_manager: WebViewManager,
@@ -477,6 +478,7 @@ impl VellumApp {
                 PluginManager::new().unwrap()
             }),
             pending_file_opens: Vec::new(),
+            recent_files: crate::path::read_recent_files(),
             disabled_plugin_ids: Vec::new(),
             disclosure_state: HashMap::new(),
             webview_manager: WebViewManager::new(),

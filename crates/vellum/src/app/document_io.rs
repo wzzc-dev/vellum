@@ -116,6 +116,7 @@ impl VellumApp {
                 }
                 self.workspace.selected_file = Some(path.clone());
                 let _ = write_last_opened_path(&path);
+                self.recent_files = crate::path::add_recent_file(&path);
                 self.clear_status();
                 cx.notify();
             }
