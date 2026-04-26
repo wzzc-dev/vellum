@@ -147,6 +147,8 @@ struct VellumApp {
     rename_input: Option<Entity<InputState>>,
     // --- plugin system ---
     plugin_manager: PluginManager,
+    // --- pending file opens from drag-drop ---
+    pending_file_opens: Vec<PathBuf>,
     disabled_plugin_ids: Vec<String>,
     disclosure_state: HashMap<String, bool>,
     webview_manager: WebViewManager,
@@ -395,13 +397,20 @@ impl VellumApp {
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
 
         let editor_subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
-            let EditorEvent::Changed(snapshot) = event;
-            this.editor_snapshot = snapshot.clone();
-            if !snapshot.status_message.is_empty() {
-                this.shell_status_message.clear();
+            match event {
+                EditorEvent::Changed(snapshot) => {
+                    this.editor_snapshot = snapshot.clone();
+                    if !snapshot.status_message.is_empty() {
+                        this.shell_status_message.clear();
+                    }
+                    this.refresh_find_matches();
+                    cx.notify();
+                }
+                EditorEvent::OpenFile(path) => {
+                    this.pending_file_opens.push(path.clone());
+                    cx.notify();
+                }
             }
-            this.refresh_find_matches();
-            cx.notify();
         });
 
         let find_input_subscription = cx.subscribe(&find_query_input, |this: &mut Self, _, event: &InputEvent, cx| {
@@ -467,6 +476,7 @@ impl VellumApp {
                 eprintln!("failed to initialize plugin manager: {}", e);
                 PluginManager::new().unwrap()
             }),
+            pending_file_opens: Vec::new(),
             disabled_plugin_ids: Vec::new(),
             disclosure_state: HashMap::new(),
             webview_manager: WebViewManager::new(),
@@ -582,21 +592,28 @@ impl VellumApp {
         if let Some(editor) = self.active_editor() {
             let editor = editor.clone();
             let subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
-                let EditorEvent::Changed(snapshot) = event;
-                this.editor_snapshot = snapshot.clone();
-                if !snapshot.status_message.is_empty() {
-                    this.shell_status_message.clear();
+                match event {
+                    EditorEvent::Changed(snapshot) => {
+                        this.editor_snapshot = snapshot.clone();
+                        if !snapshot.status_message.is_empty() {
+                            this.shell_status_message.clear();
+                        }
+                        this.refresh_find_matches();
+
+                        let text = snapshot.document_text.clone();
+                        let path = snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string());
+                        this.plugin_manager.update_document(text.clone(), path.clone());
+                        this.plugin_manager.dispatch_event(
+                            vellum_plugin::event::EventData::DocumentChanged { text, path },
+                        );
+
+                        cx.notify();
+                    }
+                    EditorEvent::OpenFile(path) => {
+                         this.pending_file_opens.push(path.clone());
+                         cx.notify();
+                     }
                 }
-                this.refresh_find_matches();
-
-                let text = snapshot.document_text.clone();
-                let path = snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string());
-                this.plugin_manager.update_document(text.clone(), path.clone());
-                this.plugin_manager.dispatch_event(
-                    vellum_plugin::event::EventData::DocumentChanged { text, path },
-                );
-
-                cx.notify();
             });
             self.find_input_subscriptions.push(subscription);
         }

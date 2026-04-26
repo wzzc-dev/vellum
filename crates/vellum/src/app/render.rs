@@ -1044,6 +1044,11 @@ impl Render for VellumApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.window_title());
 
+        let pending = std::mem::take(&mut self.pending_file_opens);
+        for path in pending {
+            self.open_file(path, window, cx);
+        }
+
         let show_sidebar = self.sidebar_visible && !self.focus_mode;
         let show_tabs = self.tabs.len() > 1 && !self.focus_mode;
         let show_status_bar = self.status_bar_visible && !self.focus_mode;

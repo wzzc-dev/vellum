@@ -29,6 +29,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub enum EditorEvent {
     Changed(EditorSnapshot),
+    OpenFile(std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,6 +299,8 @@ impl MarkdownEditor {
                     self.schedule_autosave(window, cx);
                 }
                 self.apply_effects(window, cx, effects);
+            } else if path.is_file() {
+                cx.emit(EditorEvent::OpenFile(path.clone()));
             }
         }
     }
