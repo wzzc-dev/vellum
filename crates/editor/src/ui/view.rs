@@ -47,6 +47,7 @@ pub struct MarkdownEditor {
     pub(super) syncing_input: bool,
     pub(super) input_focused: bool,
     pub(super) block_bounds: Rc<RefCell<HashMap<u64, gpui::Bounds<gpui::Pixels>>>>,
+    pub(super) block_heights: Rc<RefCell<HashMap<u64, gpui::Pixels>>>,
     pub(super) drag_selection_anchor: Option<SurfaceSelectionAnchor>,
     pub(super) scroll_handle: ScrollHandle,
     cursor_blink_visible: bool,
@@ -94,6 +95,7 @@ impl MarkdownEditor {
             syncing_input: false,
             input_focused: false,
             block_bounds: Rc::new(RefCell::new(HashMap::new())),
+            block_heights: Rc::new(RefCell::new(HashMap::new())),
             drag_selection_anchor: None,
             scroll_handle: ScrollHandle::new(),
             cursor_blink_visible: true,
@@ -535,18 +537,15 @@ impl MarkdownEditor {
     }
 
     pub(crate) fn scroll_cursor_into_view(&mut self, cx: &mut Context<Self>) {
-        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
+        let cursor_block = self.snapshot.display_map.blocks.iter().find(|block| {
             let cursor = self.snapshot.visible_selection.cursor();
             cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
-        }).map(|block| block.id);
+        });
 
-        let Some(block_id) = cursor_block_id else {
+        let Some(cursor_block) = cursor_block else {
             return;
         };
-
-        let Some(block_bounds) = self.block_bounds.borrow().get(&block_id).copied() else {
-            return;
-        };
+        let block_id = cursor_block.id;
 
         let viewport = self.scroll_handle.bounds();
         if viewport.size.width.is_zero() || viewport.size.height.is_zero() {
@@ -556,18 +555,51 @@ impl MarkdownEditor {
         let current_offset = self.scroll_handle.offset();
         let mut new_offset = current_offset;
 
-        if self.typewriter_mode {
-            let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
-            let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
-            let delta = block_center_y - viewport_center_y;
-            if delta.abs() > px(1.) {
-                new_offset.y = current_offset.y - delta;
+        if let Some(block_bounds) = self.block_bounds.borrow().get(&block_id).copied() {
+            if self.typewriter_mode {
+                let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
+                let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
+                let delta = block_center_y - viewport_center_y;
+                if delta.abs() > px(1.) {
+                    new_offset.y = current_offset.y - delta;
+                }
+            } else {
+                if block_bounds.top() < viewport.top() {
+                    new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
+                } else if block_bounds.bottom() > viewport.bottom() {
+                    new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+                }
             }
         } else {
-            if block_bounds.top() < viewport.top() {
-                new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
-            } else if block_bounds.bottom() > viewport.bottom() {
-                new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+            let heights = self.block_heights.borrow();
+            let mut block_top = px(0.);
+            for block in &self.snapshot.display_map.blocks {
+                if block.id == block_id {
+                    break;
+                }
+                block_top += heights
+                    .get(&block.id)
+                    .copied()
+                    .unwrap_or(px(BODY_LINE_HEIGHT));
+            }
+            let block_height = heights
+                .get(&block_id)
+                .copied()
+                .unwrap_or(px(BODY_LINE_HEIGHT));
+            let block_bottom = block_top + block_height;
+
+            if self.typewriter_mode {
+                let block_center_y = (block_top + block_bottom) / 2.;
+                let viewport_center_y = viewport.size.height / 2.;
+                new_offset.y = -(block_center_y - viewport_center_y);
+            } else {
+                let viewport_top = -current_offset.y;
+                let viewport_bottom = -current_offset.y + viewport.size.height;
+                if block_top < viewport_top {
+                    new_offset.y = current_offset.y + (viewport_top - block_top);
+                } else if block_bottom > viewport_bottom {
+                    new_offset.y = current_offset.y - (block_bottom - viewport_bottom);
+                }
             }
         }
 
@@ -593,6 +625,16 @@ impl Render for MarkdownEditor {
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
+        {
+            let bounds = self.block_bounds.borrow();
+            let mut heights = self.block_heights.borrow_mut();
+            for (id, bounds) in bounds.iter() {
+                heights.insert(*id, bounds.size.height);
+            }
+            let active_ids: std::collections::HashSet<u64> =
+                self.snapshot.display_map.blocks.iter().map(|b| b.id).collect();
+            heights.retain(|id, _| active_ids.contains(id));
+        }
         self.block_bounds.borrow_mut().clear();
 
         div()
@@ -732,6 +774,7 @@ impl Render for MarkdownEditor {
                                            self.input_focused,
                                            self.cursor_blink_visible,
                                            self.block_bounds.clone(),
+                                           self.block_heights.clone(),
                                            self.scroll_handle.clone(),
                                            window,
                                            cx,
@@ -757,7 +800,7 @@ mod tests {
     use super::*;
     use crate::ui::surface::{
         caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
-        rendered_visible_end, rendered_visible_len, shape_block_lines,
+        rendered_visible_end, rendered_visible_len, shape_block_lines_uncached,
         surface_empty_block_line_count, text_content_x_offset,
     };
     use crate::{BlockKind, RenderSpanKind, SelectionAffinity};
@@ -832,8 +875,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines(&blocks[0], px(640.), window).len(),
-                shape_block_lines(&blocks[1], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
             )
         });
 
@@ -1569,8 +1612,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines(&blocks[0], px(640.), window).len(),
-                shape_block_lines(&blocks[1], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
             )
         });
 
@@ -1586,8 +1629,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines(&blocks[0], px(640.), window).len(),
-                shape_block_lines(&blocks[1], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
+                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
             )
         });
 

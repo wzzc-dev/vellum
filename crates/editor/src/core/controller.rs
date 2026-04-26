@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context as _, Result};
 
 use super::{
-    display_map::DisplayMap,
+    display_map::{DisplayMap, HiddenSyntaxPolicy},
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
     table::{TableCellRef, TableModel, TableNavDirection},
     text_ops::{
@@ -393,6 +393,7 @@ pub struct EditorController {
     undo_stack: Vec<EditHistoryEntry>,
     redo_stack: Vec<EditHistoryEntry>,
     view_mode: EditorViewMode,
+    prev_display_map: std::cell::RefCell<Option<DisplayMap>>,
 }
 
 impl EditorController {
@@ -422,6 +423,7 @@ impl EditorController {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             view_mode: EditorViewMode::LivePreview,
+            prev_display_map: std::cell::RefCell::new(None),
         }
     }
 
@@ -675,7 +677,17 @@ impl EditorController {
         let caret_byte = selection.cursor().min(document_text.len());
         let (line, column) = line_column_for_byte_offset(&document_text, caret_byte);
         let display_map = match self.view_mode {
-            EditorViewMode::LivePreview => self.document.display_map(Some(&selection)),
+            EditorViewMode::LivePreview => {
+                let prev = self.prev_display_map.borrow().clone();
+                let incremental = DisplayMap::from_document_incremental(
+                    &self.document,
+                    Some(&selection),
+                    HiddenSyntaxPolicy::SelectionAware,
+                    prev.as_ref(),
+                );
+                *self.prev_display_map.borrow_mut() = Some(incremental.clone());
+                incremental
+            }
             EditorViewMode::Source => self.document.source_display_map(),
         };
         let mut visible_selection = display_map.source_selection_to_visible(&selection);

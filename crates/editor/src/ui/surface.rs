@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -38,6 +39,59 @@ const LIST_MARKER_COLUMN_WIDTH: f32 = 28.;
 const BLOCKQUOTE_BAR_WIDTH: f32 = 3.;
 const DECORATION_GAP_X: f32 = 12.;
 const TASK_MARKER_CLICK_WIDTH: f32 = 34.;
+
+#[allow(dead_code)]
+struct ShapeCacheKey {
+    block_id: u64,
+    width_f32: f32,
+}
+
+impl std::hash::Hash for ShapeCacheKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.block_id.hash(state);
+        self.width_f32.to_bits().hash(state);
+    }
+}
+
+impl PartialEq for ShapeCacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.block_id == other.block_id && self.width_f32 == other.width_f32
+    }
+}
+
+impl Eq for ShapeCacheKey {}
+
+#[allow(dead_code)]
+struct ShapeCache {
+    entries: HashMap<ShapeCacheKey, Vec<gpui::WrappedLine>>,
+}
+
+#[allow(dead_code)]
+impl ShapeCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get_or_shape(
+        &mut self,
+        block: &RenderBlock,
+        width: gpui::Pixels,
+        window: &Window,
+    ) -> Vec<gpui::WrappedLine> {
+        let key = ShapeCacheKey {
+            block_id: block.id,
+            width_f32: f32::from(width),
+        };
+        if let Some(lines) = self.entries.get(&key) {
+            return lines.clone();
+        }
+        let lines = shape_block_lines_uncached(block, width, window);
+        self.entries.insert(key, lines.clone());
+        lines
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct RenderPalette {
@@ -499,12 +553,71 @@ pub(super) fn rendered_text_for_block(block: &RenderBlock) -> String {
         .collect()
 }
 
+const VIRTUAL_RENDER_MIN_BLOCKS: usize = 20;
+const VIRTUAL_RENDER_OVERDRAW_PX: f32 = 400.;
+
+fn estimated_block_height(block: &RenderBlock) -> gpui::Pixels {
+    let presentation = block_presentation(&block.kind);
+    let line_count = block.visible_text.chars().filter(|&c| c == '\n').count().max(1);
+    px(presentation.line_height * line_count as f32 + presentation.block_padding_y * 2. + presentation.row_spacing_y * 2.)
+}
+
+fn compute_visible_block_range(
+    block_heights: &HashMap<u64, gpui::Pixels>,
+    blocks: &[RenderBlock],
+    scroll_offset_y: gpui::Pixels,
+    viewport_height: gpui::Pixels,
+    overdraw: gpui::Pixels,
+) -> Range<usize> {
+    let top = -scroll_offset_y - overdraw;
+    let bottom = -scroll_offset_y + viewport_height + overdraw;
+
+    let mut cumulative_y = px(0.);
+    let mut first_visible = 0;
+    let mut last_visible = blocks.len().saturating_sub(1);
+    let mut found_first = false;
+
+    for (i, block) in blocks.iter().enumerate() {
+        let height = block_heights
+            .get(&block.id)
+            .copied()
+            .unwrap_or_else(|| estimated_block_height(block));
+        let block_top = cumulative_y;
+        let block_bottom = cumulative_y + height;
+
+        if !found_first && block_bottom > top {
+            first_visible = i;
+            found_first = true;
+        }
+        if block_top < bottom {
+            last_visible = i;
+        }
+
+        cumulative_y = block_bottom;
+    }
+
+    first_visible..last_visible + 1
+}
+
+fn render_placeholder_block(
+    block: &RenderBlock,
+    cached_height: Option<gpui::Pixels>,
+) -> AnyElement {
+    let height = cached_height.unwrap_or_else(|| estimated_block_height(block));
+    div()
+        .id(("placeholder-block", block.id))
+        .w_full()
+        .h(height)
+        .into_any_element()
+}
+
 pub(super) fn render_document_surface(
     view: &Entity<MarkdownEditor>,
     snapshot: &EditorSnapshot,
     input_focused: bool,
     cursor_blink_visible: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
+    block_heights: Rc<RefCell<HashMap<u64, gpui::Pixels>>>,
     scroll_handle: ScrollHandle,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
@@ -583,21 +696,43 @@ pub(super) fn render_document_surface(
             .into_any_element();
     }
 
+    let enable_virtual = snapshot.display_map.blocks.len() >= VIRTUAL_RENDER_MIN_BLOCKS;
+    let visible_range = if enable_virtual {
+        let offset = scroll_handle.offset();
+        let viewport = scroll_handle.bounds();
+        let heights = block_heights.borrow();
+        compute_visible_block_range(
+            &heights,
+            &snapshot.display_map.blocks,
+            offset.y,
+            viewport.size.height,
+            px(VIRTUAL_RENDER_OVERDRAW_PX),
+        )
+    } else {
+        0..snapshot.display_map.blocks.len()
+    };
+
+    let heights_map = block_heights.borrow();
     let mut document = div().w_full().flex().flex_col();
     for (block_index, block) in snapshot.display_map.blocks.iter().cloned().enumerate() {
-        document = document.child(render_display_block(
-            view,
-            snapshot,
-            display_blocks.clone(),
-            block_index,
-            &block,
-            input_focused,
-            cursor_blink_visible,
-            block_bounds.clone(),
-            scroll_handle.clone(),
-            palette,
-            window,
-        ));
+        if visible_range.contains(&block_index) {
+            document = document.child(render_display_block(
+                view,
+                snapshot,
+                display_blocks.clone(),
+                block_index,
+                &block,
+                input_focused,
+                cursor_blink_visible,
+                block_bounds.clone(),
+                scroll_handle.clone(),
+                palette,
+                window,
+            ));
+        } else {
+            let cached_height = heights_map.get(&block.id).copied();
+            document = document.child(render_placeholder_block(&block, cached_height));
+        }
     }
     document.into_any_element()
 }
@@ -1025,7 +1160,7 @@ fn highlight_quads_for_block_range(
         return quads;
     }
     let text_width = (bounds.size.width - text_x_offset).max(px(0.));
-    let lines = shape_block_lines(block, text_width, window);
+    let lines = shape_block_lines_uncached(block, text_width, window);
     if lines.is_empty() {
         return Vec::new();
     }
@@ -1117,7 +1252,7 @@ fn selection_quads_for_block(
         );
     }
     let text_width = (bounds.size.width - text_x_offset).max(px(0.));
-    let lines = shape_block_lines(block, text_width, window);
+    let lines = shape_block_lines_uncached(block, text_width, window);
     if lines.is_empty() {
         return Vec::new();
     }
@@ -1265,7 +1400,7 @@ fn caret_quad_for_block(
     }
 
     let text_width = (bounds.size.width - text_x_offset).max(px(0.));
-    let lines = shape_block_lines(block, text_width, window);
+    let lines = shape_block_lines_uncached(block, text_width, window);
     let mut byte_offset = 0usize;
     let mut y_offset = px(0.);
 
@@ -1582,7 +1717,7 @@ fn table_surface_layout(
         return None;
     }
 
-    let lines = shape_block_lines(block, bounds.size.width.max(px(1.)), window);
+    let lines = shape_block_lines_uncached(block, bounds.size.width.max(px(1.)), window);
     if lines.len() < table.visible_row_count() {
         return None;
     }
@@ -2112,7 +2247,7 @@ fn visible_byte_offset_for_click_position(
     local.x = (local.x - text_x_offset).max(px(0.));
     local.y = local.y.max(px(0.));
 
-    let lines = shape_block_lines(block, text_width, window);
+    let lines = shape_block_lines_uncached(block, text_width, window);
     let mut byte_offset = 0usize;
     let mut y_offset = px(0.);
     for (line_ix, line) in lines.iter().enumerate() {
@@ -2135,7 +2270,7 @@ fn visible_byte_offset_for_click_position(
     rendered_visible_len(block)
 }
 
-pub(super) fn shape_block_lines(
+pub(super) fn shape_block_lines_uncached(
     block: &RenderBlock,
     width: gpui::Pixels,
     window: &Window,
@@ -2610,6 +2745,7 @@ mod tests {
                 }),
             }],
             embedded: Some(EmbeddedNodeKind::Image),
+            source_hash: 0,
         }
     }
 

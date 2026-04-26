@@ -102,6 +102,7 @@ pub struct RenderBlock {
     pub visible_text: String,
     pub spans: Vec<RenderSpan>,
     pub embedded: Option<EmbeddedNodeKind>,
+    pub source_hash: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,10 +120,18 @@ pub struct DisplayMap {
     pub hidden_syntax_policy: HiddenSyntaxPolicy,
     pub visible_text: String,
     pub blocks: Vec<RenderBlock>,
-    boundary_mappings: Vec<BoundaryMapping>,
+    boundary_mappings: Option<Vec<BoundaryMapping>>,
 }
 
 impl DisplayMap {
+    fn ensure_boundary_mappings(&self) -> Vec<BoundaryMapping> {
+        if let Some(ref mappings) = self.boundary_mappings {
+            mappings.clone()
+        } else {
+            build_boundary_mappings(&self.visible_text, &self.blocks)
+        }
+    }
+
     pub(crate) fn from_source_text(text: &str) -> Self {
         let span = RenderSpan {
             kind: RenderSpanKind::Text,
@@ -143,15 +152,14 @@ impl DisplayMap {
             visible_text: text.to_string(),
             spans: vec![span],
             embedded: None,
+            source_hash: 0,
         };
         let blocks = vec![block];
-        let boundary_mappings = build_boundary_mappings(text, &blocks);
-
         Self {
             hidden_syntax_policy: HiddenSyntaxPolicy::SelectionAware,
             visible_text: text.to_string(),
             blocks,
-            boundary_mappings,
+            boundary_mappings: None,
         }
     }
 
@@ -167,6 +175,7 @@ impl DisplayMap {
             let mut builder = BlockBuilder::new(block, document, selection, hidden_syntax_policy);
             builder.build();
             let mut render_block = builder.finish();
+            render_block.source_hash = hash_source_text(&document.text_for_range(block.byte_range.clone()));
 
             render_block.visible_range =
                 visible_text.len()..visible_text.len() + render_block.visible_text.len();
@@ -191,13 +200,105 @@ impl DisplayMap {
             blocks.push(render_block);
         }
 
-        let boundary_mappings = build_boundary_mappings(&visible_text, &blocks);
+        Self {
+            hidden_syntax_policy,
+            visible_text,
+            blocks,
+            boundary_mappings: None,
+        }
+    }
+
+    pub(crate) fn from_document_incremental(
+        document: &DocumentBuffer,
+        selection: Option<&SelectionModel>,
+        hidden_syntax_policy: HiddenSyntaxPolicy,
+        prev_display_map: Option<&DisplayMap>,
+    ) -> Self {
+        let Some(prev) = prev_display_map else {
+            return Self::from_document(document, selection, hidden_syntax_policy);
+        };
+
+        let prev_by_id: std::collections::HashMap<u64, &RenderBlock> =
+            prev.blocks.iter().map(|b| (b.id, b)).collect();
+
+        let mut visible_text = String::new();
+        let mut blocks = Vec::with_capacity(document.blocks().len());
+
+        for (block_index, block) in document.blocks().iter().enumerate() {
+            let source_text = document.text_for_range(block.byte_range.clone());
+            let source_hash = hash_source_text(&source_text);
+
+            let can_reuse = prev_by_id
+                .get(&block.id)
+                .map(|prev_block| {
+                    block.kind == prev_block.kind
+                        && block.content_range == prev_block.content_range
+                        && source_hash == prev_block.source_hash
+                        && !selection_affects_block_changed(selection, &prev_block, block)
+                })
+                .unwrap_or(false);
+
+            let mut render_block = if can_reuse {
+                let prev_block = prev_by_id[&block.id];
+                let source_offset_delta =
+                    (block.byte_range.start as i64) - (prev_block.source_range.start as i64);
+                let prev_visible_start = prev_block.visible_range.start;
+                let mut spans = prev_block.spans.clone();
+                if source_offset_delta != 0 {
+                    for span in &mut spans {
+                        span.source_range = (span.source_range.start as i64 + source_offset_delta) as usize
+                            ..(span.source_range.end as i64 + source_offset_delta) as usize;
+                    }
+                }
+                for span in &mut spans {
+                    span.visible_range = span.visible_range.start - prev_visible_start
+                        ..span.visible_range.end - prev_visible_start;
+                }
+                RenderBlock {
+                    id: prev_block.id,
+                    kind: prev_block.kind.clone(),
+                    source_range: block.byte_range.clone(),
+                    content_range: block.content_range.clone(),
+                    visible_range: 0..prev_block.visible_text.len(),
+                    visible_text: prev_block.visible_text.clone(),
+                    spans,
+                    embedded: prev_block.embedded.clone(),
+                    source_hash: prev_block.source_hash,
+                }
+            } else {
+                let mut builder = BlockBuilder::new(block, document, selection, hidden_syntax_policy);
+                builder.build();
+                let mut rb = builder.finish();
+                rb.source_hash = source_hash;
+                rb
+            };
+
+            render_block.visible_range =
+                visible_text.len()..visible_text.len() + render_block.visible_text.len();
+            for span in &mut render_block.spans {
+                span.visible_range = span.visible_range.start + render_block.visible_range.start
+                    ..span.visible_range.end + render_block.visible_range.start;
+            }
+
+            if block_index > 0 && !visible_text.is_empty() && !render_block.visible_text.is_empty()
+            {
+                visible_text.push('\n');
+                for span in &mut render_block.spans {
+                    span.visible_range = span.visible_range.start + 1..span.visible_range.end + 1;
+                }
+                render_block.visible_range =
+                    render_block.visible_range.start + 1..render_block.visible_range.end + 1;
+            }
+
+            visible_text.push_str(&render_block.visible_text);
+            blocks.push(render_block);
+        }
 
         Self {
             hidden_syntax_policy,
             visible_text,
             blocks,
-            boundary_mappings,
+            boundary_mappings: None,
         }
     }
 
@@ -352,9 +453,9 @@ impl DisplayMap {
         visible_offset: usize,
         affinity: SelectionAffinity,
     ) -> usize {
-        let boundary = self
-            .boundary_mappings
-            .get(visible_offset.min(self.boundary_mappings.len().saturating_sub(1)))
+        let boundary_mappings = self.ensure_boundary_mappings();
+        let boundary = boundary_mappings
+            .get(visible_offset.min(boundary_mappings.len().saturating_sub(1)))
             .copied()
             .unwrap_or_default();
         match affinity {
@@ -658,6 +759,7 @@ impl<'a> BlockBuilder<'a> {
             visible_text: self.visible_text,
             spans: self.spans,
             embedded,
+            source_hash: 0,
         }
     }
 
@@ -1678,6 +1780,26 @@ fn split_inclusive_lines(text: &str) -> Vec<&str> {
 
 fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
     left.start < right.end && right.start < left.end
+}
+
+fn selection_affects_block_changed(
+    selection: Option<&SelectionModel>,
+    prev_block: &RenderBlock,
+    new_block: &BlockProjection,
+) -> bool {
+    selection
+        .map(|s| {
+            ranges_overlap(&s.range(), &prev_block.source_range)
+                || ranges_overlap(&s.range(), &new_block.byte_range)
+        })
+        .unwrap_or(false)
+}
+
+fn hash_source_text(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn selection_intersects_range(selection: &SelectionModel, range: &Range<usize>) -> bool {

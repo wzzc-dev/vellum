@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use tree_sitter::{Parser, TreeCursor};
 
@@ -33,8 +34,18 @@ pub struct CodeHighlightResult {
     pub spans: Vec<CodeHighlightSpan>,
 }
 
+const CACHE_MAX_ENTRIES: usize = 32;
+
 pub struct CodeHighlighter {
     languages: HashMap<String, tree_sitter::Language>,
+    cache: Mutex<Vec<((String, u64), CodeHighlightResult)>>,
+}
+
+fn hash_code(code: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl CodeHighlighter {
@@ -60,11 +71,20 @@ impl CodeHighlighter {
             languages.insert(name.to_string(), lang);
         }
 
-        Self { languages }
+        Self { languages, cache: Mutex::new(Vec::new()) }
     }
 
     pub fn highlight(&self, language: &str, code: &str) -> Option<CodeHighlightResult> {
         let lang = self.languages.get(language)?;
+        let hash = hash_code(code);
+
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some((_, result)) = cache.iter().find(|((l, h), _)| l == language && *h == hash) {
+                return Some(result.clone());
+            }
+        }
+
         let mut parser = Parser::new();
         parser.set_language(lang).ok()?;
 
@@ -85,7 +105,17 @@ impl CodeHighlighter {
             Self::fill_gaps(&mut spans, code.len());
         }
 
-        Some(CodeHighlightResult { spans })
+        let result = CodeHighlightResult { spans };
+
+        {
+            let mut cache = self.cache.lock().unwrap();
+            cache.push(((language.to_string(), hash), result.clone()));
+            if cache.len() > CACHE_MAX_ENTRIES {
+                cache.remove(0);
+            }
+        }
+
+        Some(result)
     }
 
     fn walk_tree(cursor: &mut TreeCursor, spans: &mut Vec<CodeHighlightSpan>) {
