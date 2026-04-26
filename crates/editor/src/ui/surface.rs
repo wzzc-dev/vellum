@@ -579,6 +579,7 @@ fn render_display_block(
                 palette,
                 window,
             ),
+            BlockKind::ThematicBreak => render_thematic_break(palette),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -1688,6 +1689,21 @@ fn render_blockquote_lines(
         text_column = text_column.child(render_line_text(block, line, palette, window));
     }
     text_column.into_any_element()
+}
+
+fn render_thematic_break(palette: RenderPalette) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .py(px(8.))
+        .child(
+            div()
+                .w_full()
+                .h(px(2.))
+                .bg(palette.border_color.opacity(0.6)),
+        )
+        .into_any_element()
 }
 
 fn render_empty_line_block(block: &RenderBlock, line_count: usize) -> AnyElement {

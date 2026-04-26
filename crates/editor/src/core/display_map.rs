@@ -675,6 +675,7 @@ impl<'a> BlockBuilder<'a> {
                 };
                 self.push_code_fence(&text, language.as_deref());
             }
+            BlockKind::ThematicBreak => self.push_thematic_break(&text),
             _ => self.push_inline_text(
                 self.block.content_range.start,
                 &text,
@@ -716,6 +717,15 @@ impl<'a> BlockBuilder<'a> {
                 RenderInlineStyle::default(),
             );
         }
+    }
+
+    fn push_thematic_break(&mut self, text: &str) {
+        let source_start = self.block.content_range.start;
+        self.push_hidden_or_visible(
+            RenderSpanKind::HiddenSyntax,
+            source_start..source_start + text.len(),
+            text,
+        );
     }
 
     fn push_blockquote(&mut self, text: &str) {
@@ -1170,7 +1180,10 @@ impl<'a> BlockBuilder<'a> {
         let cursor = selection.cursor();
         matches!(
             self.block.kind,
-            BlockKind::Heading { .. } | BlockKind::Blockquote | BlockKind::List
+            BlockKind::Heading { .. }
+                | BlockKind::Blockquote
+                | BlockKind::List
+                | BlockKind::ThematicBreak
         ) && cursor == source_range.end
             && selection.affinity == SelectionAffinity::Upstream
     }
