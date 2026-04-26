@@ -1522,9 +1522,37 @@ fn parse_inline_tokens_into(
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '='))
+            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '=' | ':'))
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
+
+        if rest.starts_with(':') {
+            if let Some(end_pos) = rest[1..].find(':') {
+                let name = &rest[1..1 + end_pos];
+                if !name.is_empty()
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '+' || c == '-')
+                {
+                    if let Some(emoji) = emojis::get_by_shortcode(name) {
+                        let full_len = 1 + end_pos + 1;
+                        push_hidden_marker(tokens, base_offset + offset, ":");
+                        push_emoji_token(
+                            tokens,
+                            base_offset + offset + 1,
+                            name,
+                            emoji.as_str(),
+                            style,
+                        );
+                        push_hidden_marker(tokens, base_offset + offset + 1 + end_pos, ":");
+                        offset += full_len;
+                        continue;
+                    }
+                }
+            }
+            push_text_token(tokens, base_offset + offset, ":", style);
+            offset += 1;
+            continue;
+        }
+
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
         offset += next_special;
     }
@@ -1574,6 +1602,24 @@ fn push_text_token(
         reveal_range: None,
         source_text: text.to_string(),
         visible_text: text.to_string(),
+        hidden: false,
+        style,
+        meta: None,
+    });
+}
+
+fn push_emoji_token(
+    tokens: &mut Vec<InlineToken>,
+    offset: usize,
+    name: &str,
+    emoji_str: &str,
+    style: RenderInlineStyle,
+) {
+    tokens.push(InlineToken {
+        local_range: offset..offset + name.len(),
+        reveal_range: None,
+        source_text: name.to_string(),
+        visible_text: emoji_str.to_string(),
         hidden: false,
         style,
         meta: None,
