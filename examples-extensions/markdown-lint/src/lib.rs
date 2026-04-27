@@ -1,10 +1,10 @@
-use vellum_plugin_sdk::decoration::{
+use vellum_extension_sdk::decoration::{
     Decoration, DecorationKind, ProtocolResponse, Tooltip, TooltipPosition, UnderlineStyle,
     WebViewRequest,
 };
-use vellum_plugin_sdk::event::{EventData, EventType};
-use vellum_plugin_sdk::ui::{ButtonVariant, Severity, TextStyle, UiEvent, UiNode};
-use vellum_plugin_sdk::{Plugin, PluginContext, PluginManifest};
+use vellum_extension_sdk::event::{EventData, EventType};
+use vellum_extension_sdk::ui::{ButtonVariant, Severity, TextStyle, UiEvent, UiNode};
+use vellum_extension_sdk::{Plugin, PluginContext, PluginManifest};
 
 #[derive(Default)]
 struct MarkdownLintPlugin {
@@ -477,4 +477,4 @@ fn markdown_to_html(text: &str) -> String {
     )
 }
 
-vellum_plugin_sdk::vellum_plugin!(MarkdownLintPlugin);
+vellum_extension_sdk::vellum_extension!(MarkdownLintPlugin);

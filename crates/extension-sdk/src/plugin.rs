@@ -1,25 +1,46 @@
 use crate::decoration::{ProtocolResponse, Tooltip, TooltipPosition, WebViewRequest};
 use crate::event::EventData;
 use crate::host;
-use crate::ui::UiEvent;
 use crate::manifest::PluginManifest;
+use crate::ui::UiEvent;
 
+/// The main trait that extensions implement.
 pub trait Plugin: Default + 'static {
+    /// Return the plugin's manifest metadata.
     fn manifest() -> PluginManifest;
+
+    /// Called when the plugin is initialized.
     fn init(&mut self, ctx: &mut PluginContext);
+
+    /// Called when the plugin is shut down.
     fn shutdown(&mut self, _ctx: &mut PluginContext) {}
+
+    /// Called when a subscribed event occurs.
     fn handle_event(&mut self, _event: EventData, _ctx: &mut PluginContext) {}
+
+    /// Called when a registered command is executed.
     fn execute_command(&mut self, _command_id: u32, _ctx: &mut PluginContext) {}
+
+    /// Called when a UI event occurs in the plugin's panel.
     fn handle_ui_event(&mut self, _event: UiEvent, _ctx: &mut PluginContext) {}
+
+    /// Called when the user hovers over a decoration with hover data.
     fn handle_hover(&mut self, hover_data: &str, _ctx: &mut PluginContext) -> Option<Tooltip> {
         let _ = hover_data;
         None
     }
-    fn handle_webview_request(&mut self, _request: WebViewRequest, _ctx: &mut PluginContext) -> Option<ProtocolResponse> {
+
+    /// Called when a webview makes a protocol request.
+    fn handle_webview_request(
+        &mut self,
+        _request: WebViewRequest,
+        _ctx: &mut PluginContext,
+    ) -> Option<ProtocolResponse> {
         None
     }
 }
 
+/// Context passed to plugin methods, providing access to host APIs.
 pub struct PluginContext;
 
 impl PluginContext {
@@ -100,17 +121,23 @@ impl PluginContext {
     }
 }
 
+/// Macro to generate the WASM component exports for a plugin.
+///
+/// Usage:
+/// ```ignore
+/// vellum_extension!(MyPlugin);
+/// ```
 #[macro_export]
-macro_rules! vellum_plugin {
+macro_rules! vellum_extension {
     ($plugin_type:ty) => {
         static mut PLUGIN_INSTANCE: Option<$plugin_type> = None;
 
         #[unsafe(no_mangle)]
         pub extern "C" fn plugin_init() {
             unsafe {
-                let mut instance = <$plugin_type>::default();
+                let mut instance = <$plugin_type as ::core::default::Default>::default();
                 let mut ctx = $crate::plugin::PluginContext::new();
-                <$plugin_type>::init(&mut instance, &mut ctx);
+                <$plugin_type as $crate::plugin::Plugin>::init(&mut instance, &mut ctx);
                 PLUGIN_INSTANCE = Some(instance);
             }
         }
@@ -120,14 +147,17 @@ macro_rules! vellum_plugin {
             unsafe {
                 if let Some(mut instance) = PLUGIN_INSTANCE.take() {
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    <$plugin_type>::shutdown(&mut instance, &mut ctx);
+                    <$plugin_type as $crate::plugin::Plugin>::shutdown(
+                        &mut instance,
+                        &mut ctx,
+                    );
                 }
             }
         }
 
         #[unsafe(no_mangle)]
         pub extern "C" fn plugin_manifest() -> u64 {
-            let manifest = <$plugin_type>::manifest();
+            let manifest = <$plugin_type as $crate::plugin::Plugin>::manifest();
             let bytes = postcard::to_allocvec(&manifest).unwrap();
             let ptr = bytes.as_ptr() as u32;
             let len = bytes.len() as u32;
@@ -136,12 +166,21 @@ macro_rules! vellum_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn plugin_handle_event(event_type: u32, data_ptr: u32, data_len: u32) {
+        pub extern "C" fn plugin_handle_event(
+            event_type: u32,
+            data_ptr: u32,
+            data_len: u32,
+        ) {
             unsafe {
                 if let Some(instance) = &mut PLUGIN_INSTANCE {
-                    let event_data = $crate::event::decode_event(event_type, data_ptr, data_len);
+                    let event_data =
+                        $crate::event::decode_event(event_type, data_ptr, data_len);
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    <$plugin_type>::handle_event(instance, event_data, &mut ctx);
+                    <$plugin_type as $crate::plugin::Plugin>::handle_event(
+                        instance,
+                        event_data,
+                        &mut ctx,
+                    );
                 }
             }
         }
@@ -151,7 +190,11 @@ macro_rules! vellum_plugin {
             unsafe {
                 if let Some(instance) = &mut PLUGIN_INSTANCE {
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    <$plugin_type>::execute_command(instance, command_id, &mut ctx);
+                    <$plugin_type as $crate::plugin::Plugin>::execute_command(
+                        instance,
+                        command_id,
+                        &mut ctx,
+                    );
                 }
             }
         }
@@ -162,19 +205,34 @@ macro_rules! vellum_plugin {
                 if let Some(instance) = &mut PLUGIN_INSTANCE {
                     let event = $crate::ui::decode_ui_event(data_ptr, data_len);
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    <$plugin_type>::handle_ui_event(instance, event, &mut ctx);
+                    <$plugin_type as $crate::plugin::Plugin>::handle_ui_event(
+                        instance,
+                        event,
+                        &mut ctx,
+                    );
                 }
             }
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn plugin_handle_hover(hover_data_ptr: u32, hover_data_len: u32) -> u64 {
+        pub extern "C" fn plugin_handle_hover(
+            hover_data_ptr: u32,
+            hover_data_len: u32,
+        ) -> u64 {
             unsafe {
                 if let Some(instance) = &mut PLUGIN_INSTANCE {
-                    let bytes = core::slice::from_raw_parts(hover_data_ptr as *const u8, hover_data_len as usize);
+                    let bytes = core::slice::from_raw_parts(
+                        hover_data_ptr as *const u8,
+                        hover_data_len as usize,
+                    );
                     let hover_data = core::str::from_utf8(bytes).unwrap_or("");
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    let tooltip = <$plugin_type>::handle_hover(instance, hover_data, &mut ctx);
+                    let tooltip =
+                        <$plugin_type as $crate::plugin::Plugin>::handle_hover(
+                            instance,
+                            hover_data,
+                            &mut ctx,
+                        );
                     match tooltip {
                         Some(t) => {
                             let ser = postcard::to_allocvec(&Some(t)).unwrap();
@@ -192,16 +250,29 @@ macro_rules! vellum_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn plugin_handle_webview_request(data_ptr: u32, data_len: u32) {
+        pub extern "C" fn plugin_handle_webview_request(
+            data_ptr: u32,
+            data_len: u32,
+        ) {
             unsafe {
                 if let Some(instance) = &mut PLUGIN_INSTANCE {
-                    let bytes = core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize);
-                    let request = match postcard::from_bytes::<$crate::decoration::WebViewRequest>(bytes) {
+                    let bytes = core::slice::from_raw_parts(
+                        data_ptr as *const u8,
+                        data_len as usize,
+                    );
+                    let request = match postcard::from_bytes::<
+                        $crate::decoration::WebViewRequest,
+                    >(bytes)
+                    {
                         Ok(r) => r,
                         Err(_) => return,
                     };
                     let mut ctx = $crate::plugin::PluginContext::new();
-                    <$plugin_type>::handle_webview_request(instance, request, &mut ctx);
+                    <$plugin_type as $crate::plugin::Plugin>::handle_webview_request(
+                        instance,
+                        request,
+                        &mut ctx,
+                    );
                 }
             }
         }

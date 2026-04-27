@@ -11,5 +11,5 @@ gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["webview"] }
 regex = "1"
 rfd = "0.15"
-vellum-plugin = { path = "../plugin" }
+vellum-extension = { path = "../extension" }
 workspace = { path = "../workspace" }

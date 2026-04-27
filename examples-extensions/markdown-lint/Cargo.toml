@@ -1,8 +1,12 @@
 [package]
-name = "vellum-plugin-sdk"
+name = "vellum-markdown-lint"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
+vellum-extension-sdk = { path = "../../crates/extension-sdk" }
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }

@@ -32,7 +32,7 @@ use gpui_component::{
 };
 use rfd::FileDialog;
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
-use vellum_plugin::PluginManager;
+use vellum_extension::ExtensionHost;
 
 use webview::WebViewManager;
 
@@ -145,12 +145,11 @@ struct VellumApp {
     // --- file tree rename state ---
     renaming_path: Option<PathBuf>,
     rename_input: Option<Entity<InputState>>,
-    // --- plugin system ---
-    plugin_manager: PluginManager,
+    // --- extension system ---
+    extension_host: ExtensionHost,
     // --- pending file opens from drag-drop ---
     pending_file_opens: Vec<PathBuf>,
     recent_files: Vec<PathBuf>,
-    disabled_plugin_ids: Vec<String>,
     disclosure_state: HashMap<String, bool>,
     webview_manager: WebViewManager,
     focus_mode: bool,
@@ -473,13 +472,12 @@ impl VellumApp {
             find_input_subscriptions: vec![editor_subscription, find_input_subscription, replace_input_subscription, outline_input_subscription],
             renaming_path: None,
             rename_input: None,
-            plugin_manager: PluginManager::new().unwrap_or_else(|e| {
-                eprintln!("failed to initialize plugin manager: {}", e);
-                PluginManager::new().unwrap()
+            extension_host: ExtensionHost::new().unwrap_or_else(|e| {
+                eprintln!("failed to initialize extension host: {}", e);
+                ExtensionHost::new().unwrap()
             }),
             pending_file_opens: Vec::new(),
             recent_files: crate::path::read_recent_files(),
-            disabled_plugin_ids: Vec::new(),
             disclosure_state: HashMap::new(),
             webview_manager: WebViewManager::new(),
             focus_mode: false,
@@ -487,24 +485,33 @@ impl VellumApp {
         window.focus(&this.focus_handle);
         this.restore_last_opened_document(window, cx);
 
-        if let Some(plugin_dir) = dirs::data_dir().map(|d| d.join("dev.vellum").join("plugins")) {
-            if let Ok(manifests) = this.plugin_manager.load_plugins_from_dir(&plugin_dir) {
-                for manifest in &manifests {
-                    eprintln!("loaded plugin: {} v{}", manifest.name, manifest.version);
+        // Discover extensions in ~/.vellum/extensions/
+        if let Some(ext_dir) = dirs::home_dir().map(|d| d.join(".vellum").join("extensions")) {
+            if let Ok(discovered) = this.extension_host.discover_in_dir(&ext_dir) {
+                for id in &discovered {
+                    eprintln!("discovered extension: {}", id);
                 }
             }
         }
 
+        // Discover extensions in app bundle directory
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                let local_plugin_dir = exe_dir.join("plugins");
-                if local_plugin_dir.exists() {
-                    if let Ok(manifests) = this.plugin_manager.load_plugins_from_dir(&local_plugin_dir) {
-                        for manifest in &manifests {
-                            eprintln!("loaded plugin: {} v{}", manifest.name, manifest.version);
+                let local_ext_dir = exe_dir.join("extensions");
+                if local_ext_dir.exists() {
+                    if let Ok(discovered) = this.extension_host.discover_in_dir(&local_ext_dir) {
+                        for id in &discovered {
+                            eprintln!("discovered extension: {}", id);
                         }
                     }
                 }
+            }
+        }
+
+        // Activate all discovered extensions
+        if let Ok(activated) = this.extension_host.activate_discovered() {
+            for id in &activated {
+                eprintln!("activated extension: {}", id);
             }
         }
 
@@ -604,9 +611,12 @@ impl VellumApp {
 
                         let text = snapshot.document_text.clone();
                         let path = snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string());
-                        this.plugin_manager.update_document(text.clone(), path.clone());
-                        this.plugin_manager.dispatch_event(
-                            vellum_plugin::event::EventData::DocumentChanged { text, path },
+                        this.extension_host.update_document(text.clone(), path.clone());
+                        this.extension_host.dispatch_event(
+                            "document.changed",
+                            snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default().as_str(),
+                            &text,
+                            path.as_deref(),
                         );
 
                         cx.notify();

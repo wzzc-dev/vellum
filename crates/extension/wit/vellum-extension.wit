@@ -1,0 +1,116 @@
+/// Vellum Extension Host API — simplified WIT world.
+///
+/// Complex types (UiNode, Tooltip, Decoration, etc.) are passed as
+/// postcard-serialized `list<u8>` between host and extension to avoid
+/// cross-interface type complexity in wit-bindgen 0.38.
+package vellum:extension@0.1.0;
+
+interface types {
+    enum log-level { trace, debug, info, warn, error }
+
+    record host-error { message: string }
+    record extension-error { message: string }
+
+    record document-info {
+        id: string,
+        path: option<string>,
+        language: option<string>,
+    }
+
+    record command-contribution {
+        id: string,
+        title: string,
+        key: option<string>,
+    }
+
+    record panel-contribution {
+        id: string,
+        title: string,
+        icon: string,
+        location: string,
+    }
+
+    record activation-context {
+        extension-id: string,
+        extension-path: string,
+    }
+}
+
+interface host {
+    use types.{log-level};
+    log: func(level: log-level, message: string);
+    show-status-message: func(message: string);
+}
+
+interface editor {
+    use types.{document-info, host-error};
+
+    active-document: func() -> option<document-info>;
+    document-text: func(document-id: string) -> result<string, host-error>;
+    document-path: func(document-id: string) -> result<option<string>, host-error>;
+    replace-range: func(document-id: string, start: u64, end: u64, text: string) -> result<_, host-error>;
+    insert-text: func(document-id: string, position: u64, text: string) -> result<_, host-error>;
+
+    /// Set decorations (postcard-serialized list of Decoration).
+    set-decorations: func(document-id: string, data: list<u8>) -> result<_, host-error>;
+    clear-decorations: func() -> result<_, host-error>;
+
+    /// Show overlay (postcard-serialized OverlayPanel).
+    show-overlay: func(data: list<u8>) -> result<_, host-error>;
+    hide-overlay: func(id: string) -> result<_, host-error>;
+
+    /// Show tooltip (postcard-serialized Tooltip).
+    show-tooltip: func(data: list<u8>) -> result<_, host-error>;
+    hide-tooltip: func() -> result<_, host-error>;
+}
+
+interface commands {
+    use types.{command-contribution, host-error};
+    register-command: func(command: command-contribution) -> result<string, host-error>;
+}
+
+interface ui {
+    use types.{panel-contribution, host-error};
+    register-panel: func(panel: panel-contribution) -> result<string, host-error>;
+    /// Set panel view (postcard-serialized UiNode).
+    set-panel-view: func(panel-id: string, data: list<u8>) -> result<_, host-error>;
+}
+
+interface webview {
+    use types.{host-error};
+    create-webview: func(url: string, allow-scripts: bool, allow-dev-tools: bool) -> result<string, host-error>;
+    navigate-webview: func(webview-id: string, url: string) -> result<_, host-error>;
+    /// Respond to webview request (postcard-serialized ProtocolResponse).
+    respond-webview-request: func(webview-id: string, data: list<u8>) -> result<_, host-error>;
+}
+
+interface extension {
+    use types.{activation-context, extension-error};
+
+    activate: func(ctx: activation-context) -> result<_, extension-error>;
+    deactivate: func() -> result<_, extension-error>;
+
+    /// Handle event (postcard-serialized EventData).
+    handle-event: func(data: list<u8>) -> result<_, extension-error>;
+
+    execute-command: func(command-id: string) -> result<_, extension-error>;
+
+    /// Handle UI event (postcard-serialized UiEvent).
+    handle-ui-event: func(data: list<u8>) -> result<_, extension-error>;
+
+    /// Handle hover, returns postcard-serialized Option<Tooltip>.
+    handle-hover: func(hover-data: string) -> result<option<list<u8>>, extension-error>;
+
+    /// Handle webview request (postcard-serialized WebViewRequest),
+    /// returns postcard-serialized Option<ProtocolResponse>.
+    handle-webview-request: func(data: list<u8>) -> result<option<list<u8>>, extension-error>;
+}
+
+world extension-world {
+    import host;
+    import editor;
+    import commands;
+    import ui;
+    import webview;
+    export extension;
+}

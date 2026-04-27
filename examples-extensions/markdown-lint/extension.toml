@@ -1,0 +1,28 @@
+id = "vellum.markdown-lint"
+name = "Markdown Lint"
+version = "0.1.0"
+schema_version = 1
+description = "Checks Markdown documents for common issues"
+author = "Vellum"
+entry = "markdown_lint.wasm"
+
+[activation]
+events = ["onDocumentOpened:markdown", "onDocumentChanged:markdown"]
+
+[capabilities]
+document_read = true
+document_write = true
+decorations = true
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "markdown-lint.run"
+title = "Run Markdown Lint"
+key = "cmd-shift-l"
+
+[[contributes.panels]]
+id = "markdown-lint.panel"
+title = "Lint"
+icon = "triangle-alert"
+location = "right"

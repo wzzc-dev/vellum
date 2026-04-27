@@ -526,7 +526,7 @@ impl VellumApp {
     }
 
     fn render_plugin_panel(&mut self, panel_id: u32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let ui_node = self.plugin_manager.panel_ui(panel_id).cloned();
+        let ui_node = self.extension_host.panel_ui(panel_id).cloned();
         match ui_node {
             Some(node) => self.render_ui_node(&node, window, cx),
             None => div()
@@ -541,9 +541,9 @@ impl VellumApp {
         }
     }
 
-    fn render_ui_node(&mut self, node: &vellum_plugin::ui::UiNode, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_ui_node(&mut self, node: &vellum_extension::ui::UiNode, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match node {
-            vellum_plugin::ui::UiNode::Column { children, gap, padding, scrollable } => {
+            vellum_extension::ui::UiNode::Column { children, gap, padding, scrollable } => {
                 let mut el = div().flex().flex_col().w_full();
                 if let Some(g) = gap {
                     el = el.gap(px(*g));
@@ -560,7 +560,7 @@ impl VellumApp {
                     el.into_any_element()
                 }
             }
-            vellum_plugin::ui::UiNode::Row { children, gap, padding } => {
+            vellum_extension::ui::UiNode::Row { children, gap, padding } => {
                 let mut el = div().flex().flex_row().w_full();
                 if let Some(g) = gap {
                     el = el.gap(px(*g));
@@ -573,7 +573,7 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_plugin::ui::UiNode::Text { content, style } => {
+            vellum_extension::ui::UiNode::Text { content, style } => {
                 let mut el = div().text_sm().child(content.clone());
                 if style.bold.unwrap_or(false) {
                     el = el.font_weight(gpui::FontWeight::BOLD);
@@ -594,7 +594,7 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_plugin::ui::UiNode::Heading { content, level } => {
+            vellum_extension::ui::UiNode::Heading { content, level } => {
                 let size = match level {
                     1 => 24.0, 2 => 20.0, 3 => 16.0, _ => 14.0,
                 };
@@ -604,14 +604,14 @@ impl VellumApp {
                     .child(content.clone())
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Button { id, label, variant, disabled, .. } => {
+            vellum_extension::ui::UiNode::Button { id, label, variant, disabled, .. } => {
                 let btn = Button::new(ElementId::Name(format!("plugin-btn-{}", id).into()))
                     .label(label.clone());
                 let btn = match variant {
-                    vellum_plugin::ui::ButtonVariant::Primary => btn.primary(),
-                    vellum_plugin::ui::ButtonVariant::Secondary => btn.ghost(),
-                    vellum_plugin::ui::ButtonVariant::Ghost => btn.ghost(),
-                    vellum_plugin::ui::ButtonVariant::Danger => btn.danger(),
+                    vellum_extension::ui::ButtonVariant::Primary => btn.primary(),
+                    vellum_extension::ui::ButtonVariant::Secondary => btn.ghost(),
+                    vellum_extension::ui::ButtonVariant::Ghost => btn.ghost(),
+                    vellum_extension::ui::ButtonVariant::Danger => btn.danger(),
                 };
                 let btn = btn.disabled(*disabled);
                 let view = cx.entity().downgrade();
@@ -619,8 +619,8 @@ impl VellumApp {
                 btn.on_click(move |_, _, cx| {
                     if let Some(entity) = view.upgrade() {
                         let _ = entity.update(cx, |this, cx| {
-                            this.plugin_manager.handle_ui_event(
-                                vellum_plugin::ui::UiEvent::ButtonClicked {
+                            this.extension_host.handle_ui_event(
+                                vellum_extension::ui::UiEvent::ButtonClicked {
                                     element_id: event_id.clone(),
                                 },
                             );
@@ -629,11 +629,11 @@ impl VellumApp {
                     }
                 }).into_any_element()
             }
-            vellum_plugin::ui::UiNode::Badge { label, severity } => {
+            vellum_extension::ui::UiNode::Badge { label, severity } => {
                 let color = match severity {
-                    Some(vellum_plugin::ui::Severity::Error) => cx.theme().danger,
-                    Some(vellum_plugin::ui::Severity::Warning) => cx.theme().warning,
-                    Some(vellum_plugin::ui::Severity::Info) => cx.theme().primary,
+                    Some(vellum_extension::ui::Severity::Error) => cx.theme().danger,
+                    Some(vellum_extension::ui::Severity::Warning) => cx.theme().warning,
+                    Some(vellum_extension::ui::Severity::Info) => cx.theme().primary,
                     _ => cx.theme().muted_foreground,
                 };
                 div()
@@ -645,13 +645,13 @@ impl VellumApp {
                     .child(label.clone())
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Separator => {
+            vellum_extension::ui::UiNode::Separator => {
                 div().w_full().h(px(1.)).bg(cx.theme().border.opacity(0.18)).into_any_element()
             }
-            vellum_plugin::ui::UiNode::Spacer => {
+            vellum_extension::ui::UiNode::Spacer => {
                 div().flex_1().into_any_element()
             }
-            vellum_plugin::ui::UiNode::Link { id, label } => {
+            vellum_extension::ui::UiNode::Link { id, label } => {
                 let view = cx.entity().downgrade();
                 let event_id = id.clone();
                 div()
@@ -664,8 +664,8 @@ impl VellumApp {
                     .on_click(move |_, _, cx| {
                         if let Some(entity) = view.upgrade() {
                             let _ = entity.update(cx, |this, cx| {
-                                this.plugin_manager.handle_ui_event(
-                                    vellum_plugin::ui::UiEvent::LinkClicked {
+                                this.extension_host.handle_ui_event(
+                                    vellum_extension::ui::UiEvent::LinkClicked {
                                         element_id: event_id.clone(),
                                     },
                                 );
@@ -675,7 +675,7 @@ impl VellumApp {
                     })
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Disclosure { label, open, children } => {
+            vellum_extension::ui::UiNode::Disclosure { label, open, children } => {
                 let key = format!("disclosure-{}", label);
                 let is_open = self.disclosure_state.get(&key).copied().unwrap_or(*open);
                 let icon = if is_open { "▾" } else { "▸" };
@@ -711,7 +711,7 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_plugin::ui::UiNode::Checkbox { id, label, checked } => {
+            vellum_extension::ui::UiNode::Checkbox { id, label, checked } => {
                 let _ = id;
                 let check = if *checked { "☑" } else { "☐" };
                 div()
@@ -723,7 +723,7 @@ impl VellumApp {
                     .child(label.clone())
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Progress { value, label } => {
+            vellum_extension::ui::UiNode::Progress { value, label } => {
                 let pct = (*value * 100.0) as f32;
                 let mut el = div().flex().flex_col().gap_1().w_full();
                 el = el.child(
@@ -745,7 +745,7 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_plugin::ui::UiNode::TextInput { id, placeholder, value, .. } => {
+            vellum_extension::ui::UiNode::TextInput { id, placeholder, value, .. } => {
                 let _ = (id, placeholder, value);
                 div()
                     .text_sm()
@@ -753,7 +753,7 @@ impl VellumApp {
                     .child("[text input]")
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Select { id, options, selected } => {
+            vellum_extension::ui::UiNode::Select { id, options, selected } => {
                 let _ = (id, options, selected);
                 div()
                     .text_sm()
@@ -761,14 +761,14 @@ impl VellumApp {
                     .child("[select]")
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::Toggle { id, label, active } => {
+            vellum_extension::ui::UiNode::Toggle { id, label, active } => {
                 let _ = (id, active);
                 div()
                     .text_sm()
                     .child(label.clone())
                     .into_any_element()
             }
-            vellum_plugin::ui::UiNode::List { items } => {
+            vellum_extension::ui::UiNode::List { items } => {
                 let mut el = div().flex().flex_col().gap_1().w_full();
                 for item in items {
                     el = el.child(
@@ -782,7 +782,7 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_plugin::ui::UiNode::Conditional { condition, when_true, when_false } => {
+            vellum_extension::ui::UiNode::Conditional { condition, when_true, when_false } => {
                 if *condition {
                     self.render_ui_node(when_true, window, cx)
                 } else if let Some(when_false) = when_false {
@@ -791,7 +791,7 @@ impl VellumApp {
                     div().into_any_element()
                 }
             }
-            vellum_plugin::ui::UiNode::WebView { id, url, allow_scripts, allow_devtools } => {
+            vellum_extension::ui::UiNode::WebView { id, url, allow_scripts, allow_devtools } => {
                 if let Some(webview_entity) = self.webview_manager.get_or_create(
                     id, url, *allow_scripts, *allow_devtools, window, cx,
                 ) {
@@ -818,13 +818,13 @@ impl VellumApp {
         }
     }
 
-    fn render_plugins_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let manifests = self.loaded_plugin_manifests();
-        let disabled = self.disabled_plugin_ids.clone();
+    fn render_extensions_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let manifests = self.loaded_extension_manifests();
+        let disabled_ids: Vec<String> = self.extension_host.registry().disabled_ids().to_vec();
 
         let mut content = div().flex().flex_col().gap_2().w_full();
 
-        if manifests.is_empty() && disabled.is_empty() {
+        if manifests.is_empty() && disabled_ids.is_empty() {
             content = content.child(
                 div()
                     .text_sm()
@@ -835,24 +835,24 @@ impl VellumApp {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Place .wasm files in ~/Library/Application Support/dev.vellum/plugins/"),
+                    .child("Place extension directories in ~/.vellum/extensions/"),
             );
         }
 
         for manifest in &manifests {
-            let plugin_id = manifest.id.clone();
-            let is_enabled = !disabled.contains(&plugin_id);
+            let ext_id = manifest.id.clone();
+            let is_enabled = !disabled_ids.contains(&ext_id);
             let view = cx.entity().downgrade();
-            let id_for_toggle = plugin_id.clone();
+            let id_for_toggle = ext_id.clone();
 
             let toggle_label = if is_enabled { "Disable" } else { "Enable" };
-            let toggle_btn = Button::new(ElementId::Name(format!("plugin-toggle-{}", plugin_id).into()))
+            let toggle_btn = Button::new(ElementId::Name(format!("ext-toggle-{}", ext_id).into()))
                 .label(toggle_label)
                 .ghost()
                 .on_click(move |_, _, cx| {
                     if let Some(entity) = view.upgrade() {
                         let _ = entity.update(cx, |this, cx| {
-                            this.toggle_plugin(id_for_toggle.clone(), cx);
+                            this.toggle_extension(id_for_toggle.clone(), cx);
                         });
                     }
                 });
@@ -895,17 +895,17 @@ impl VellumApp {
             );
         }
 
-        for plugin_id in &disabled {
-            if !manifests.iter().any(|m| &m.id == plugin_id) {
+        for ext_id in &disabled_ids {
+            if !manifests.iter().any(|m| &m.id == ext_id) {
                 let view = cx.entity().downgrade();
-                let id_for_toggle = plugin_id.clone();
-                let toggle_btn = Button::new(ElementId::Name(format!("plugin-toggle-{}", plugin_id).into()))
+                let id_for_toggle = ext_id.clone();
+                let toggle_btn = Button::new(ElementId::Name(format!("ext-toggle-{}", ext_id).into()))
                     .label("Enable")
                     .ghost()
                     .on_click(move |_, _, cx| {
                         if let Some(entity) = view.upgrade() {
                             let _ = entity.update(cx, |this, cx| {
-                                this.toggle_plugin(id_for_toggle.clone(), cx);
+                                this.toggle_extension(id_for_toggle.clone(), cx);
                             });
                         }
                     });
@@ -924,7 +924,7 @@ impl VellumApp {
                         .child(
                             div()
                                 .text_sm()
-                                .child(format!("{} (disabled)", plugin_id)),
+                                .child(format!("{} (disabled)", ext_id)),
                         )
                         .child(toggle_btn),
                 );
@@ -984,7 +984,7 @@ impl VellumApp {
     fn render_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let body = match self.right_panel_view {
-            RightPanelView::Plugins => self.render_plugins_panel(cx),
+            RightPanelView::Plugins => self.render_extensions_panel(cx),
             RightPanelView::Plugin(panel_id) => self.render_plugin_panel(panel_id, window, cx),
         };
 
@@ -997,7 +997,7 @@ impl VellumApp {
                     .selected(self.right_panel_view == RightPanelView::Plugins),
             );
 
-        for panel in self.plugin_manager.sidebar_panels() {
+        for panel in self.extension_host.sidebar_panels() {
             let panel_id = panel.id;
             tabs = tabs.child(
                 Button::new(ElementId::Name(format!("right-plugin-{}", panel_id).into()))
@@ -1012,7 +1012,7 @@ impl VellumApp {
             } else {
                 let plugin_index = selected.iter().find(|&&i| i >= 1).copied().unwrap_or(1) - 1;
                 let view_ref = view.read(cx);
-                if let Some(panel) = view_ref.plugin_manager.sidebar_panels().get(plugin_index) {
+                if let Some(panel) = view_ref.extension_host.sidebar_panels().get(plugin_index) {
                     RightPanelView::Plugin(panel.id)
                 } else {
                     RightPanelView::Plugins

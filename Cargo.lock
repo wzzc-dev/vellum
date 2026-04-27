@@ -7761,8 +7761,29 @@ dependencies = [
  "gpui-component",
  "regex",
  "rfd",
- "vellum-plugin",
+ "vellum-extension",
  "workspace",
+]
+
+[[package]]
+name = "vellum-extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postcard",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "wasmi",
+]
+
+[[package]]
+name = "vellum-extension-sdk"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7771,25 +7792,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
- "vellum-plugin-sdk",
-]
-
-[[package]]
-name = "vellum-plugin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "postcard",
- "serde",
- "wasmi",
-]
-
-[[package]]
-name = "vellum-plugin-sdk"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
+ "vellum-extension-sdk",
 ]
 
 [[package]]

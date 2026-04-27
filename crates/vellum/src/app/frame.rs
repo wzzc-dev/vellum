@@ -246,29 +246,25 @@ impl VellumApp {
         }
     }
 
-    pub(super) fn toggle_plugin(&mut self, plugin_id: String, cx: &mut Context<Self>) {
-        if self.disabled_plugin_ids.contains(&plugin_id) {
-            self.disabled_plugin_ids.retain(|id| id != &plugin_id);
-            if let Some(plugin_dir) = dirs::data_dir().map(|d| d.join("dev.vellum").join("plugins")) {
-                let wasm_path = plugin_dir.join(format!("{}.wasm", plugin_id));
-                if wasm_path.exists() {
-                    if let Err(e) = self.plugin_manager.load_plugin(&wasm_path) {
-                        eprintln!("failed to reload plugin {}: {}", plugin_id, e);
-                    }
-                }
+    pub(super) fn toggle_extension(&mut self, extension_id: String, cx: &mut Context<Self>) {
+        if self.extension_host.registry().is_disabled(&extension_id) {
+            self.extension_host.registry_mut().enable(&extension_id);
+            // Re-activate the extension
+            if let Err(e) = self.extension_host.activate_discovered() {
+                eprintln!("failed to re-activate extension {}: {}", extension_id, e);
             }
         } else {
-            self.disabled_plugin_ids.push(plugin_id.clone());
+            self.extension_host.registry_mut().disable(&extension_id);
             self.webview_manager.remove_all();
-            if let Err(e) = self.plugin_manager.unload_plugin(&plugin_id) {
-                eprintln!("failed to unload plugin {}: {}", plugin_id, e);
+            if let Err(e) = self.extension_host.unload_extension(&extension_id) {
+                eprintln!("failed to unload extension {}: {}", extension_id, e);
             }
         }
         cx.notify();
     }
 
-    pub(super) fn loaded_plugin_manifests(&self) -> Vec<vellum_plugin::PluginManifest> {
-        self.plugin_manager.loaded_manifests()
+    pub(super) fn loaded_extension_manifests(&self) -> Vec<vellum_extension::manifest::ExtensionManifest> {
+        self.extension_host.loaded_manifests()
     }
 
     pub(super) fn document_label(&self) -> String {
@@ -419,22 +415,22 @@ impl VellumApp {
             })
     }
 
-    pub(super) fn render_plugins_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn render_extensions_menu(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let manifests = self.loaded_plugin_manifests();
-        let disabled = self.disabled_plugin_ids.clone();
+        let manifests = self.loaded_extension_manifests();
+        let disabled_ids: Vec<String> = self.extension_host.registry().disabled_ids().to_vec();
 
-        Button::new("plugins-menu")
+        Button::new("extensions-menu")
             .icon(IconName::Settings)
             .ghost()
             .compact()
-            .tooltip("Plugins")
+            .tooltip("Extensions")
             .dropdown_menu(move |menu, _, _| {
                 let view = view.clone();
                 let mut menu = menu.min_w(px(220.));
 
                 menu = menu.item(
-                    PopupMenuItem::new("Manage Plugins")
+                    PopupMenuItem::new("Manage Extensions")
                         .icon(IconName::LayoutDashboard)
                         .on_click({
                             let view = view.clone();
@@ -448,14 +444,14 @@ impl VellumApp {
 
                 menu = menu.separator();
 
-                if manifests.is_empty() && disabled.is_empty() {
+                if manifests.is_empty() && disabled_ids.is_empty() {
                     menu = menu.item(
-                        PopupMenuItem::new("No plugins loaded").disabled(true),
+                        PopupMenuItem::new("No extensions loaded").disabled(true),
                     );
                 } else {
                     for manifest in &manifests {
-                        let is_enabled = !disabled.contains(&manifest.id);
-                        let plugin_id = manifest.id.clone();
+                        let is_enabled = !disabled_ids.contains(&manifest.id);
+                        let ext_id = manifest.id.clone();
                         let label = if is_enabled {
                             format!("✓ {} — {}", manifest.name, manifest.version)
                         } else {
@@ -463,24 +459,24 @@ impl VellumApp {
                         };
                         menu = menu.item(PopupMenuItem::new(label).on_click({
                             let view = view.clone();
-                            let pid = plugin_id.clone();
+                            let eid = ext_id.clone();
                             move |_, _, cx| {
                                 let _ = view.update(cx, |this, cx| {
-                                    this.toggle_plugin(pid.clone(), cx);
+                                    this.toggle_extension(eid.clone(), cx);
                                 });
                             }
                         }));
                     }
 
-                    for plugin_id in &disabled {
-                        if !manifests.iter().any(|m| &m.id == plugin_id) {
-                            let label = format!("  {} (disabled)", plugin_id);
+                    for ext_id in &disabled_ids {
+                        if !manifests.iter().any(|m| &m.id == ext_id) {
+                            let label = format!("  {} (disabled)", ext_id);
                             menu = menu.item(PopupMenuItem::new(label).on_click({
                                 let view = view.clone();
-                                let pid = plugin_id.clone();
+                                let eid = ext_id.clone();
                                 move |_, _, cx| {
                                     let _ = view.update(cx, |this, cx| {
-                                        this.toggle_plugin(pid.clone(), cx);
+                                        this.toggle_extension(eid.clone(), cx);
                                     });
                                 }
                             }));
