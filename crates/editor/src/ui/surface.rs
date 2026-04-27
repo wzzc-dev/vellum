@@ -1964,13 +1964,58 @@ fn rendered_lines_for_block(block: &RenderBlock) -> Vec<RenderedLine> {
     }
 }
 
+fn rendered_lines_for_list_block(block: &RenderBlock) -> Vec<RenderedLine> {
+    let mut lines = vec![RenderedLine::default()];
+
+    for span in rendered_spans(block).filter(|span| {
+        !span.visible_text.is_empty() && span.kind != RenderSpanKind::TaskMarker
+    }) {
+        let mut remaining = span.visible_text.as_str();
+        while let Some(newline_ix) = remaining.find('\n') {
+            let mut piece = &remaining[..newline_ix];
+            if let Some(stripped) = piece.strip_suffix('\r') {
+                piece = stripped;
+            }
+            if !piece.is_empty() {
+                lines
+                    .last_mut()
+                    .expect("at least one line")
+                    .push_fragment(RenderedFragment {
+                        kind: span.kind.clone(),
+                        text: piece.to_string(),
+                        style: span.style,
+                    });
+            }
+            lines.push(RenderedLine::default());
+            remaining = &remaining[newline_ix + 1..];
+        }
+
+        if !remaining.is_empty() {
+            lines
+                .last_mut()
+                .expect("at least one line")
+                .push_fragment(RenderedFragment {
+                    kind: span.kind.clone(),
+                    text: remaining.to_string(),
+                    style: span.style,
+                });
+        }
+    }
+
+    if lines.is_empty() {
+        vec![RenderedLine::default()]
+    } else {
+        lines
+    }
+}
+
 fn render_list_lines(
     block: &RenderBlock,
     decorations: &[Option<String>],
     palette: RenderPalette,
     window: &Window,
 ) -> AnyElement {
-    let lines = rendered_lines_for_block(block);
+    let lines = rendered_lines_for_list_block(block);
     let mut content = div().w_full().flex().flex_col();
 
     for (line_index, line) in lines.iter().enumerate() {
@@ -2184,6 +2229,9 @@ pub(super) fn list_decoration_rows(block: &RenderBlock) -> Vec<Option<String>> {
         if span.kind == RenderSpanKind::ListMarker && !span.source_text.trim().is_empty() {
             current_marker = Some(normalize_list_marker(&span.source_text));
         }
+        if span.kind == RenderSpanKind::TaskMarker && !span.source_text.trim().is_empty() {
+            current_marker = Some(task_marker_display_text(&span.source_text));
+        }
 
         if span.kind == RenderSpanKind::LineBreak && span.source_text.contains('\n') {
             rows.push(current_marker.take());
@@ -2232,6 +2280,20 @@ fn normalize_list_marker(source_text: &str) -> String {
         marker.to_string()
     } else {
         "\u{2022}".to_string()
+    }
+}
+
+fn task_marker_display_text(source_text: &str) -> String {
+    let checked = source_text
+        .trim()
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .map(|inner| matches!(inner.chars().next(), Some('x' | 'X')))
+        .unwrap_or(false);
+    if checked {
+        "\u{2611}".to_string()
+    } else {
+        "\u{2610}".to_string()
     }
 }
 
