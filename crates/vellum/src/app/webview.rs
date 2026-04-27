@@ -45,7 +45,7 @@ impl WebViewManager {
         let wry_webview = match builder.build_as_child(window) {
             Ok(wv) => wv,
             Err(e) => {
-                eprintln!("failed to create WebView '{}': {}", id, e);
+                tracing::error!(webview_id = %id, error = %e, "failed to create WebView");
                 return None;
             }
         };

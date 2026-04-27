@@ -473,7 +473,7 @@ impl VellumApp {
             renaming_path: None,
             rename_input: None,
             extension_host: ExtensionHost::new().unwrap_or_else(|e| {
-                eprintln!("failed to initialize extension host: {}", e);
+                tracing::error!("failed to initialize extension host: {}", e);
                 ExtensionHost::new().unwrap()
             }),
             pending_file_opens: Vec::new(),

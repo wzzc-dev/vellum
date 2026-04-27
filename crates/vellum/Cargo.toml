@@ -11,5 +11,8 @@ gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["webview"] }
 regex = "1"
 rfd = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 vellum-extension = { path = "../extension" }
 workspace = { path = "../workspace" }
