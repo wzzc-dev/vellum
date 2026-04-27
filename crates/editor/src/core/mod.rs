@@ -2,6 +2,7 @@ pub(crate) mod code_highlight;
 pub(crate) mod controller;
 pub(crate) mod display_map;
 pub(crate) mod document;
+pub(crate) mod markdown_highlight;
 pub(crate) mod syntax;
 pub(crate) mod table;
 pub mod text_ops;

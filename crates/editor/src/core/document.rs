@@ -32,6 +32,7 @@ pub enum BlockKind {
     FootnoteDefinition,
     Footnote,
     Unknown,
+    SourceCode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

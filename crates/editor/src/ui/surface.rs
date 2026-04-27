@@ -529,7 +529,8 @@ fn is_rendered_span(block: &RenderBlock, span: &RenderSpan) -> bool {
 }
 
 pub(super) fn renders_empty_block_linebreaks(block: &RenderBlock) -> bool {
-    block.content_range.is_empty() && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
+    block.content_range.is_empty()
+        && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
 }
 
 pub(super) fn rendered_visible_end(block: &RenderBlock) -> usize {
@@ -812,6 +813,13 @@ fn render_display_block(
                 window,
             ),
             BlockKind::ThematicBreak => render_thematic_break(palette),
+            BlockKind::SourceCode => div()
+                .w_full()
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height))
+                .font_family(MONOSPACE_FONT_FAMILY)
+                .child(styled_text_for_block(&block_clone, palette, window))
+                .into_any_element(),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -885,6 +893,41 @@ fn render_display_block(
             .child(text_area)
             .into_any_element(),
         BlockKind::List => text_area,
+        BlockKind::SourceCode => {
+            let line_count = block.visible_text.lines().count().max(1);
+            let line_number_width = format!("{}", line_count).len().max(2);
+            let gutter_width = line_number_width as f32 * 8.0 + 16.0;
+
+            let line_numbers = (1..=line_count)
+                .map(|i| format!("{:>width$}", i, width = line_number_width))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let line_numbers_el = div()
+                .w(px(gutter_width))
+                .flex_shrink_0()
+                .text_size(px(presentation.font_size))
+                .line_height(px(presentation.line_height))
+                .font_family(MONOSPACE_FONT_FAMILY)
+                .text_color(palette.muted_text_color.opacity(0.5))
+                .pr(px(8.))
+                .child(line_numbers);
+
+            let code_content = div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(text_area);
+
+            div()
+                .w_full()
+                .bg(palette.code_surface_background)
+                .px_3()
+                .py_2()
+                .flex()
+                .child(line_numbers_el)
+                .child(code_content)
+                .into_any_element()
+        }
         BlockKind::CodeFence { language } => {
             let line_count = block.visible_text.lines().count().max(1);
             let line_number_width = format!("{}", line_count).len().max(2);
@@ -1735,7 +1778,7 @@ fn base_text_style_for_block(block: &RenderBlock, text_color: Hsla, window: &Win
     } else {
         WhiteSpace::Normal
     };
-    if matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::Table) {
+    if matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::Table | BlockKind::SourceCode) {
         style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
     }
     style

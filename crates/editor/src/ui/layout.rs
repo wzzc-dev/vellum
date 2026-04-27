@@ -84,6 +84,14 @@ pub(crate) fn block_presentation(kind: &BlockKind) -> BlockPresentation {
             preview_paragraph_gap_rem: 0.4,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
+        BlockKind::SourceCode => BlockPresentation {
+            font_size: CODE_FONT_SIZE,
+            line_height: CODE_LINE_HEIGHT,
+            row_spacing_y: 2.,
+            block_padding_y: 2.,
+            preview_paragraph_gap_rem: 0.,
+            surface_kind: EditableSurfaceKind::CodeEditor,
+        },
         _ => BlockPresentation {
             font_size: BODY_FONT_SIZE,
             line_height: BODY_LINE_HEIGHT,
@@ -120,6 +128,14 @@ mod tests {
                 EditableSurfaceKind::AutoGrowText
             );
         }
+    }
+
+    #[test]
+    fn source_code_uses_code_editor_surface() {
+        assert_eq!(
+            block_presentation(&BlockKind::SourceCode).surface_kind,
+            EditableSurfaceKind::CodeEditor
+        );
     }
 
     #[test]

@@ -692,7 +692,29 @@ impl EditorController {
                 *self.prev_display_map.borrow_mut() = Some(incremental.clone());
                 incremental
             }
-            EditorViewMode::Source => self.document.source_display_map(),
+            EditorViewMode::Source => {
+                let prev = self.prev_display_map.borrow().clone();
+                let text = self.document.text();
+                let text_hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    text.hash(&mut hasher);
+                    hasher.finish()
+                };
+                if let Some(ref prev) = prev {
+                    if prev.source_hash == text_hash {
+                        prev.clone()
+                    } else {
+                        let dm = DisplayMap::from_source_text(&text);
+                        *self.prev_display_map.borrow_mut() = Some(dm.clone());
+                        dm
+                    }
+                } else {
+                    let dm = DisplayMap::from_source_text(&text);
+                    *self.prev_display_map.borrow_mut() = Some(dm.clone());
+                    dm
+                }
+            }
         };
         let mut visible_selection = display_map.source_selection_to_visible(&selection);
         let visible_text = display_map.visible_text.clone();
