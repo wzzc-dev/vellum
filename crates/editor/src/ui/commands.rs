@@ -316,6 +316,11 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.slash_command_panel.is_visible() {
+            self.slash_command_panel.hide();
+            cx.notify();
+            return;
+        }
         self.exit_edit_mode(window, cx);
     }
 

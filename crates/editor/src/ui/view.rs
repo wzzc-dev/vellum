@@ -837,6 +837,38 @@ impl Render for MarkdownEditor {
             })
             .capture_action({
                 let view = cx.entity();
+                move |_: &gpui_component::input::MoveUp, window, app: &mut App| {
+                    let handled = view.update(app, |this, _cx| {
+                        if this.slash_command_panel.is_visible() {
+                            this.slash_command_panel.select_prev();
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if handled {
+                        app.stop_propagation();
+                    }
+                }
+            })
+            .capture_action({
+                let view = cx.entity();
+                move |_: &gpui_component::input::MoveDown, window, app: &mut App| {
+                    let handled = view.update(app, |this, _cx| {
+                        if this.slash_command_panel.is_visible() {
+                            this.slash_command_panel.select_next();
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if handled {
+                        app.stop_propagation();
+                    }
+                }
+            })
+            .capture_action({
+                let view = cx.entity();
                 move |_: &DeleteToNextWordEnd, window, app: &mut App| {
                     let handled =
                         view.update(app, |this, cx| this.handle_delete_table_row(window, cx));
