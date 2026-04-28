@@ -529,8 +529,7 @@ fn is_rendered_span(block: &RenderBlock, span: &RenderSpan) -> bool {
 }
 
 pub(super) fn renders_empty_block_linebreaks(block: &RenderBlock) -> bool {
-    block.content_range.is_empty()
-        && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
+    block.content_range.is_empty() && matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph)
 }
 
 pub(super) fn rendered_visible_end(block: &RenderBlock) -> usize {
@@ -813,13 +812,6 @@ fn render_display_block(
                 window,
             ),
             BlockKind::ThematicBreak => render_thematic_break(palette),
-            BlockKind::SourceCode => div()
-                .w_full()
-                .text_size(px(presentation.font_size))
-                .line_height(px(presentation.line_height))
-                .font_family(MONOSPACE_FONT_FAMILY)
-                .child(styled_text_for_block(&block_clone, palette, window))
-                .into_any_element(),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -828,9 +820,10 @@ fn render_display_block(
                 .w_full()
                 .text_size(px(presentation.font_size))
                 .line_height(px(presentation.line_height))
-                .when(matches!(block.kind, BlockKind::CodeFence { .. }), |this| {
-                    this.font_family(MONOSPACE_FONT_FAMILY)
-                })
+                .when(
+                    matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::SourceCode),
+                    |this| this.font_family(MONOSPACE_FONT_FAMILY),
+                )
                 .child(styled_text_for_block(&block_clone, palette, window))
                 .into_any_element(),
         }
@@ -920,6 +913,9 @@ fn render_display_block(
 
             div()
                 .w_full()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(palette.border_color)
                 .bg(palette.code_surface_background)
                 .px_3()
                 .py_2()

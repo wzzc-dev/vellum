@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-tracing = "0.1"
 wasmi = "0.40"
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }

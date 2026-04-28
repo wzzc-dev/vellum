@@ -251,13 +251,13 @@ impl VellumApp {
             self.extension_host.registry_mut().enable(&extension_id);
             // Re-activate the extension
             if let Err(e) = self.extension_host.activate_discovered() {
-                tracing::error!(extension_id = %extension_id, error = %e, "failed to re-activate extension");
+                eprintln!("failed to re-activate extension {}: {}", extension_id, e);
             }
         } else {
             self.extension_host.registry_mut().disable(&extension_id);
             self.webview_manager.remove_all();
             if let Err(e) = self.extension_host.unload_extension(&extension_id) {
-                tracing::error!(extension_id = %extension_id, error = %e, "failed to unload extension");
+                eprintln!("failed to unload extension {}: {}", extension_id, e);
             }
         }
         cx.notify();

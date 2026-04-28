@@ -694,25 +694,23 @@ impl EditorController {
             }
             EditorViewMode::Source => {
                 let prev = self.prev_display_map.borrow().clone();
-                let text = self.document.text();
-                let text_hash = {
+                if let Some(prev_map) = prev.as_ref() {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    text.hash(&mut hasher);
-                    hasher.finish()
-                };
-                if let Some(ref prev) = prev {
-                    if prev.source_hash == text_hash {
-                        prev.clone()
+                    document_text.hash(&mut hasher);
+                    let current_hash = hasher.finish();
+                    let prev_hash = prev_map.blocks.first().map(|b| b.source_hash).unwrap_or(0);
+                    if current_hash == prev_hash {
+                        prev_map.clone()
                     } else {
-                        let dm = DisplayMap::from_source_text(&text);
-                        *self.prev_display_map.borrow_mut() = Some(dm.clone());
-                        dm
+                        let map = self.document.source_display_map();
+                        *self.prev_display_map.borrow_mut() = Some(map.clone());
+                        map
                     }
                 } else {
-                    let dm = DisplayMap::from_source_text(&text);
-                    *self.prev_display_map.borrow_mut() = Some(dm.clone());
-                    dm
+                    let map = self.document.source_display_map();
+                    *self.prev_display_map.borrow_mut() = Some(map.clone());
+                    map
                 }
             }
         };
@@ -785,6 +783,7 @@ impl EditorController {
         }
 
         self.view_mode = view_mode;
+        *self.prev_display_map.borrow_mut() = None;
         EditorEffects {
             changed: false,
             selection_changed: true,

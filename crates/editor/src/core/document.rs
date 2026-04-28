@@ -31,8 +31,8 @@ pub enum BlockKind {
     YamlFrontMatter,
     FootnoteDefinition,
     Footnote,
-    Unknown,
     SourceCode,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

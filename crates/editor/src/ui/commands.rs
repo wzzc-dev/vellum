@@ -380,10 +380,9 @@ impl MarkdownEditor {
     pub(crate) fn on_goto_line(
         &mut self,
         _: &GotoLine,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
-        self.toggle_goto_line(window, cx);
     }
 
     pub(crate) fn on_toggle_heading1(

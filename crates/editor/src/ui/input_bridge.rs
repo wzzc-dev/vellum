@@ -1282,7 +1282,10 @@ fn selection_for_compressed_gap_block_content(
 
         if !matches!(
             target_block.kind,
-            BlockKind::Heading { .. } | BlockKind::Blockquote | BlockKind::List
+            BlockKind::Heading { .. }
+                | BlockKind::Blockquote
+                | BlockKind::List
+                | BlockKind::SourceCode
         ) {
             continue;
         }

@@ -44,7 +44,6 @@ pub struct MarkdownEditor {
     pub(super) document_input: Entity<InputState>,
     _input_subscription: Subscription,
     _input_observer: Subscription,
-    _goto_line_subscription: Subscription,
     autosave_generation: u64,
     pub(super) syncing_input: bool,
     pub(super) input_focused: bool,
@@ -55,8 +54,6 @@ pub struct MarkdownEditor {
     cursor_blink_visible: bool,
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
-    goto_line_visible: bool,
-    goto_line_input: Entity<InputState>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -89,32 +86,12 @@ impl MarkdownEditor {
             });
         });
 
-        let goto_line_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Line number...")
-        });
-        let goto_line_view = cx.entity();
-        let goto_line_subscription = window.subscribe(
-            &goto_line_input,
-            cx,
-            move |_, event: &InputEvent, window, cx| {
-                let _ = goto_line_view.update(cx, |this, cx| {
-                    if let InputEvent::Change = event {
-                        let text = this.goto_line_input.read(cx).text().to_string();
-                        if text.contains('\n') {
-                            this.perform_goto_line(window, cx);
-                        }
-                    }
-                });
-            },
-        );
-
         Self {
             controller,
             snapshot,
             document_input,
             _input_subscription: input_subscription,
             _input_observer: input_observer,
-            _goto_line_subscription: goto_line_subscription,
             autosave_generation: 0,
             syncing_input: false,
             input_focused: false,
@@ -125,8 +102,6 @@ impl MarkdownEditor {
             cursor_blink_visible: true,
             cursor_blink_generation: 0,
             typewriter_mode: false,
-            goto_line_visible: false,
-            goto_line_input,
         }
     }
 
@@ -146,39 +121,6 @@ impl MarkdownEditor {
         self.typewriter_mode = enabled;
         if self.typewriter_mode {
             self.scroll_cursor_into_view(cx);
-        }
-        cx.notify();
-    }
-
-    pub fn toggle_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.goto_line_visible = !self.goto_line_visible;
-        if self.goto_line_visible {
-            self.goto_line_input.update(cx, |input, cx| {
-                input.set_value(String::new(), window, cx);
-            });
-        }
-        cx.notify();
-    }
-
-    pub fn perform_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let input_text = self.goto_line_input.read(cx).text().to_string();
-        self.goto_line_visible = false;
-
-        if let Ok(line_number) = input_text.trim().parse::<usize>() {
-            if line_number > 0 {
-                let text = &self.snapshot.document_text;
-                let offset = crate::core::text_ops::byte_offset_for_line_column(
-                    text,
-                    line_number.saturating_sub(1),
-                    0,
-                );
-                let selection = SelectionState::collapsed(offset);
-                let effects = self
-                    .controller
-                    .dispatch(EditCommand::SetSelection { selection });
-                self.apply_effects(window, cx, effects);
-                self.scroll_cursor_into_view(cx);
-            }
         }
         cx.notify();
     }
@@ -299,8 +241,6 @@ impl MarkdownEditor {
                     self.schedule_autosave(window, cx);
                 }
                 self.apply_effects(window, cx, effects);
-            } else if path.is_file() {
-                cx.emit(EditorEvent::OpenFile(path.clone()));
             }
         }
     }
@@ -434,10 +374,6 @@ impl MarkdownEditor {
             return false;
         }
 
-        if self.try_delete_backward_auto_pair(window, cx) {
-            return true;
-        }
-
         let effects = self.controller.dispatch(EditCommand::DeleteBackward);
         if !effects.changed && !effects.selection_changed {
             return false;
@@ -448,50 +384,6 @@ impl MarkdownEditor {
         }
         self.apply_effects(window, cx, effects);
         true
-    }
-
-    fn try_delete_backward_auto_pair(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let snapshot = &self.snapshot;
-        if !snapshot.selection.is_collapsed() {
-            return false;
-        }
-
-        let cursor = snapshot.selection.cursor();
-        let text = &snapshot.document_text;
-        if cursor == 0 {
-            return false;
-        }
-
-        let char_before = text[..cursor].chars().last();
-        let char_after = text[cursor..].chars().next();
-
-        if let (Some(before), Some(after)) = (char_before, char_after) {
-            let is_pair = matches!(
-                (before, after),
-                ('(', ')') | ('[', ']') | ('{', '}') | ('"', '"') | ('\'', '\'')
-            );
-            if is_pair {
-                let before_len = before.len_utf8();
-                let after_len = after.len_utf8();
-                let effects = self
-                    .controller
-                    .dispatch(EditCommand::DeleteSurroundingPair {
-                        before_len,
-                        after_len,
-                    });
-                if effects.changed {
-                    self.schedule_autosave(window, cx);
-                }
-                self.apply_effects(window, cx, effects);
-                return true;
-            }
-        }
-
-        false
     }
 
     fn handle_delete_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -646,15 +538,18 @@ impl MarkdownEditor {
     }
 
     pub(crate) fn scroll_cursor_into_view(&mut self, cx: &mut Context<Self>) {
-        let cursor_block = self.snapshot.display_map.blocks.iter().find(|block| {
+        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
             let cursor = self.snapshot.visible_selection.cursor();
             cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
-        });
+        }).map(|block| block.id);
 
-        let Some(cursor_block) = cursor_block else {
+        let Some(block_id) = cursor_block_id else {
             return;
         };
-        let block_id = cursor_block.id;
+
+        let Some(block_bounds) = self.block_bounds.borrow().get(&block_id).copied() else {
+            return;
+        };
 
         let viewport = self.scroll_handle.bounds();
         if viewport.size.width.is_zero() || viewport.size.height.is_zero() {
@@ -664,51 +559,18 @@ impl MarkdownEditor {
         let current_offset = self.scroll_handle.offset();
         let mut new_offset = current_offset;
 
-        if let Some(block_bounds) = self.block_bounds.borrow().get(&block_id).copied() {
-            if self.typewriter_mode {
-                let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
-                let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
-                let delta = block_center_y - viewport_center_y;
-                if delta.abs() > px(1.) {
-                    new_offset.y = current_offset.y - delta;
-                }
-            } else {
-                if block_bounds.top() < viewport.top() {
-                    new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
-                } else if block_bounds.bottom() > viewport.bottom() {
-                    new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
-                }
+        if self.typewriter_mode {
+            let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
+            let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
+            let delta = block_center_y - viewport_center_y;
+            if delta.abs() > px(1.) {
+                new_offset.y = current_offset.y - delta;
             }
         } else {
-            let heights = self.block_heights.borrow();
-            let mut block_top = px(0.);
-            for block in &self.snapshot.display_map.blocks {
-                if block.id == block_id {
-                    break;
-                }
-                block_top += heights
-                    .get(&block.id)
-                    .copied()
-                    .unwrap_or(px(BODY_LINE_HEIGHT));
-            }
-            let block_height = heights
-                .get(&block_id)
-                .copied()
-                .unwrap_or(px(BODY_LINE_HEIGHT));
-            let block_bottom = block_top + block_height;
-
-            if self.typewriter_mode {
-                let block_center_y = (block_top + block_bottom) / 2.;
-                let viewport_center_y = viewport.size.height / 2.;
-                new_offset.y = -(block_center_y - viewport_center_y);
-            } else {
-                let viewport_top = -current_offset.y;
-                let viewport_bottom = -current_offset.y + viewport.size.height;
-                if block_top < viewport_top {
-                    new_offset.y = current_offset.y + (viewport_top - block_top);
-                } else if block_bottom > viewport_bottom {
-                    new_offset.y = current_offset.y - (block_bottom - viewport_bottom);
-                }
+            if block_bounds.top() < viewport.top() {
+                new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
+            } else if block_bounds.bottom() > viewport.bottom() {
+                new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
             }
         }
 
@@ -734,17 +596,8 @@ impl Render for MarkdownEditor {
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
-        {
-            let bounds = self.block_bounds.borrow();
-            let mut heights = self.block_heights.borrow_mut();
-            for (id, bounds) in bounds.iter() {
-                heights.insert(*id, bounds.size.height);
-            }
-            let active_ids: std::collections::HashSet<u64> =
-                self.snapshot.display_map.blocks.iter().map(|b| b.id).collect();
-            heights.retain(|id, _| active_ids.contains(id));
-        }
         self.block_bounds.borrow_mut().clear();
+        self.block_heights.borrow_mut().clear();
 
         div()
             .id("markdown-editor")
@@ -763,7 +616,6 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_focus_next_block))
             .on_action(cx.listener(Self::on_toggle_source_mode))
             .on_action(cx.listener(Self::on_toggle_typewriter_mode))
-            .on_action(cx.listener(Self::on_goto_line))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))
@@ -842,38 +694,7 @@ impl Render for MarkdownEditor {
                 }
             })
             .child(
-                div().size_full().flex().flex_col()
-                    .when(self.goto_line_visible, |this| {
-                        this.child(
-                            div()
-                                .id("goto-line-bar")
-                                .w_full()
-                                .h(px(36.))
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .px(px(16.))
-                                .border_b_1()
-                                .border_color(cx.theme().border)
-                                .bg(cx.theme().background)
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Go to Line:"),
-                                )
-                                .child(
-                                    div().flex_1().child(
-                                        Input::new(&self.goto_line_input)
-                                            .appearance(true)
-                                            .bordered(true)
-                                            .focus_bordered(true)
-                                            .text_size(px(13.)),
-                                    ),
-                                )
-                        )
-                    })
-                    .child(
+                div().size_full().flex().flex_col().child(
                     div()
                         .flex_1()
                         .id("editor-scroll-container")
@@ -941,7 +762,7 @@ mod tests {
     use super::*;
     use crate::ui::surface::{
         caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
-        rendered_visible_end, rendered_visible_len, shape_block_lines_uncached,
+        rendered_visible_end, rendered_visible_len, shape_block_lines_uncached as shape_block_lines,
         surface_empty_block_line_count, text_content_x_offset,
     };
     use crate::{BlockKind, RenderSpanKind, SelectionAffinity};
@@ -1016,8 +837,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
-                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
+                shape_block_lines(&blocks[0], px(640.), window).len(),
+                shape_block_lines(&blocks[1], px(640.), window).len(),
             )
         });
 
@@ -1753,8 +1574,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
-                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
+                shape_block_lines(&blocks[0], px(640.), window).len(),
+                shape_block_lines(&blocks[1], px(640.), window).len(),
             )
         });
 
@@ -1770,8 +1591,8 @@ mod tests {
         let (first_lines, second_lines) = cx.update_window_entity(&view, |editor, window, _| {
             let blocks = editor.snapshot.display_map.blocks.clone();
             (
-                shape_block_lines_uncached(&blocks[0], px(640.), window).len(),
-                shape_block_lines_uncached(&blocks[1], px(640.), window).len(),
+                shape_block_lines(&blocks[0], px(640.), window).len(),
+                shape_block_lines(&blocks[1], px(640.), window).len(),
             )
         });
 

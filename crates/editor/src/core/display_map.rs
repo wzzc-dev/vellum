@@ -1,8 +1,9 @@
 use std::ops::Range;
 
 use super::{
-    code_highlight::CodeHighlighter,
+    code_highlight::{CodeHighlighter, CodeTokenType},
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionModel},
+    markdown_highlight,
     syntax::InlineStyle,
     table::{TABLE_COLUMN_GAP, TableCellRef, TableModel, str_display_width},
 };
@@ -123,7 +124,6 @@ pub struct DisplayMap {
     pub visible_text: String,
     pub blocks: Vec<RenderBlock>,
     boundary_mappings: Option<Vec<BoundaryMapping>>,
-    pub(crate) source_hash: u64,
 }
 
 impl DisplayMap {
@@ -136,29 +136,29 @@ impl DisplayMap {
     }
 
     pub(crate) fn from_source_text(text: &str) -> Self {
-        let highlight_spans = super::markdown_highlight::highlight_markdown_source(text);
+        let highlight_spans = markdown_highlight::highlight_markdown_source(text);
         let mut spans = Vec::with_capacity(highlight_spans.len());
         let mut visible_offset = 0usize;
+
         for hs in &highlight_spans {
             let span_text = &text[hs.start..hs.end];
-            if span_text.is_empty() {
-                continue;
-            }
-            let len = span_text.len();
+            let visible_text = span_text.to_string();
+            let visible_len = visible_text.len();
             spans.push(RenderSpan {
                 kind: RenderSpanKind::Text,
                 source_range: hs.start..hs.end,
-                visible_range: visible_offset..visible_offset + len,
+                visible_range: visible_offset..visible_offset + visible_len,
                 source_text: span_text.to_string(),
-                visible_text: span_text.to_string(),
+                visible_text,
                 hidden: false,
                 style: RenderInlineStyle::default(),
                 meta: Some(RenderSpanMeta::CodeToken {
                     token_type: hs.token_type,
                 }),
             });
-            visible_offset += len;
+            visible_offset += visible_len;
         }
+
         if spans.is_empty() {
             spans.push(RenderSpan {
                 kind: RenderSpanKind::Text,
@@ -171,6 +171,7 @@ impl DisplayMap {
                 meta: None,
             });
         }
+
         let block = RenderBlock {
             id: 0,
             kind: BlockKind::SourceCode,
@@ -180,21 +181,14 @@ impl DisplayMap {
             visible_text: text.to_string(),
             spans,
             embedded: None,
-            source_hash: 0,
+            source_hash: hash_source_text(text),
         };
         let blocks = vec![block];
-        let source_hash = {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            text.hash(&mut hasher);
-            hasher.finish()
-        };
         Self {
             hidden_syntax_policy: HiddenSyntaxPolicy::SelectionAware,
             visible_text: text.to_string(),
             blocks,
             boundary_mappings: None,
-            source_hash,
         }
     }
 
@@ -240,7 +234,6 @@ impl DisplayMap {
             visible_text,
             blocks,
             boundary_mappings: None,
-            source_hash: 0,
         }
     }
 
@@ -335,7 +328,6 @@ impl DisplayMap {
             visible_text,
             blocks,
             boundary_mappings: None,
-            source_hash: 0,
         }
     }
 
@@ -520,15 +512,15 @@ fn should_prefer_next_block_start_at_hidden_boundary(
         return false;
     };
 
-    (matches!(current.kind, BlockKind::Raw | BlockKind::SourceCode)
+    (current.kind == BlockKind::Raw
         && current.content_range.is_empty()
         && current.source_range.end == source_offset
         && next.source_range.start == source_offset
-        && matches!(next.kind, BlockKind::Paragraph | BlockKind::Raw | BlockKind::SourceCode))
+        && matches!(next.kind, BlockKind::Paragraph | BlockKind::Raw))
         || (current.content_range.end < source_offset
             && current.source_range.end == source_offset
             && next.content_range.start == source_offset
-            && !matches!(next.kind, BlockKind::Raw | BlockKind::SourceCode))
+            && next.kind != BlockKind::Raw)
 }
 
 fn should_prefer_next_table_span_boundary(

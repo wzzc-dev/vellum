@@ -1,28 +1,17 @@
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Parser, TreeCursor};
 
-use super::code_highlight::{CodeHighlightSpan, CodeTokenType};
+use super::code_highlight::{CodeHighlightSpan, CodeHighlighter, CodeTokenType};
 
 pub fn highlight_markdown_source(text: &str) -> Vec<CodeHighlightSpan> {
-    let mut block_parser = Parser::new();
-    block_parser
-        .set_language(&tree_sitter_md::LANGUAGE.into())
-        .expect("failed to load markdown block grammar");
-    let Some(block_tree) = block_parser.parse(text, None) else {
-        return vec![CodeHighlightSpan {
-            start: 0,
-            end: text.len(),
-            token_type: CodeTokenType::Default,
-        }];
-    };
-
-    let mut inline_parser = Parser::new();
-    inline_parser
-        .set_language(&tree_sitter_md::INLINE_LANGUAGE.into())
-        .expect("failed to load markdown inline grammar");
-
     let mut spans = Vec::new();
-    let block_root = block_tree.root_node();
-    collect_block_spans(&block_root, &mut inline_parser, text, &mut spans);
+    if text.is_empty() {
+        return spans;
+    }
+
+    let tree = parse_markdown(text);
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    walk_block_nodes(&mut cursor, text, &mut spans);
 
     if spans.is_empty() {
         spans.push(CodeHighlightSpan {
@@ -31,288 +20,664 @@ pub fn highlight_markdown_source(text: &str) -> Vec<CodeHighlightSpan> {
             token_type: CodeTokenType::Default,
         });
     } else {
-        fill_gaps(&mut spans, text.len());
+        CodeHighlighter::fill_gaps(&mut spans, text.len());
     }
 
     spans
 }
 
-fn collect_block_spans(
-    node: &Node,
-    inline_parser: &mut Parser,
-    text: &str,
-    spans: &mut Vec<CodeHighlightSpan>,
-) {
-    if !node.is_named() {
-        return;
-    }
-
-    match node.kind() {
-        "document" | "section" => {
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                collect_block_spans(&child, inline_parser, text, spans);
-            }
-        }
-        "atx_heading" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                match child.kind() {
-                    "atx_h1_marker"
-                    | "atx_h2_marker"
-                    | "atx_h3_marker"
-                    | "atx_h4_marker"
-                    | "atx_h5_marker"
-                    | "atx_h6_marker" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
-                    }
-                    "inline" => {
-                        collect_inline_spans_for_node(&child, inline_parser, text, spans);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "setext_heading" => {
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                match child.kind() {
-                    "paragraph" => {
-                        let mut pc = child.walk();
-                        for gc in child.children(&mut pc) {
-                            if gc.kind() == "inline" {
-                                collect_inline_spans_for_node(&gc, inline_parser, text, spans);
-                            }
-                        }
-                    }
-                    "setext_h1_underline" | "setext_h2_underline" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "block_quote" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                match child.kind() {
-                    "block_quote_marker" | "block_continuation" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
-                    }
-                    _ => {
-                        collect_block_spans(&child, inline_parser, text, spans);
-                    }
-                }
-            }
-        }
-        "list" => {
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                if child.kind() == "list_item" {
-                    collect_list_item_spans(&child, inline_parser, text, spans);
-                } else {
-                    collect_block_spans(&child, inline_parser, text, spans);
-                }
-            }
-        }
-        "fenced_code_block" => {
-            let mut cursor = node.walk();
-            let mut code_content_start = None;
-            let mut code_content_end = None;
-            let mut language = None;
-
-            for child in node.children(&mut cursor) {
-                match child.kind() {
-                    "fenced_code_block_delimiter" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
-                    }
-                    "info_string" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Type);
-                        language = extract_language(child, text);
-                    }
-                    "code_fence_content" => {
-                        code_content_start = Some(child.start_byte());
-                        code_content_end = Some(child.end_byte());
-                    }
-                    "language" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Type);
-                    }
-                    _ => {}
-                }
-            }
-
-            if let (Some(start), Some(end)) = (code_content_start, code_content_end) {
-                let code_text = &text[start..end];
-                let highlighted = language.as_deref().and_then(|lang| {
-                    static HIGHLIGHTER: std::sync::OnceLock<super::code_highlight::CodeHighlighter> =
-                        std::sync::OnceLock::new();
-                    let highlighter = HIGHLIGHTER.get_or_init(super::code_highlight::CodeHighlighter::new);
-                    highlighter.highlight(lang, code_text)
-                });
-
-                if let Some(result) = highlighted {
-                    for span in &result.spans {
-                        push_span(spans, start + span.start, start + span.end, span.token_type);
-                    }
-                }
-            }
-        }
-        "indented_code_block" => {
-            push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::String);
-        }
-        "thematic_break" => {
-            push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
-        }
-        "html_block" => {
-            push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Tag);
-        }
-        "minus_metadata" | "plus_metadata" => {
-            push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
-        }
-        "pipe_table" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                match child.kind() {
-                    "pipe_table_header" | "pipe_table_row" => {
-                        let mut rc = child.walk();
-                        for gc in child.children(&mut rc) {
-                            if gc.kind() == "|" {
-                                push_span(spans, gc.start_byte(), gc.end_byte(), CodeTokenType::Punctuation);
-                            } else if gc.kind() == "pipe_table_cell" {
-                                collect_inline_spans_for_node(&gc, inline_parser, text, spans);
-                            }
-                        }
-                    }
-                    "pipe_table_delimiter_row" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Operator);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "paragraph" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "inline" {
-                    collect_inline_spans_for_node(&child, inline_parser, text, spans);
-                }
-            }
-        }
-        "link_reference_definition" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                match child.kind() {
-                    "link_label" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Function);
-                    }
-                    "link_destination" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
-                    }
-                    "link_title" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
-                    }
-                    "[" | "]" | ":" | "(" | ")" => {
-                        push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Punctuation);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        _ => {}
-    }
+fn parse_markdown(text: &str) -> tree_sitter::Tree {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_md::LANGUAGE.into())
+        .expect("failed to load markdown grammar");
+    parser
+        .parse(text, None)
+        .expect("markdown parse should succeed")
 }
 
-fn collect_list_item_spans(
-    node: &Node,
-    inline_parser: &mut Parser,
-    text: &str,
-    spans: &mut Vec<CodeHighlightSpan>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        match child.kind() {
-            "list_marker_plus" | "list_marker_minus" | "list_marker_star" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+fn walk_block_nodes(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHighlightSpan>) {
+    loop {
+        let node = cursor.node();
+        let kind = node.kind();
+
+        match kind {
+            "document" | "section" => {
+                if cursor.goto_first_child() {
+                    loop {
+                        walk_block_nodes(cursor, text, spans);
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                    cursor.goto_parent();
+                }
             }
-            "list_marker_dot" | "list_marker_parenthesis" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Number);
+            "atx_heading" => highlight_atx_heading(cursor, text, spans),
+            "setext_heading" => highlight_setext_heading(cursor, text, spans),
+            "fenced_code_block" => highlight_fenced_code_block(cursor, text, spans),
+            "block_quote" => highlight_block_quote(cursor, text, spans),
+            "list" => highlight_list(cursor, text, spans),
+            "thematic_break" => {
+                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
             }
-            "task_list_marker_checked" | "task_list_marker_unchecked" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Attribute);
+            "html_block" => {
+                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Tag);
             }
+            "minus_metadata" | "plus_metadata" => {
+                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
+            }
+            "link_reference_definition" => {
+                highlight_link_reference_definition(cursor, text, spans);
+            }
+            "paragraph" => highlight_inline_content(cursor, text, spans),
+            "indented_code_block" => highlight_indented_code_block(cursor, text, spans),
             _ => {
-                collect_block_spans(&child, inline_parser, text, spans);
+                if cursor.goto_first_child() {
+                    loop {
+                        walk_block_nodes(cursor, text, spans);
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                    cursor.goto_parent();
+                }
             }
+        }
+
+        if !cursor.goto_next_sibling() {
+            break;
         }
     }
 }
 
-fn collect_inline_spans_for_node(
-    inline_node: &Node,
-    inline_parser: &mut Parser,
+fn highlight_atx_heading(
+    cursor: &mut TreeCursor,
     text: &str,
     spans: &mut Vec<CodeHighlightSpan>,
 ) {
-    let inline_text = &text[inline_node.start_byte()..inline_node.end_byte()];
-    let inline_tree = inline_parser.parse(inline_text, None);
-    if let Some(tree) = inline_tree {
-        let root = tree.root_node();
-        walk_inline(&root, inline_node.start_byte(), spans);
+    let node = cursor.node();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "atx_h1_marker"
+                | "atx_h2_marker"
+                | "atx_h3_marker"
+                | "atx_h4_marker"
+                | "atx_h5_marker"
+                | "atx_h6_marker" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                    highlight_trailing_spaces_after_marker(child, text, spans);
+                }
+                "inline" => {
+                    highlight_inline_with_inline_grammar(child, text, spans);
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
     }
+
+    fill_uncovered(node, spans);
 }
 
-fn walk_inline(node: &Node, offset: usize, spans: &mut Vec<CodeHighlightSpan>) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.child_count() > 0 && child.is_named() {
-            walk_inline(&child, offset, spans);
-        } else if child.is_named() || !child.is_extra() {
-            let token_type = classify_inline_node(&child);
-            if token_type != CodeTokenType::Default || child.child_count() == 0 {
+fn highlight_setext_heading(
+    cursor: &mut TreeCursor,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let node = cursor.node();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "setext_h1_underline" | "setext_h2_underline" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                }
+                "paragraph" => {
+                    highlight_inline_content(cursor, text, spans);
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    }
+
+    fill_uncovered(node, spans);
+}
+
+fn highlight_fenced_code_block(
+    cursor: &mut TreeCursor,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let node = cursor.node();
+    let mut code_content_start = None;
+    let mut code_content_end = None;
+    let mut language = None;
+
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "fenced_code_block_delimiter" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                }
+                "info_string" => {
+                    let lang_node = find_named_child(child, "language");
+                    if let Some(lang_node) = lang_node {
+                        language = Some(
+                            text[lang_node.start_byte()..lang_node.end_byte()].to_string(),
+                        );
+                        push_span(
+                            spans,
+                            lang_node.start_byte(),
+                            lang_node.end_byte(),
+                            CodeTokenType::Type,
+                        );
+                    } else {
+                        push_span(
+                            spans,
+                            child.start_byte(),
+                            child.end_byte(),
+                            CodeTokenType::Type,
+                        );
+                    }
+                }
+                "code_fence_content" => {
+                    code_content_start = Some(child.start_byte());
+                    code_content_end = Some(child.end_byte());
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    }
+
+    if let (Some(start), Some(end)) = (code_content_start, code_content_end) {
+        let content_text = &text[start..end];
+
+        let (code_only_end, closing_delim_start) = find_closing_fence_delimiter(content_text);
+
+        let code_text = &content_text[..code_only_end];
+
+        if let Some(lang) = language.as_deref() {
+            static HIGHLIGHTER: std::sync::OnceLock<CodeHighlighter> = std::sync::OnceLock::new();
+            let highlighter = HIGHLIGHTER.get_or_init(CodeHighlighter::new);
+            if let Some(result) = highlighter.highlight(lang, code_text) {
+                for span in &result.spans {
+                    push_span(
+                        spans,
+                        start + span.start,
+                        start + span.end,
+                        span.token_type,
+                    );
+                }
+            } else {
+                push_span(spans, start, start + code_only_end, CodeTokenType::String);
+            }
+        } else {
+            push_span(spans, start, start + code_only_end, CodeTokenType::String);
+        }
+
+        if let Some(delim_start) = closing_delim_start {
+            if delim_start > code_only_end {
                 push_span(
                     spans,
-                    offset + child.start_byte(),
-                    offset + child.end_byte(),
-                    token_type,
+                    start + code_only_end,
+                    start + delim_start,
+                    CodeTokenType::Default,
+                );
+            }
+            push_span(
+                spans,
+                start + delim_start,
+                end,
+                CodeTokenType::Keyword,
+            );
+        } else {
+            if code_only_end < content_text.len() {
+                push_span(
+                    spans,
+                    start + code_only_end,
+                    end,
+                    CodeTokenType::Default,
                 );
             }
         }
     }
+
+    fill_uncovered(node, spans);
 }
 
-fn classify_inline_node(node: &Node) -> CodeTokenType {
-    match node.kind() {
-        "emphasis_delimiter" | "code_span_delimiter" => CodeTokenType::Operator,
-        "strong_emphasis" | "emphasis" => CodeTokenType::Default,
-        "code_span" => CodeTokenType::String,
-        "link_destination" | "uri_autolink" => CodeTokenType::String,
-        "link_label" | "link_text" | "image_description" => CodeTokenType::Function,
-        "link_title" => CodeTokenType::String,
-        "backslash_escape" | "hard_line_break" => CodeTokenType::Escape,
-        "shortcut_link" | "inline_link" | "image" | "email_autolink"
-        | "full_reference_link" | "collapsed_reference_link" => CodeTokenType::Default,
-        "[" | "]" | "(" | ")" | "!" => CodeTokenType::Punctuation,
-        _ => CodeTokenType::Default,
+fn find_closing_fence_delimiter(content: &str) -> (usize, Option<usize>) {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return (0, None);
     }
-}
 
-fn extract_language(info_string_node: Node, text: &str) -> Option<String> {
-    let mut cursor = info_string_node.walk();
-    for child in info_string_node.named_children(&mut cursor) {
-        if child.kind() == "language" {
-            let lang_text = &text[child.start_byte()..child.end_byte()];
-            let trimmed = lang_text.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
+    for (i, line) in lines.iter().enumerate().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            let code_end: usize = lines[..i].iter().map(|l| l.len() + 1).sum();
+            let delim_start = code_end + line.len() - trimmed.len();
+            return (code_end, Some(delim_start));
+        }
+        if !trimmed.is_empty() {
+            break;
         }
     }
-    let text_content = &text[info_string_node.start_byte()..info_string_node.end_byte()];
-    let trimmed = text_content.trim();
-    if let Some(lang) = trimmed.split_whitespace().next().filter(|s| !s.is_empty()) {
-        return Some(lang.to_string());
+
+    (content.len(), None)
+}
+
+fn highlight_block_quote(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHighlightSpan>) {
+    let node = cursor.node();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "block_quote_marker" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                }
+                "block_continuation" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                }
+                _ => {
+                    walk_block_nodes(cursor, text, spans);
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
     }
-    None
+
+    fill_uncovered(node, spans);
+}
+
+fn highlight_list(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHighlightSpan>) {
+    let node = cursor.node();
+    highlight_list_items(cursor, text, spans);
+    fill_uncovered(node, spans);
+}
+
+fn highlight_list_items(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHighlightSpan>) {
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        if child.kind() == "list_item" {
+            highlight_single_list_item(cursor, text, spans);
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    cursor.goto_parent();
+}
+
+fn highlight_single_list_item(
+    cursor: &mut TreeCursor,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        match child.kind() {
+            "list_marker_dot" | "list_marker_minus" | "list_marker_plus"
+            | "list_marker_star" | "list_marker_parenthesis" => {
+                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                highlight_trailing_spaces_after_marker(child, text, spans);
+            }
+            "task_list_marker_checked" | "task_list_marker_unchecked" => {
+                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Attribute);
+            }
+            "block_continuation" => {
+                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+            }
+            "paragraph" => {
+                highlight_inline_content(cursor, text, spans);
+            }
+            "list" => {
+                highlight_list_items(cursor, text, spans);
+            }
+            "block_quote" => {
+                highlight_block_quote(cursor, text, spans);
+            }
+            _ => {
+                walk_block_nodes(cursor, text, spans);
+            }
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    cursor.goto_parent();
+}
+
+fn highlight_indented_code_block(
+    cursor: &mut TreeCursor,
+    _text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let node = cursor.node();
+    push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::String);
+}
+
+fn highlight_link_reference_definition(
+    cursor: &mut TreeCursor,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let node = cursor.node();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "[" | "]" | ":" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Operator);
+                }
+                "link_label" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Function);
+                }
+                "link_destination" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
+                }
+                "link_title" => {
+                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    }
+    fill_uncovered(node, spans);
+}
+
+fn highlight_inline_content(
+    cursor: &mut TreeCursor,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        if child.kind() == "inline" {
+            highlight_inline_with_inline_grammar(child, text, spans);
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    cursor.goto_parent();
+}
+
+fn highlight_inline_with_inline_grammar(
+    inline_node: tree_sitter::Node,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let start = inline_node.start_byte();
+    let end = inline_node.end_byte();
+    let inline_text = &text[start..end];
+
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_md::INLINE_LANGUAGE.into())
+        .expect("failed to load markdown inline grammar");
+
+    let mut included_ranges = vec![tree_sitter::Range {
+        start_byte: 0,
+        end_byte: inline_text.len(),
+        start_point: tree_sitter::Point::new(0, 0),
+        end_point: tree_sitter::Point::new(
+            inline_text.lines().count().saturating_sub(1),
+            inline_text.lines().last().map(|l| l.len()).unwrap_or(0),
+        ),
+    }];
+    parser.set_included_ranges(&included_ranges).ok();
+
+    if let Some(tree) = parser.parse(inline_text, None) {
+        let root = tree.root_node();
+        let mut cursor = root.walk();
+        walk_inline_tree(&mut cursor, inline_text, start, spans);
+    }
+}
+
+fn walk_inline_tree(
+    cursor: &mut TreeCursor,
+    inline_text: &str,
+    offset: usize,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    loop {
+        let node = cursor.node();
+        let kind = node.kind();
+
+        match kind {
+            "document" | "inline" => {
+                if cursor.goto_first_child() {
+                    loop {
+                        walk_inline_tree(cursor, inline_text, offset, spans);
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                    cursor.goto_parent();
+                }
+            }
+            "code_span" => highlight_inline_code_span(cursor, inline_text, offset, spans),
+            "emphasis_delimiter" | "strong_emphasis_delimiter" => {
+                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Operator);
+            }
+            "emphasis" | "strong_emphasis" => {
+                if cursor.goto_first_child() {
+                    loop {
+                        walk_inline_tree(cursor, inline_text, offset, spans);
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                    cursor.goto_parent();
+                }
+            }
+            "shortcut_link" | "link" | "full_reference_link" | "collapsed_reference_link" => {
+                highlight_inline_link(cursor, inline_text, offset, spans);
+            }
+            "image" => highlight_inline_image(cursor, inline_text, offset, spans),
+            "strikethrough" => {
+                highlight_inline_delimited(cursor, inline_text, offset, spans, "~~", CodeTokenType::Operator);
+            }
+            "email_autolink" | "autolink" => {
+                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::String);
+            }
+            "backslash_escape" => {
+                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Escape);
+            }
+            "[" | "]" | "(" | ")" | "!" => {
+                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Operator);
+            }
+            _ => {}
+        }
+
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+}
+
+fn highlight_inline_code_span(
+    cursor: &mut TreeCursor,
+    _inline_text: &str,
+    offset: usize,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let node = cursor.node();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.kind() == "`" {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Punctuation);
+            } else {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    } else {
+        push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::String);
+    }
+}
+
+fn highlight_inline_link(
+    cursor: &mut TreeCursor,
+    _inline_text: &str,
+    offset: usize,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        match child.kind() {
+            "[" | "]" | "(" | ")" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Operator);
+            }
+            "link_text" | "link_label" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Function);
+            }
+            "link_destination" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+            }
+            "link_title" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+            }
+            _ => {}
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    cursor.goto_parent();
+}
+
+fn highlight_inline_image(
+    cursor: &mut TreeCursor,
+    _inline_text: &str,
+    offset: usize,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        match child.kind() {
+            "!" | "[" | "]" | "(" | ")" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Operator);
+            }
+            "image_description" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Function);
+            }
+            "link_destination" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+            }
+            "link_title" => {
+                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+            }
+            _ => {}
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    cursor.goto_parent();
+}
+
+fn highlight_inline_delimited(
+    cursor: &mut TreeCursor,
+    inline_text: &str,
+    offset: usize,
+    spans: &mut Vec<CodeHighlightSpan>,
+    _delimiter: &str,
+    delimiter_type: CodeTokenType,
+) {
+    let node = cursor.node();
+    let full_text = &inline_text[node.start_byte()..node.end_byte()];
+    let delim_len = if full_text.starts_with("~~") { 2 } else { 1 };
+
+    push_span(
+        spans,
+        offset + node.start_byte(),
+        offset + node.start_byte() + delim_len,
+        delimiter_type,
+    );
+    if full_text.len() > delim_len * 2 {
+        push_span(
+            spans,
+            offset + node.start_byte() + delim_len,
+            offset + node.end_byte() - delim_len,
+            CodeTokenType::Default,
+        );
+    }
+    if full_text.len() > delim_len {
+        push_span(
+            spans,
+            offset + node.end_byte() - delim_len,
+            offset + node.end_byte(),
+            delimiter_type,
+        );
+    }
+}
+
+fn highlight_trailing_spaces_after_marker(
+    marker_node: tree_sitter::Node,
+    text: &str,
+    spans: &mut Vec<CodeHighlightSpan>,
+) {
+    let after_marker = &text[marker_node.end_byte()..];
+    let space_len = after_marker
+        .bytes()
+        .take_while(|&b| b == b' ' || b == b'\t')
+        .count();
+    if space_len > 0 {
+        push_span(
+            spans,
+            marker_node.end_byte(),
+            marker_node.end_byte() + space_len,
+            CodeTokenType::Keyword,
+        );
+    }
+}
+
+fn find_named_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == kind)
 }
 
 fn push_span(spans: &mut Vec<CodeHighlightSpan>, start: usize, end: usize, token_type: CodeTokenType) {
@@ -326,90 +691,144 @@ fn push_span(spans: &mut Vec<CodeHighlightSpan>, start: usize, end: usize, token
     });
 }
 
-fn fill_gaps(spans: &mut Vec<CodeHighlightSpan>, total_len: usize) {
-    if spans.is_empty() {
-        return;
-    }
-
+fn fill_uncovered(node: tree_sitter::Node, spans: &mut Vec<CodeHighlightSpan>) {
     spans.sort_by_key(|s| s.start);
-
-    let mut filled = Vec::new();
-    let mut pos = 0;
-
+    let mut pos = node.start_byte();
+    let mut gaps = Vec::new();
     for span in spans.iter() {
         if span.start > pos {
-            filled.push(CodeHighlightSpan {
+            gaps.push(CodeHighlightSpan {
                 start: pos,
                 end: span.start,
                 token_type: CodeTokenType::Default,
             });
         }
-        if span.start < pos {
-            continue;
-        }
-        filled.push(span.clone());
-        pos = span.end;
+        pos = pos.max(span.end);
     }
-
-    if pos < total_len {
-        filled.push(CodeHighlightSpan {
+    if pos < node.end_byte() {
+        gaps.push(CodeHighlightSpan {
             start: pos,
-            end: total_len,
+            end: node.end_byte(),
             token_type: CodeTokenType::Default,
         });
     }
-
-    *spans = filled;
+    spans.extend(gaps);
+    spans.sort_by_key(|s| s.start);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn debug_print_tree(text: &str) {
+        let tree = parse_markdown(text);
+        eprintln!("=== TREE for {:?} ===", text);
+        print_tree(tree.root_node(), text, 0);
+
+        let spans = highlight_markdown_source(text);
+        eprintln!("--- SPANS ---");
+        for s in &spans {
+            let content = &text[s.start..s.end].replace('\n', "\\n");
+            eprintln!("  {:?} [{}..{}] {:?}", s.token_type, s.start, s.end, content);
+        }
+    }
+
+    fn print_tree(node: tree_sitter::Node, text: &str, depth: usize) {
+        let indent = "  ".repeat(depth);
+        let start = node.start_byte();
+        let end = node.end_byte();
+        let snippet = if end - start > 30 {
+            format!("{}...", &text[start..start + 30].replace('\n', "\\n"))
+        } else {
+            text[start..end].replace('\n', "\\n")
+        };
+        eprintln!(
+            "{}{} [{}..{}] {:?}",
+            indent,
+            node.kind(),
+            start,
+            end,
+            snippet
+        );
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            print_tree(child, text, depth + 1);
+        }
+    }
+
     #[test]
     fn highlights_heading_marker() {
-        let spans = highlight_markdown_source("# Hello\n");
-        let keyword_spans: Vec<_> = spans
-            .iter()
-            .filter(|s| s.token_type == CodeTokenType::Keyword)
-            .collect();
-        assert!(!keyword_spans.is_empty());
+        debug_print_tree("# Title\n");
+        let spans = highlight_markdown_source("# Title\n");
+        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(marker_span.is_some(), "should have a Keyword span for # marker");
     }
 
     #[test]
     fn highlights_code_fence_delimiter() {
-        let spans = highlight_markdown_source("```rust\nfn main() {}\n```\n");
+        debug_print_tree("```rust\ncode\n```");
+        let spans = highlight_markdown_source("```rust\ncode\n```");
         let keyword_spans: Vec<_> = spans
             .iter()
             .filter(|s| s.token_type == CodeTokenType::Keyword)
             .collect();
-        assert!(keyword_spans.len() >= 2);
+        assert!(keyword_spans.len() >= 2, "should have Keyword spans for fence delimiters, got: {:?}", keyword_spans);
     }
 
     #[test]
-    fn highlights_list_markers() {
-        let spans = highlight_markdown_source("- item\n- another\n");
-        let keyword_spans: Vec<_> = spans
-            .iter()
-            .filter(|s| s.token_type == CodeTokenType::Keyword)
-            .collect();
-        assert!(!keyword_spans.is_empty());
+    fn highlights_code_fence_language() {
+        let spans = highlight_markdown_source("```rust\ncode\n```");
+        let type_span = spans.iter().find(|s| s.token_type == CodeTokenType::Type);
+        assert!(type_span.is_some(), "should have a Type span for language");
+    }
+
+    #[test]
+    fn highlights_block_quote_marker() {
+        let spans = highlight_markdown_source("> quote");
+        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(marker_span.is_some(), "should have a Keyword span for > marker");
+    }
+
+    #[test]
+    fn highlights_list_marker() {
+        let spans = highlight_markdown_source("- item");
+        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(marker_span.is_some(), "should have a Keyword span for list marker");
+    }
+
+    #[test]
+    fn highlights_inline_code() {
+        debug_print_tree("`code`");
+        let spans = highlight_markdown_source("`code`");
+        let string_span = spans.iter().find(|s| s.token_type == CodeTokenType::String);
+        assert!(string_span.is_some(), "should have a String span for code content, got spans: {:?}", spans);
+    }
+
+    #[test]
+    fn fills_entire_document() {
+        let text = "# Title\n\nParagraph\n";
+        let spans = highlight_markdown_source(text);
+        let covered: usize = spans.iter().map(|s| s.end - s.start).sum();
+        assert_eq!(covered, text.len(), "spans should cover entire document");
+    }
+
+    #[test]
+    fn empty_text_returns_empty() {
+        let spans = highlight_markdown_source("");
+        assert!(spans.is_empty());
     }
 
     #[test]
     fn highlights_thematic_break() {
         let spans = highlight_markdown_source("---\n");
-        let keyword_spans: Vec<_> = spans
-            .iter()
-            .filter(|s| s.token_type == CodeTokenType::Keyword)
-            .collect();
-        assert!(!keyword_spans.is_empty());
+        let keyword_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(keyword_span.is_some(), "should have a Keyword span for thematic break");
     }
 
     #[test]
-    fn fills_gaps_with_default() {
-        let spans = highlight_markdown_source("hello world\n");
-        let total: usize = spans.iter().map(|s| s.end - s.start).sum();
-        assert_eq!(total, "hello world\n".len());
+    fn highlights_task_marker() {
+        let spans = highlight_markdown_source("- [ ] task\n");
+        let attr_span = spans.iter().find(|s| s.token_type == CodeTokenType::Attribute);
+        assert!(attr_span.is_some(), "should have an Attribute span for task marker");
     }
 }

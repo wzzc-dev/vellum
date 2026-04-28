@@ -74,7 +74,11 @@ impl ExtensionRegistry {
             match self.discover_extension(&path) {
                 Ok(ext_id) => discovered.push(ext_id),
                 Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "failed to discover extension");
+                    eprintln!(
+                        "failed to discover extension in {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }

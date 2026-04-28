@@ -292,7 +292,7 @@ impl ExtensionHost {
             match self.load_and_activate(&ext_id) {
                 Ok(()) => activated.push(ext_id),
                 Err(e) => {
-                    tracing::error!(extension_id = %ext_id, error = %e, "failed to activate extension");
+                    eprintln!("failed to activate extension {}: {}", ext_id, e);
                     self.registry.mark_failed(&ext_id, format!("{}", e));
                 }
             }
