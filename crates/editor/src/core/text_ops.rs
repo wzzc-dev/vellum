@@ -147,7 +147,10 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
 pub(crate) fn set_heading_markup(text: &str, depth: u8) -> String {
     let mut lines = text.lines();
     let Some(first) = lines.next() else {
-        return String::new();
+        if depth == 0 {
+            return String::new();
+        }
+        return format!("{} ", "#".repeat(depth as usize));
     };
     let rest = if text.contains('\n') {
         text[first.len()..].to_string()
@@ -181,6 +184,12 @@ pub(crate) fn set_heading_markup(text: &str, depth: u8) -> String {
 /// Toggle the blockquote prefix (`> `) on every line of `text`.
 /// If `enabled` is true, prepend `> ` to every line; if false, strip it.
 pub(crate) fn set_blockquote_markup(text: &str, enabled: bool) -> String {
+    if text.is_empty() {
+        if enabled {
+            return "> ".to_string();
+        }
+        return String::new();
+    }
     text.lines()
         .map(|line| {
             if enabled {
@@ -208,7 +217,10 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
 
     let mut lines = text.lines();
     let Some(first) = lines.next() else {
-        return String::new();
+        if ordered {
+            return "1. ".to_string();
+        }
+        return "- ".to_string();
     };
 
     let trimmed = first.trim_start();
