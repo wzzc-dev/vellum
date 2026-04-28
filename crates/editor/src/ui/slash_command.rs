@@ -164,7 +164,8 @@ fn filter_commands(query: &str) -> Vec<usize> {
 pub struct SlashCommandPanel {
     visible: bool,
     query: String,
-    slash_offset: usize,
+    slash_visible_offset: usize,
+    slash_source_offset: usize,
     filtered_indices: Vec<usize>,
     selected_index: usize,
     scroll_handle: ScrollHandle,
@@ -175,7 +176,8 @@ impl SlashCommandPanel {
         Self {
             visible: false,
             query: String::new(),
-            slash_offset: 0,
+            slash_visible_offset: 0,
+            slash_source_offset: 0,
             filtered_indices: (0..SLASH_COMMANDS.len()).collect(),
             selected_index: 0,
             scroll_handle: ScrollHandle::new(),
@@ -186,10 +188,11 @@ impl SlashCommandPanel {
         self.visible
     }
 
-    pub fn show(&mut self, slash_offset: usize) {
+    pub fn show(&mut self, slash_visible_offset: usize, slash_source_offset: usize) {
         self.visible = true;
         self.query.clear();
-        self.slash_offset = slash_offset;
+        self.slash_visible_offset = slash_visible_offset;
+        self.slash_source_offset = slash_source_offset;
         self.filtered_indices = (0..SLASH_COMMANDS.len()).collect();
         self.selected_index = 0;
     }
@@ -205,8 +208,12 @@ impl SlashCommandPanel {
         self.selected_index = 0;
     }
 
-    pub fn slash_offset(&self) -> usize {
-        self.slash_offset
+    pub fn slash_visible_offset(&self) -> usize {
+        self.slash_visible_offset
+    }
+
+    pub fn slash_source_offset(&self) -> usize {
+        self.slash_source_offset
     }
 
     pub fn select_next(&mut self) {

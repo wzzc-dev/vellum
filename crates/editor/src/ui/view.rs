@@ -162,12 +162,12 @@ impl MarkdownEditor {
         let visible_text = &self.snapshot.display_map.visible_text;
 
         if self.slash_command_panel.is_visible() {
-            let slash_offset = self.slash_command_panel.slash_offset();
-            if cursor <= slash_offset || cursor > slash_offset + 30 {
+            let slash_visible = self.slash_command_panel.slash_visible_offset();
+            if cursor <= slash_visible || cursor > slash_visible + 30 {
                 self.slash_command_panel.hide();
                 return;
             }
-            let query_start = slash_offset + 1;
+            let query_start = slash_visible + 1;
             if cursor > query_start {
                 let query = &visible_text[query_start..cursor];
                 self.slash_command_panel.update_query(query);
@@ -192,13 +192,14 @@ impl MarkdownEditor {
             return;
         }
 
+        let slash_visible_offset = cursor - 1;
         let slash_source_offset = self
             .snapshot
             .display_map
-            .visible_to_source(cursor - 1)
+            .visible_to_source(slash_visible_offset)
             .source_offset;
 
-        self.slash_command_panel.show(slash_source_offset);
+        self.slash_command_panel.show(slash_visible_offset, slash_source_offset);
     }
 
     fn execute_slash_command(
@@ -209,13 +210,11 @@ impl MarkdownEditor {
     ) {
         self.slash_command_panel.hide();
 
-        let slash_visible_offset = self.snapshot.display_map.source_to_visible(
-            self.slash_command_panel.slash_offset()
-        );
-        let cursor_visible_offset = self.snapshot.visible_selection.head_byte;
+        let slash_visible = self.slash_command_panel.slash_visible_offset();
+        let cursor_visible = self.snapshot.visible_selection.head_byte;
 
-        if cursor_visible_offset > slash_visible_offset {
-            let slash_source = self.slash_command_panel.slash_offset();
+        if cursor_visible > slash_visible {
+            let slash_source = self.slash_command_panel.slash_source_offset();
             let cursor_source = self.snapshot.selection.head_byte;
 
             let effects = self.controller.dispatch(EditCommand::SetSelection {
