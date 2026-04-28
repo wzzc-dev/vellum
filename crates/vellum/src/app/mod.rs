@@ -450,7 +450,7 @@ impl VellumApp {
             right_panel_toggle_visible: false,
             right_panel_toggle_hovered: false,
             right_panel_toggle_hide_generation: 0,
-            status_bar_pinned: true,
+            status_bar_pinned: false,
             status_bar_visible: true,
             status_bar_hovered: false,
             status_bar_edge_hovered: false,

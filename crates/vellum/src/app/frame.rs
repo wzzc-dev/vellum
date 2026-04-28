@@ -622,7 +622,7 @@ impl VellumApp {
                         ButtonGroup::new("editor-view-mode-status")
                             .compact()
                             .ghost()
-                            .child(Button::new("view-mode-preview").label("Preview").selected(
+                            .child(Button::new("view-mode-live-preview").label("LivePreview").selected(
                                 self.editor_snapshot.view_mode
                                     == editor::EditorViewMode::LivePreview,
                             ))
