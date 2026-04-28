@@ -272,6 +272,7 @@ impl MarkdownEditor {
             if effects.selection_changed {
                 self.reset_cursor_blink(window, cx);
             }
+            self.check_slash_command();
             self.emit_changed(cx);
         }
         if effects.selection_changed {

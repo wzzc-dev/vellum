@@ -17,13 +17,14 @@ use gpui_component::{
 };
 
 use crate::{
-    EditCommand, SelectionState,
+    EditCommand, SelectionAffinity, SelectionState,
     core::controller::{DocumentSource, EditorController, EditorSnapshot, SyncPolicy},
 };
 
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
-    input_bridge::build_document_input, surface::{render_document_surface, rendered_visible_end},
+    input_bridge::build_document_input, slash_command::{SlashCommandAction, SlashCommandPanel},
+    surface::{render_document_surface, rendered_visible_end},
 };
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,7 @@ pub struct MarkdownEditor {
     cursor_blink_visible: bool,
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
+    pub(super) slash_command_panel: SlashCommandPanel,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -102,6 +104,7 @@ impl MarkdownEditor {
             cursor_blink_visible: true,
             cursor_blink_generation: 0,
             typewriter_mode: false,
+            slash_command_panel: SlashCommandPanel::new(),
         }
     }
 
@@ -129,6 +132,102 @@ impl MarkdownEditor {
         let snapshot = self.snapshot();
         cx.emit(EditorEvent::Changed(snapshot));
         cx.notify();
+    }
+
+    pub(super) fn check_slash_command(&mut self) {
+        if !self.input_focused {
+            return;
+        }
+
+        let visible_selection = &self.snapshot.visible_selection;
+        if !visible_selection.is_collapsed() {
+            if self.slash_command_panel.is_visible() {
+                self.slash_command_panel.hide();
+            }
+            return;
+        }
+
+        let cursor = visible_selection.head_byte;
+        let visible_text = &self.snapshot.display_map.visible_text;
+
+        if self.slash_command_panel.is_visible() {
+            let slash_offset = self.slash_command_panel.slash_offset();
+            if cursor <= slash_offset || cursor > slash_offset + 30 {
+                self.slash_command_panel.hide();
+                return;
+            }
+            let query_start = slash_offset + 1;
+            if cursor > query_start {
+                let query = &visible_text[query_start..cursor];
+                self.slash_command_panel.update_query(query);
+            } else {
+                self.slash_command_panel.update_query("");
+            }
+            return;
+        }
+
+        if cursor == 0 {
+            return;
+        }
+
+        let before_cursor = &visible_text[..cursor];
+        if !before_cursor.ends_with('/') {
+            return;
+        }
+
+        let line_start = before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let before_slash = &visible_text[line_start..cursor - 1];
+        if !before_slash.trim().is_empty() {
+            return;
+        }
+
+        let slash_source_offset = self
+            .snapshot
+            .display_map
+            .visible_to_source(cursor - 1)
+            .source_offset;
+
+        self.slash_command_panel.show(slash_source_offset);
+    }
+
+    fn execute_slash_command(
+        &mut self,
+        action: SlashCommandAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.slash_command_panel.hide();
+
+        let slash_visible_offset = self.snapshot.display_map.source_to_visible(
+            self.slash_command_panel.slash_offset()
+        );
+        let cursor_visible_offset = self.snapshot.visible_selection.head_byte;
+
+        if cursor_visible_offset > slash_visible_offset {
+            let slash_source = self.slash_command_panel.slash_offset();
+            let cursor_source = self.snapshot.selection.head_byte;
+
+            let effects = self.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: slash_source,
+                    head_byte: cursor_source,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Upstream,
+                },
+            });
+            self.apply_effects(window, cx, effects);
+
+            let effects = self.controller.dispatch(EditCommand::ReplaceSelection {
+                text: String::new(),
+            });
+            self.apply_effects(window, cx, effects);
+        }
+
+        let effects = self.controller.dispatch(action.to_edit_command());
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn apply_markup(
@@ -309,6 +408,14 @@ impl MarkdownEditor {
     ) -> bool {
         if self.input_has_marked_text(window, cx) {
             return false;
+        }
+
+        if self.slash_command_panel.is_visible() {
+            if let Some(action) = self.slash_command_panel.selected_command() {
+                self.execute_slash_command(action, window, cx);
+                return true;
+            }
+            self.slash_command_panel.hide();
         }
 
         let effects = self
@@ -740,7 +847,10 @@ impl Render for MarkdownEditor {
                                            self.scroll_handle.clone(),
                                            window,
                                            cx,
-                                       )),
+                                       ))
+                                       .when_some(self.slash_command_panel.render_panel(window, cx), |this, panel| {
+                                           this.child(panel)
+                                       }),
                                 ),
                         ),
                     ),

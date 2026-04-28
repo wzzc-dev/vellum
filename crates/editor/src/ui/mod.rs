@@ -2,6 +2,7 @@ mod commands;
 mod file_ops;
 mod input_bridge;
 mod layout;
+mod slash_command;
 mod surface;
 mod view;
 
