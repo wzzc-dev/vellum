@@ -276,7 +276,7 @@ impl MarkdownEditor {
             self.emit_changed(cx);
         }
         if effects.selection_changed {
-            self.scroll_cursor_into_view(cx);
+            self.scroll_cursor_into_view(window, cx);
         }
     }
 }

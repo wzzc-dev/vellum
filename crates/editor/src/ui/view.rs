@@ -56,6 +56,8 @@ pub struct MarkdownEditor {
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
     pub(super) slash_command_panel: SlashCommandPanel,
+    scroll_target: Option<gpui::Point<gpui::Pixels>>,
+    scroll_animation_generation: u64,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -105,6 +107,8 @@ impl MarkdownEditor {
             cursor_blink_generation: 0,
             typewriter_mode: false,
             slash_command_panel: SlashCommandPanel::new(),
+            scroll_target: None,
+            scroll_animation_generation: 0,
         }
     }
 
@@ -115,7 +119,7 @@ impl MarkdownEditor {
     pub fn toggle_typewriter_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.typewriter_mode = !self.typewriter_mode;
         if self.typewriter_mode {
-            self.scroll_cursor_into_view(cx);
+            self.scroll_cursor_into_view(window, cx);
         }
         cx.notify();
     }
@@ -123,7 +127,7 @@ impl MarkdownEditor {
     pub fn set_typewriter_mode(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.typewriter_mode = enabled;
         if self.typewriter_mode {
-            self.scroll_cursor_into_view(cx);
+            self.scroll_cursor_into_view(window, cx);
         }
         cx.notify();
     }
@@ -644,7 +648,7 @@ impl MarkdownEditor {
             .detach();
     }
 
-    pub(crate) fn scroll_cursor_into_view(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn scroll_cursor_into_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
             let cursor = self.snapshot.visible_selection.cursor();
             cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
@@ -664,27 +668,79 @@ impl MarkdownEditor {
         }
 
         let current_offset = self.scroll_handle.offset();
-        let mut new_offset = current_offset;
+        let mut target_offset = current_offset;
 
         if self.typewriter_mode {
             let block_center_y = (block_bounds.top() + block_bounds.bottom()) / 2.;
             let viewport_center_y = (viewport.top() + viewport.bottom()) / 2.;
             let delta = block_center_y - viewport_center_y;
             if delta.abs() > px(1.) {
-                new_offset.y = current_offset.y - delta;
+                target_offset.y = current_offset.y - delta;
             }
         } else {
             if block_bounds.top() < viewport.top() {
-                new_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
+                target_offset.y = current_offset.y + (viewport.top() - block_bounds.top());
             } else if block_bounds.bottom() > viewport.bottom() {
-                new_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
+                target_offset.y = current_offset.y - (block_bounds.bottom() - viewport.bottom());
             }
         }
 
-        if new_offset != current_offset {
-            self.scroll_handle.set_offset(new_offset);
-            cx.notify();
+        if target_offset != current_offset {
+            self.set_scroll_target(target_offset, window, cx);
         }
+    }
+
+    fn set_scroll_target(
+        &mut self,
+        target: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.scroll_target = Some(target);
+        self.scroll_animation_generation = self.scroll_animation_generation.wrapping_add(1);
+        self.schedule_scroll_animation(window, cx);
+    }
+
+    fn schedule_scroll_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let generation = self.scroll_animation_generation;
+        let view = cx.entity();
+        window
+            .spawn(cx, async move |cx| {
+                loop {
+                    gpui::Timer::after(Duration::from_millis(16)).await;
+                    let done = cx.update_window_entity(&view, |this, _window, cx| {
+                        if this.scroll_animation_generation != generation {
+                            return true;
+                        }
+                        let Some(target) = this.scroll_target else {
+                            return true;
+                        };
+                        let current = this.scroll_handle.offset();
+                        let factor: f32 = 0.18;
+                        let dx = (target.x - current.x) * factor;
+                        let dy = (target.y - current.y) * factor;
+                        let new_x = current.x + dx;
+                        let new_y = current.y + dy;
+                        let distance_x = (target.x - new_x).abs();
+                        let distance_y = (target.y - new_y).abs();
+                        let threshold = px(0.5);
+                        let reached = distance_x < threshold && distance_y < threshold;
+                        if reached {
+                            this.scroll_handle.set_offset(target);
+                            this.scroll_target = None;
+                        } else {
+                            this.scroll_handle.set_offset(gpui::point(new_x, new_y));
+                        }
+                        cx.notify();
+                        reached
+                    })
+                    .unwrap_or(true);
+                    if done {
+                        break;
+                    }
+                }
+            })
+            .detach();
     }
 }
 
