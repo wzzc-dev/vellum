@@ -655,14 +655,24 @@ impl MarkdownEditor {
     }
 
     fn cursor_block_y(&self) -> Option<f32> {
-        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
-            let cursor = self.snapshot.visible_selection.cursor();
-            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
-        }).map(|block| block.id);
+        use super::layout::block_presentation;
 
-        let block_id = cursor_block_id?;
-        let block_bounds = self.block_bounds.borrow().get(&block_id).copied()?;
-        Some((block_bounds.top() - self.scroll_handle.offset().y).into())
+        let cursor = self.snapshot.visible_selection.cursor();
+        let blocks = &self.snapshot.display_map.blocks;
+
+        let mut cumulative_y: f32 = 0.;
+        for block in blocks.iter() {
+            if cursor >= block.visible_range.start && cursor <= rendered_visible_end(block) {
+                return Some(cumulative_y);
+            }
+            let presentation = block_presentation(&block.kind);
+            let line_count = block.visible_text.chars().filter(|&c| c == '\n').count().max(1);
+            let height = presentation.line_height * line_count as f32
+                + presentation.block_padding_y * 2.
+                + presentation.row_spacing_y * 2.;
+            cumulative_y += height;
+        }
+        None
     }
 
     pub(crate) fn scroll_cursor_into_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
