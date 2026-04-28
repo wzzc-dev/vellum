@@ -617,6 +617,7 @@ pub(super) fn render_document_surface(
     snapshot: &EditorSnapshot,
     input_focused: bool,
     cursor_blink_visible: bool,
+    focus_highlight_mode: bool,
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
     block_heights: Rc<RefCell<HashMap<u64, gpui::Pixels>>>,
     scroll_handle: ScrollHandle,
@@ -719,9 +720,32 @@ pub(super) fn render_document_surface(
     };
 
     let heights_map = block_heights.borrow();
+    let cursor_block_index = if focus_highlight_mode && input_focused {
+        snapshot.display_map.blocks.iter().position(|block| {
+            let cursor = snapshot.visible_selection.cursor();
+            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+        })
+    } else {
+        None
+    };
     let mut document = div().w_full().flex().flex_col();
     for (block_index, block) in snapshot.display_map.blocks.iter().cloned().enumerate() {
         if visible_range.contains(&block_index) {
+            let block_opacity = if let Some(cursor_idx) = cursor_block_index {
+                let distance = if block_index >= cursor_idx {
+                    block_index - cursor_idx
+                } else {
+                    cursor_idx - block_index
+                };
+                match distance {
+                    0 => 1.0,
+                    1 => 0.55,
+                    2 => 0.35,
+                    _ => 0.22,
+                }
+            } else {
+                1.0
+            };
             document = document.child(render_display_block(
                 view,
                 snapshot,
@@ -733,6 +757,7 @@ pub(super) fn render_document_surface(
                 block_bounds.clone(),
                 scroll_handle.clone(),
                 palette,
+                block_opacity,
                 window,
             ));
         } else {
@@ -754,6 +779,7 @@ fn render_display_block(
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
     scroll_handle: ScrollHandle,
     palette: RenderPalette,
+    block_opacity: f32,
     window: &mut Window,
 ) -> AnyElement {
     let presentation = block_presentation(&block.kind);
@@ -1058,6 +1084,7 @@ fn render_display_block(
         .id(("display-block", block.id))
         .w_full()
         .py(px(presentation.row_spacing_y))
+        .when(block_opacity < 1.0, |this| this.opacity(block_opacity))
         .context_menu(move |menu, _, cx| {
             let link_url = context_menu_view.read(cx).link_url_at_cursor();
             build_editor_context_menu(menu, &context_menu_view, &context_block_kind, link_url)

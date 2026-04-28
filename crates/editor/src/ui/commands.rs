@@ -7,7 +7,8 @@ use crate::{
     InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection,
     PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
-    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleTypewriterMode, UndoEdit,
+    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleTypewriterMode,
+    ToggleFocusHighlightMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -97,6 +98,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-j", ToggleTypewriterMode, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-j", ToggleTypewriterMode, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-l", ToggleFocusHighlightMode, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-l", ToggleFocusHighlightMode, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-z", UndoEdit, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -375,6 +380,15 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_typewriter_mode(window, cx);
+    }
+
+    pub(crate) fn on_toggle_focus_highlight_mode(
+        &mut self,
+        _: &ToggleFocusHighlightMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_focus_highlight_mode(cx);
     }
 
     pub(crate) fn on_goto_line(

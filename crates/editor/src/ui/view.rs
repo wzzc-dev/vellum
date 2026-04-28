@@ -55,6 +55,7 @@ pub struct MarkdownEditor {
     cursor_blink_visible: bool,
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
+    pub(super) focus_highlight_mode: bool,
     pub(super) slash_command_panel: SlashCommandPanel,
     scroll_target: Option<gpui::Point<gpui::Pixels>>,
     scroll_animation_generation: u64,
@@ -106,6 +107,7 @@ impl MarkdownEditor {
             cursor_blink_visible: true,
             cursor_blink_generation: 0,
             typewriter_mode: false,
+            focus_highlight_mode: false,
             slash_command_panel: SlashCommandPanel::new(),
             scroll_target: None,
             scroll_animation_generation: 0,
@@ -121,6 +123,11 @@ impl MarkdownEditor {
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
+        cx.notify();
+    }
+
+    pub fn toggle_focus_highlight_mode(&mut self, cx: &mut Context<Self>) {
+        self.focus_highlight_mode = !self.focus_highlight_mode;
         cx.notify();
     }
 
@@ -779,6 +786,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_focus_next_block))
             .on_action(cx.listener(Self::on_toggle_source_mode))
             .on_action(cx.listener(Self::on_toggle_typewriter_mode))
+            .on_action(cx.listener(Self::on_toggle_focus_highlight_mode))
             .on_action(cx.listener(Self::on_undo_edit))
             .on_action(cx.listener(Self::on_redo_edit))
             .on_action(cx.listener(Self::on_secondary_enter))
@@ -898,6 +906,7 @@ impl Render for MarkdownEditor {
                                            &self.snapshot,
                                            self.input_focused,
                                            self.cursor_blink_visible,
+                                           self.focus_highlight_mode,
                                            self.block_bounds.clone(),
                                            self.block_heights.clone(),
                                            self.scroll_handle.clone(),
