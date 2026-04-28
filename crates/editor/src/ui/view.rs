@@ -654,6 +654,17 @@ impl MarkdownEditor {
             .detach();
     }
 
+    fn cursor_block_y(&self) -> Option<f32> {
+        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
+            let cursor = self.snapshot.visible_selection.cursor();
+            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+        }).map(|block| block.id);
+
+        let block_id = cursor_block_id?;
+        let block_bounds = self.block_bounds.borrow().get(&block_id).copied()?;
+        Some((block_bounds.top() - self.scroll_handle.offset().y).into())
+    }
+
     pub(crate) fn scroll_cursor_into_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
             let cursor = self.snapshot.visible_selection.cursor();
@@ -944,7 +955,7 @@ impl Render for MarkdownEditor {
                                            window,
                                            cx,
                                        ))
-                                       .when_some(self.slash_command_panel.render_panel(window, cx), |this, panel| {
+                                       .when_some(self.slash_command_panel.render_panel(window, cx, self.cursor_block_y()), |this, panel| {
                                            this.child(panel)
                                        }),
                                 ),

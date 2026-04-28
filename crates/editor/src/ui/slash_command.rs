@@ -1,6 +1,5 @@
-use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle,
+    App, Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, Styled, Window, div, px, SharedString,
 };
 use gpui_component::ActiveTheme;
@@ -161,6 +160,10 @@ fn filter_commands(query: &str) -> Vec<usize> {
         .collect()
 }
 
+const ITEM_HEIGHT: f32 = 30.;
+const PANEL_MAX_HEIGHT: f32 = 280.;
+const PANEL_WIDTH: f32 = 280.;
+
 pub struct SlashCommandPanel {
     visible: bool,
     query: String,
@@ -219,6 +222,7 @@ impl SlashCommandPanel {
     pub fn select_next(&mut self) {
         if !self.filtered_indices.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.filtered_indices.len();
+            self.scroll_to_selected();
         }
     }
 
@@ -229,6 +233,26 @@ impl SlashCommandPanel {
             } else {
                 self.selected_index - 1
             };
+            self.scroll_to_selected();
+        }
+    }
+
+    fn scroll_to_selected(&self) {
+        let item_top = self.selected_index as f32 * ITEM_HEIGHT;
+        let viewport = self.scroll_handle.bounds();
+        let viewport_top: f32 = (-self.scroll_handle.offset().y).into();
+        let viewport_bottom = viewport_top + f32::from(viewport.size.height);
+
+        if item_top < viewport_top {
+            self.scroll_handle.set_offset(gpui::point(
+                self.scroll_handle.offset().x,
+                px(-(item_top)),
+            ));
+        } else if item_top + ITEM_HEIGHT > viewport_bottom {
+            self.scroll_handle.set_offset(gpui::point(
+                self.scroll_handle.offset().x,
+                px(-(item_top + ITEM_HEIGHT - f32::from(viewport.size.height))),
+            ));
         }
     }
 
@@ -242,7 +266,12 @@ impl SlashCommandPanel {
         self.query.len()
     }
 
-    pub fn render_panel(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
+    pub fn render_panel(
+        &self,
+        _window: &mut Window,
+        cx: &mut App,
+        cursor_y: Option<f32>,
+    ) -> Option<gpui::AnyElement> {
         if !self.visible || self.filtered_indices.is_empty() {
             return None;
         }
@@ -262,24 +291,19 @@ impl SlashCommandPanel {
                     div()
                 };
 
-                let label_color = if is_selected {
-                    theme.foreground
-                } else {
-                    theme.foreground
-                };
                 let desc_color = theme.muted_foreground;
 
                 bg.id(SharedString::from(std::format!("slash-cmd-{cmd_index}")))
                     .w_full()
+                    .h(px(ITEM_HEIGHT))
                     .px(px(8.))
-                    .py(px(4.))
                     .flex()
                     .items_center()
                     .justify_between()
                     .child(
                         div()
                             .text_size(px(13.))
-                            .text_color(label_color)
+                            .text_color(theme.foreground)
                             .child(item.label.to_string()),
                     )
                     .child(
@@ -292,13 +316,15 @@ impl SlashCommandPanel {
             })
             .collect();
 
+        let top = cursor_y.unwrap_or(0.) + 4.;
+
         let panel = div()
             .id("slash-command-panel")
             .absolute()
-            .top(px(0.))
+            .top(px(top))
             .left(px(0.))
-            .w(px(260.))
-            .max_h(px(280.))
+            .w(px(PANEL_WIDTH))
+            .max_h(px(PANEL_MAX_HEIGHT))
             .bg(theme.background)
             .border(px(1.))
             .border_color(theme.border)
@@ -311,6 +337,7 @@ impl SlashCommandPanel {
             }])
             .p(px(4.))
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .children(list_items)
             .into_any_element();
 
