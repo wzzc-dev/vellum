@@ -285,6 +285,78 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
         .join("\n")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AutoFormatAction {
+    Heading { depth: u8 },
+    Blockquote,
+    BulletList,
+    OrderedList,
+    TaskList,
+    HorizontalRule,
+    CodeFence,
+}
+
+pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFormatAction> {
+    if !matches!(kind, BlockKind::Raw | BlockKind::Paragraph) {
+        return None;
+    }
+
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        if rest.chars().all(|c| c == '`') {
+            return Some(AutoFormatAction::CodeFence);
+        }
+    }
+
+    if trimmed.len() >= 3 {
+        let first = trimmed.chars().next()?;
+        if (first == '-' || first == '*' || first == '_')
+            && trimmed.chars().all(|c| c == first)
+        {
+            return Some(AutoFormatAction::HorizontalRule);
+        }
+    }
+
+    {
+        let line_start = text.trim_start();
+        let hashes: String = line_start.chars().take_while(|c| *c == '#').collect();
+        let depth = hashes.len() as u8;
+        if depth >= 1 && depth <= 6 {
+            let after_hashes = line_start.get(hashes.len()..)?;
+            if after_hashes.starts_with(' ') {
+                return Some(AutoFormatAction::Heading { depth });
+            }
+        }
+    }
+
+    if text.trim_start().starts_with("> ") {
+        return Some(AutoFormatAction::Blockquote);
+    }
+
+    if text.trim_start().starts_with("- [ ] ") || text.trim_start().starts_with("- [x] ") {
+        return Some(AutoFormatAction::TaskList);
+    }
+
+    let line_start = text.trim_start();
+    if line_start.starts_with("- ") || line_start.starts_with("* ") || line_start.starts_with("+ ") {
+        return Some(AutoFormatAction::BulletList);
+    }
+
+    if let Some((num, rest)) = line_start.split_once(". ") {
+        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+            let _ = rest;
+            return Some(AutoFormatAction::OrderedList);
+        }
+    }
+
+    None
+}
+
 pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
     matches!(
         kind,
@@ -294,6 +366,7 @@ pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
             | BlockKind::List
             | BlockKind::Blockquote
             | BlockKind::CodeFence { .. }
+            | BlockKind::ThematicBreak
     )
 }
 
@@ -318,6 +391,7 @@ pub(crate) fn semantic_enter_transform(
         BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::CodeFence { .. } => code_fence_enter_transform(&edited.text, edited.cursor_offset),
+        BlockKind::ThematicBreak => Some(thematic_break_enter_transform(&edited.text, edited.cursor_offset)),
         _ => None,
     }
 }
@@ -457,6 +531,17 @@ fn byte_offset_for_char_column(text: &str, target_column: usize) -> usize {
     match text.char_indices().nth(target_column) {
         Some((offset, _)) => offset,
         None => text.len(),
+    }
+}
+
+fn thematic_break_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    if cursor_offset < text.len() {
+        return split_block_transform(text, cursor_offset);
+    }
+    SemanticEnterTransform {
+        replacement: format!("{text}\n\n"),
+        cursor_offset: text.len() + 2,
     }
 }
 
@@ -1020,5 +1105,120 @@ mod tests {
     #[test]
     fn set_list_markup_converts_bullet_to_ordered() {
         assert_eq!(set_list_markup("- Hello", true), "1. Hello");
+    }
+
+    #[test]
+    fn detect_auto_format_heading() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "# Hello"),
+            Some(AutoFormatAction::Heading { depth: 1 })
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "## Hello"),
+            Some(AutoFormatAction::Heading { depth: 2 })
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "### Hello"),
+            Some(AutoFormatAction::Heading { depth: 3 })
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "###### Hello"),
+            Some(AutoFormatAction::Heading { depth: 6 })
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_blockquote() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "> Hello"),
+            Some(AutoFormatAction::Blockquote)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_bullet_list() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- "),
+            Some(AutoFormatAction::BulletList)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "* "),
+            Some(AutoFormatAction::BulletList)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_ordered_list() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "1. Hello"),
+            Some(AutoFormatAction::OrderedList)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_task_list() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- [ ] "),
+            Some(AutoFormatAction::TaskList)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_horizontal_rule() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "---"),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "***"),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "___"),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "------"),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_code_fence() {
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "```"),
+            Some(AutoFormatAction::CodeFence)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "````"),
+            Some(AutoFormatAction::CodeFence)
+        );
+    }
+
+    #[test]
+    fn detect_auto_format_returns_none_for_non_matching() {
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, "Hello"), None);
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, ""), None);
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, "#"), None);
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, "--"), None);
+    }
+
+    #[test]
+    fn detect_auto_format_returns_none_for_non_paragraph() {
+        assert_eq!(detect_auto_format(&BlockKind::Heading { depth: 1 }, "# Hello"), None);
+        assert_eq!(detect_auto_format(&BlockKind::List, "- Hello"), None);
+    }
+
+    #[test]
+    fn thematic_break_enter_creates_new_paragraph() {
+        let transform = semantic_enter_transform(
+            &BlockKind::ThematicBreak,
+            "---",
+            None,
+            3,
+        )
+        .unwrap();
+        assert_eq!(transform.replacement, "---\n\n");
+        assert_eq!(transform.cursor_offset, 5);
     }
 }

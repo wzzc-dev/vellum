@@ -12,10 +12,10 @@ use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
     table::{TableCellRef, TableModel, TableNavDirection},
     text_ops::{
-        adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
-        compute_document_diff, count_document_words, line_column_for_byte_offset,
-        pipe_table_enter_transform, semantic_enter_transform, set_blockquote_markup,
-        set_heading_markup, set_list_markup,
+        adjust_block_markup, detect_auto_format, AutoFormatAction, byte_offset_for_line_column,
+        clamp_to_char_boundary, compute_document_diff, count_document_words,
+        line_column_for_byte_offset, pipe_table_enter_transform, semantic_enter_transform,
+        set_blockquote_markup, set_heading_markup, set_list_markup,
     },
 };
 
@@ -1091,6 +1091,20 @@ impl EditorController {
             );
         }
 
+        if let Some(block) = &current_block
+            && range.is_empty()
+            && range.start >= block.content_range.start
+            && range.end <= block.content_range.end
+        {
+            let block_text = self.document.block_text(block);
+            let local_cursor = range.start.saturating_sub(block.content_range.start);
+            if local_cursor == block_text.len() {
+                if let Some(action) = detect_auto_format(&block.kind, &block_text) {
+                    return self.apply_auto_format_on_enter(&action);
+                }
+            }
+        }
+
         if selection_spans_multiple_blocks(&self.document, &range) {
             let selection_after = SelectionState::collapsed(range.start + 1);
             return self.replace_selection_with_text(
@@ -1184,6 +1198,63 @@ impl EditorController {
             selection_after,
             "Updated block structure",
         )
+    }
+
+    fn apply_auto_format_on_enter(&mut self, action: &AutoFormatAction) -> EditorEffects {
+        match action {
+            AutoFormatAction::Heading { depth } => {
+                let effects = self.toggle_heading(*depth);
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::Blockquote => {
+                let effects = self.toggle_blockquote();
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::BulletList => {
+                let effects = self.toggle_list(false);
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::OrderedList => {
+                let effects = self.toggle_list(true);
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::TaskList => {
+                let effects = self.toggle_list(false);
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::HorizontalRule => {
+                let effects = self.insert_horizontal_rule();
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
+            AutoFormatAction::CodeFence => {
+                let effects = self.insert_code_fence();
+                effects
+            }
+        }
     }
 
     fn toggle_inline_markup(&mut self, before: String, after: String) -> EditorEffects {
