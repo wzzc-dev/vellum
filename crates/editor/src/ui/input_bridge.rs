@@ -50,6 +50,33 @@ fn detect_auto_pair_opportunity(
     closing_char_for_opener(inserted)
 }
 
+const MARKUP_WRAP_CHARS: &[(char, &str, &str)] = &[
+    ('*', "**", "**"),
+    ('`', "`", "`"),
+    ('~', "~~", "~~"),
+];
+
+fn detect_wrap_selection_opportunity(
+    old_visible: &str,
+    new_visible: &str,
+    old_selection: &SelectionState,
+) -> Option<(&'static str, &'static str)> {
+    if old_selection.is_collapsed() {
+        return None;
+    }
+
+    let (range, replacement) = compute_document_diff(old_visible, new_visible)?;
+    if !range.is_empty() || replacement.chars().count() != 1 {
+        return None;
+    }
+
+    let inserted = replacement.chars().next()?;
+    MARKUP_WRAP_CHARS
+        .iter()
+        .find(|(c, _, _)| *c == inserted)
+        .map(|(_, before, after)| (*before, *after))
+}
+
 fn detect_overclose_opportunity(
     old_visible: &str,
     new_visible: &str,
@@ -203,6 +230,25 @@ impl MarkdownEditor {
         let mirrored_selection = mirrored_input_selection(&self.snapshot);
 
         let effects = if visible_text != self.snapshot.display_map.visible_text {
+            let wrap_opportunity = detect_wrap_selection_opportunity(
+                &self.snapshot.display_map.visible_text,
+                &visible_text,
+                &mirrored_selection,
+            );
+
+            if let Some((before, after)) = wrap_opportunity {
+                self.syncing_input = true;
+                self.document_input.update(cx, |input, cx| {
+                    input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
+                });
+                self.syncing_input = false;
+
+                self.controller
+                    .dispatch(EditCommand::ToggleInlineMarkup {
+                        before: before.to_string(),
+                        after: after.to_string(),
+                    })
+            } else {
             let overclose = detect_overclose_opportunity(
                 &self.snapshot.display_map.visible_text,
                 &visible_text,
@@ -251,6 +297,7 @@ impl MarkdownEditor {
 
                 self.controller
                     .dispatch(EditCommand::SyncDocumentState { text, selection })
+            }
             }
         } else if visible_selection != mirrored_selection {
             let selection = selection_from_visible_input(&self.snapshot, &visible_selection);
