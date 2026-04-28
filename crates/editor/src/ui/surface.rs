@@ -621,6 +621,8 @@ pub(super) fn render_document_surface(
     block_bounds: Rc<RefCell<HashMap<u64, Bounds<gpui::Pixels>>>>,
     block_heights: Rc<RefCell<HashMap<u64, gpui::Pixels>>>,
     scroll_handle: ScrollHandle,
+    floating_panel_block_id: Option<u64>,
+    mut floating_panel: Option<AnyElement>,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
 ) -> AnyElement {
@@ -758,6 +760,11 @@ pub(super) fn render_document_surface(
                 scroll_handle.clone(),
                 palette,
                 block_opacity,
+                if Some(block.id) == floating_panel_block_id {
+                    floating_panel.take()
+                } else {
+                    None
+                },
                 window,
             ));
         } else {
@@ -780,6 +787,7 @@ fn render_display_block(
     scroll_handle: ScrollHandle,
     palette: RenderPalette,
     block_opacity: f32,
+    floating_panel: Option<AnyElement>,
     window: &mut Window,
 ) -> AnyElement {
     let presentation = block_presentation(&block.kind);
@@ -1092,6 +1100,7 @@ fn render_display_block(
         .child(
             div()
                 .id(("surface-hit-target", block_id))
+                .relative()
                 .block_mouse_except_scroll()
                 .w_full()
                 .px_1()
@@ -1130,7 +1139,8 @@ fn render_display_block(
                         this.handle_surface_click(block_id, event, window, cx);
                     });
                 })
-                .child(content),
+                .child(content)
+                .when_some(floating_panel, |this, panel| this.child(panel)),
         )
         .into_any_element()
 }

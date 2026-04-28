@@ -654,25 +654,30 @@ impl MarkdownEditor {
             .detach();
     }
 
-    fn cursor_block_y(&self) -> Option<f32> {
+    fn cursor_panel_y_in_block(&self) -> Option<f32> {
         use super::layout::block_presentation;
 
         let cursor = self.snapshot.visible_selection.cursor();
-        let blocks = &self.snapshot.display_map.blocks;
+        let block = self.snapshot.display_map.blocks.iter().find(|block| {
+            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+        })?;
+        let presentation = block_presentation(&block.kind);
+        let local_cursor = cursor.saturating_sub(block.visible_range.start);
+        let line_index = block.visible_text[..local_cursor.min(block.visible_text.len())]
+            .chars()
+            .filter(|&c| c == '\n')
+            .count();
+        Some(presentation.line_height * (line_index as f32 + 1.) + 4.)
+    }
 
-        let mut cumulative_y: f32 = 0.;
-        for block in blocks.iter() {
-            if cursor >= block.visible_range.start && cursor <= rendered_visible_end(block) {
-                return Some(cumulative_y);
-            }
-            let presentation = block_presentation(&block.kind);
-            let line_count = block.visible_text.chars().filter(|&c| c == '\n').count().max(1);
-            let height = presentation.line_height * line_count as f32
-                + presentation.block_padding_y * 2.
-                + presentation.row_spacing_y * 2.;
-            cumulative_y += height;
-        }
-        None
+    fn cursor_block_id(&self) -> Option<u64> {
+        let cursor = self.snapshot.visible_selection.cursor();
+        self.snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| cursor >= block.visible_range.start && cursor <= rendered_visible_end(block))
+            .map(|block| block.id)
     }
 
     pub(crate) fn scroll_cursor_into_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -962,12 +967,19 @@ impl Render for MarkdownEditor {
                                            self.block_bounds.clone(),
                                            self.block_heights.clone(),
                                            self.scroll_handle.clone(),
+                                           if self.slash_command_panel.is_visible() {
+                                               self.cursor_block_id()
+                                           } else {
+                                               None
+                                           },
+                                           self.slash_command_panel.render_panel(
+                                               window,
+                                               cx,
+                                               self.cursor_panel_y_in_block(),
+                                           ),
                                            window,
                                            cx,
-                                       ))
-                                       .when_some(self.slash_command_panel.render_panel(window, cx, self.cursor_block_y()), |this, panel| {
-                                           this.child(panel)
-                                       }),
+                                       )),
                                 ),
                         ),
                     ),
