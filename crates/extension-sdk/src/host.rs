@@ -54,6 +54,18 @@ pub fn clear_decorations() -> Result<(), String> {
     extension::editor::clear_decorations().map_err(|err| err.message)
 }
 
+pub fn now_ms() -> u64 {
+    extension::timer::now_ms()
+}
+
+pub fn request_tick(interval_ms: u32) -> Result<(), String> {
+    extension::timer::request_tick(interval_ms).map_err(|err| err.message)
+}
+
+pub fn cancel_tick() -> Result<(), String> {
+    extension::timer::cancel_tick().map_err(|err| err.message)
+}
+
 pub fn encode_tooltip(tooltip: Tooltip) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&VersionedPayload::new(tooltip))
         .map_err(|err| format!("failed to encode tooltip: {err}"))

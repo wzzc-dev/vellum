@@ -26,11 +26,13 @@ fn event_helpers_match_zed_style_activation_events() {
         event_type: "document.opened".into(),
         document_text: "# Title".into(),
         document_path: Some("/test.md".into()),
+        timestamp_ms: None,
     };
     let changed = ExtensionEvent {
         event_type: "document.changed".into(),
         document_text: "# Changed".into(),
         document_path: None,
+        timestamp_ms: None,
     };
 
     assert!(opened.is_document_opened());

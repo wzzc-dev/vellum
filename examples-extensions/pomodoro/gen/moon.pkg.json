@@ -1,0 +1,28 @@
+{
+      "warn-list": "-44",
+      "import": [
+      { "path" : "vellum/pomodoro/gen/world/extensionWorld", "alias" : "extensionWorld" }
+      ],
+      "link": {
+            "wasm": {
+                  "export-memory-name": "memory",
+                  "heap-start-address": 16,
+                  "exports": [
+                  "mbt_ffi_cabi_realloc:cabi_realloc",
+                  "wasmExportActivate:activate",
+                  "wasmExportActivatePostReturn:cabi_post_activate",
+                  "wasmExportDeactivate:deactivate",
+                  "wasmExportDeactivatePostReturn:cabi_post_deactivate",
+                  "wasmExportExecuteCommand:execute-command",
+                  "wasmExportExecuteCommandPostReturn:cabi_post_execute-command",
+                  "wasmExportHandleEvent:handle-event",
+                  "wasmExportHandleEventPostReturn:cabi_post_handle-event",
+                  "wasmExportHandleHover:handle-hover",
+                  "wasmExportHandleHoverPostReturn:cabi_post_handle-hover",
+                  "wasmExportHandleUiEvent:handle-ui-event",
+                  "wasmExportHandleUiEventPostReturn:cabi_post_handle-ui-event"
+                  ]
+            }
+      }
+
+}

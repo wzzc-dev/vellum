@@ -3,6 +3,7 @@ pub struct ExtensionEvent {
     pub event_type: String,
     pub document_text: String,
     pub document_path: Option<String>,
+    pub timestamp_ms: Option<u64>,
 }
 
 impl ExtensionEvent {
@@ -11,6 +12,7 @@ impl ExtensionEvent {
             event_type: "document.changed".into(),
             document_text: text,
             document_path: path,
+            timestamp_ms: None,
         }
     }
 
@@ -19,6 +21,7 @@ impl ExtensionEvent {
             event_type: "document.opened".into(),
             document_text: text,
             document_path: path,
+            timestamp_ms: None,
         }
     }
 }

@@ -26,6 +26,7 @@ interface types {
         event-type: string,
         document-text: string,
         document-path: option<string>,
+        timestamp-ms: option<u64>,
     }
 
     record ui-event {
@@ -62,12 +63,21 @@ interface ui {
     set-panel-view: func(panel-id: string, data: list<u8>) -> result<_, host-error>;
 }
 
+interface timer {
+    use types.{host-error};
+
+    now-ms: func() -> u64;
+    request-tick: func(interval-ms: u32) -> result<_, host-error>;
+    cancel-tick: func() -> result<_, host-error>;
+}
+
 world extension-world {
     use types.{activation-context, extension-error, extension-event, ui-event};
 
     import host;
     import editor;
     import ui;
+    import timer;
 
     export activate: func(ctx: activation-context) -> result<_, extension-error>;
     export deactivate: func() -> result<_, extension-error>;

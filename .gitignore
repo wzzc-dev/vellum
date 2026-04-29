@@ -4,3 +4,5 @@
 .trae/
 .tmp-cache/
 .tmp-home/
+examples-extensions/pomodoro/_build
+examples-extensions/pomodoro/target

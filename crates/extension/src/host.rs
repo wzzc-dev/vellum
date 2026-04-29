@@ -61,6 +61,8 @@ pub struct ExtensionRuntimeState {
     document_text: String,
     document_path: Option<String>,
     outputs: ExtensionOutputs,
+    tick_interval_ms: Option<u32>,
+    tick_next_due_ms: Option<u64>,
 }
 
 impl ExtensionRuntimeState {
@@ -73,6 +75,8 @@ impl ExtensionRuntimeState {
             document_text: String::new(),
             document_path: None,
             outputs: ExtensionOutputs::default(),
+            tick_interval_ms: None,
+            tick_next_due_ms: None,
         }
     }
 
@@ -206,6 +210,30 @@ impl bindings::vellum::extension::ui::Host for ExtensionRuntimeState {
         }
         let qualified = self.manifest.qualified_panel_id(&panel_id);
         self.outputs.panel_uis.insert(qualified, payload.data);
+        Ok(())
+    }
+}
+
+impl bindings::vellum::extension::timer::Host for ExtensionRuntimeState {
+    fn now_ms(&mut self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn request_tick(&mut self, interval_ms: u32) -> std::result::Result<(), HostError> {
+        self.require(Capability::Timers)?;
+        let now = self.now_ms();
+        self.tick_interval_ms = Some(interval_ms);
+        self.tick_next_due_ms = Some(now + interval_ms as u64);
+        Ok(())
+    }
+
+    fn cancel_tick(&mut self) -> std::result::Result<(), HostError> {
+        self.require(Capability::Timers)?;
+        self.tick_interval_ms = None;
+        self.tick_next_due_ms = None;
         Ok(())
     }
 }
@@ -401,6 +429,7 @@ impl ExtensionHost {
             event_type: event_type.to_string(),
             document_text: document_text.to_string(),
             document_path: document_path.map(ToOwned::to_owned),
+            timestamp_ms: None,
         };
         let loaded: Vec<String> = self.loaded_extensions.keys().cloned().collect();
         for extension_id in loaded {
@@ -538,6 +567,44 @@ impl ExtensionHost {
         None
     }
 
+    pub fn has_active_timers(&self) -> bool {
+        self.loaded_extensions
+            .values()
+            .any(|loaded| loaded.store.data().tick_interval_ms.is_some())
+    }
+
+    pub fn dispatch_timer_ticks(&mut self, now_ms: u64) {
+        let loaded: Vec<String> = self.loaded_extensions.keys().cloned().collect();
+        for extension_id in loaded {
+            let Some(loaded) = self.loaded_extensions.get_mut(&extension_id) else {
+                continue;
+            };
+            let due = loaded.store.data().tick_next_due_ms;
+            let interval = loaded.store.data().tick_interval_ms;
+            match (due, interval) {
+                (Some(due_time), Some(interval_ms)) if now_ms >= due_time => {
+                    let next_due = due_time + interval_ms as u64;
+                    loaded.store.data_mut().tick_next_due_ms = Some(next_due);
+                }
+                _ => continue,
+            }
+
+            let event = WitExtensionEvent {
+                event_type: "timer.tick".to_string(),
+                document_text: String::new(),
+                document_path: None,
+                timestamp_ms: Some(now_ms),
+            };
+            let result = loaded.bindings.call_handle_event(&mut loaded.store, &event);
+            if let Err(err) = result.and_then(extension_call_result) {
+                self.registry
+                    .mark_failed(&extension_id, err.to_string());
+                eprintln!("extension timer tick failed for {extension_id}: {err}");
+            }
+            self.collect_extension_state(&extension_id);
+        }
+    }
+
     pub fn commands(&self) -> &[RegisteredCommand] {
         &self.commands
     }
@@ -624,6 +691,7 @@ impl ExtensionHost {
             event_type: event.event_type,
             document_text: event.document_text,
             document_path: event.document_path,
+            timestamp_ms: event.timestamp_ms,
         };
         let result = loaded.bindings.call_handle_event(&mut loaded.store, &event);
         result.and_then(extension_call_result)?;
@@ -805,5 +873,116 @@ mod tests {
         .unwrap_err();
 
         assert!(err.message.contains("webview"));
+    }
+
+    #[test]
+    fn manifest_parses_timers_capability() {
+        let toml = r#"
+id = "test.timer"
+name = "Timer Test"
+version = "0.1.0"
+schema_version = 1
+
+[wasm]
+component = "target/wasm32-wasip2/release/test.wasm"
+
+[capabilities]
+timers = true
+"#;
+        let manifest = ExtensionManifest::from_toml_str(toml).unwrap();
+        assert!(manifest.capabilities.timers);
+    }
+
+    #[test]
+    fn request_tick_rejected_without_timers_capability() {
+        let manifest = ExtensionManifest {
+            id: "test.no-timer".into(),
+            name: "No Timer".into(),
+            version: "0.1.0".into(),
+            schema_version: 1,
+            authors: Vec::new(),
+            description: String::new(),
+            repository: String::new(),
+            wasm: WasmConfig {
+                component: "target/wasm32-wasip2/release/test.wasm".into(),
+            },
+            activation: Default::default(),
+            capabilities: Capabilities {
+                timers: false,
+                ..Default::default()
+            },
+            contributes: Default::default(),
+        };
+        let mut state = ExtensionRuntimeState::new("test.no-timer".into(), manifest);
+
+        let err = <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::request_tick(
+            &mut state, 1000,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("timers"));
+    }
+
+    #[test]
+    fn request_tick_sets_interval_and_due_time() {
+        let manifest = ExtensionManifest {
+            id: "test.timer".into(),
+            name: "Timer Test".into(),
+            version: "0.1.0".into(),
+            schema_version: 1,
+            authors: Vec::new(),
+            description: String::new(),
+            repository: String::new(),
+            wasm: WasmConfig {
+                component: "target/wasm32-wasip2/release/test.wasm".into(),
+            },
+            activation: Default::default(),
+            capabilities: Capabilities {
+                timers: true,
+                ..Default::default()
+            },
+            contributes: Default::default(),
+        };
+        let mut state = ExtensionRuntimeState::new("test.timer".into(), manifest);
+
+        <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::request_tick(
+            &mut state, 1000,
+        )
+        .unwrap();
+
+        assert_eq!(state.tick_interval_ms, Some(1000));
+        assert!(state.tick_next_due_ms.is_some());
+    }
+
+    #[test]
+    fn cancel_tick_clears_interval_and_due_time() {
+        let manifest = ExtensionManifest {
+            id: "test.timer".into(),
+            name: "Timer Test".into(),
+            version: "0.1.0".into(),
+            schema_version: 1,
+            authors: Vec::new(),
+            description: String::new(),
+            repository: String::new(),
+            wasm: WasmConfig {
+                component: "target/wasm32-wasip2/release/test.wasm".into(),
+            },
+            activation: Default::default(),
+            capabilities: Capabilities {
+                timers: true,
+                ..Default::default()
+            },
+            contributes: Default::default(),
+        };
+        let mut state = ExtensionRuntimeState::new("test.timer".into(), manifest);
+
+        <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::request_tick(
+            &mut state, 1000,
+        )
+        .unwrap();
+        <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::cancel_tick(&mut state)
+            .unwrap();
+
+        assert_eq!(state.tick_interval_ms, None);
+        assert_eq!(state.tick_next_due_ms, None);
     }
 }

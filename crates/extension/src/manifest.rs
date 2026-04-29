@@ -54,6 +54,8 @@ pub struct Capabilities {
     pub commands: bool,
     #[serde(default)]
     pub webview: bool,
+    #[serde(default)]
+    pub timers: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -152,6 +154,9 @@ impl ExtensionManifest {
     }
 
     pub fn activates_on(&self, event_type: &str) -> bool {
+        if self.activation.events.is_empty() {
+            return true;
+        }
         self.activation
             .events
             .iter()

@@ -1,0 +1,35 @@
+id = "vellum.pomodoro"
+name = "Pomodoro Timer"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "A Pomodoro timer extension for focused productivity"
+
+[wasm]
+component = "../../target/wasm32-wasip2/release/vellum_pomodoro.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+timers = true
+
+[[contributes.commands]]
+id = "pomodoro.start-pause"
+title = "Pomodoro: Start/Pause"
+
+[[contributes.commands]]
+id = "pomodoro.reset"
+title = "Pomodoro: Reset"
+
+[[contributes.commands]]
+id = "pomodoro.skip"
+title = "Pomodoro: Skip"
+
+[[contributes.panels]]
+id = "pomodoro"
+title = "Pomodoro"
+icon = "clock"
+location = "right"

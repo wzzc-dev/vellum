@@ -172,6 +172,7 @@ pub fn run() -> Result<()> {
                 window.set_window_title("Vellum");
                 let view = cx.new(|cx| VellumApp::new(window, cx));
                 VellumApp::start_background_tasks(&view, window, cx);
+                VellumApp::start_timer_tick_loop(&view, window, cx);
                 cx.new(|cx| Root::new(view, window, cx))
             })
             .expect("failed to open main window");
@@ -680,6 +681,34 @@ impl VellumApp {
                     if cx
                         .update_window_entity(&view, |this, window, cx| {
                             this.poll_workspace(window, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+    }
+
+    fn start_timer_tick_loop(view: &Entity<Self>, window: &mut Window, cx: &mut App) {
+        let view = view.clone();
+        window
+            .spawn(cx, async move |cx| {
+                loop {
+                    Timer::after(std::time::Duration::from_secs(1)).await;
+                    if cx
+                        .update_window_entity(&view, |this, window, cx| {
+                            if !this.extension_host.has_active_timers() {
+                                return;
+                            }
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            this.extension_host.dispatch_timer_ticks(now_ms);
+                            this.drain_extension_outputs(Some(window), cx);
+                            cx.notify();
                         })
                         .is_err()
                     {

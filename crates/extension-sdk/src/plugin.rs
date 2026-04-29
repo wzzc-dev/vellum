@@ -100,6 +100,18 @@ impl ExtensionContext {
     pub fn clear_decorations(&mut self) -> ExtensionResult {
         host::clear_decorations()
     }
+
+    pub fn now_ms(&self) -> u64 {
+        host::now_ms()
+    }
+
+    pub fn request_tick(&self, interval_ms: u32) -> ExtensionResult {
+        host::request_tick(interval_ms)
+    }
+
+    pub fn cancel_tick(&self) -> ExtensionResult {
+        host::cancel_tick()
+    }
 }
 
 #[macro_export]
@@ -190,6 +202,7 @@ macro_rules! register_extension {
                             event_type: event.event_type,
                             document_text: event.document_text,
                             document_path: event.document_path,
+                            timestamp_ms: event.timestamp_ms,
                         },
                         ctx,
                     )

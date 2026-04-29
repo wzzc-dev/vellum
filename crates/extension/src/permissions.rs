@@ -8,6 +8,7 @@ pub enum Capability {
     Panels,
     Commands,
     Webview,
+    Timers,
 }
 
 impl Capability {
@@ -19,6 +20,7 @@ impl Capability {
             Self::Panels => "panels",
             Self::Commands => "commands",
             Self::Webview => "webview",
+        Self::Timers => "timers",
         }
     }
 }
@@ -31,6 +33,7 @@ pub fn has_capability(manifest: &ExtensionManifest, capability: Capability) -> b
         Capability::Panels => manifest.capabilities.panels,
         Capability::Commands => manifest.capabilities.commands,
         Capability::Webview => manifest.capabilities.webview,
+        Capability::Timers => manifest.capabilities.timers,
     }
 }
 
