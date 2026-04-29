@@ -119,67 +119,115 @@ impl CodeHighlighter {
 
     fn classify_node(kind: &str) -> CodeTokenType {
         match kind {
-            "function" | "function_definition" | "function_item" | "function_declaration"
-            | "method_definition" | "method_declaration" | "arrow_function"
-            | "generator_function" | "generator_function_declaration" => CodeTokenType::Function,
+            "function"
+            | "function_definition"
+            | "function_item"
+            | "function_declaration"
+            | "method_definition"
+            | "method_declaration"
+            | "arrow_function"
+            | "generator_function"
+            | "generator_function_declaration" => CodeTokenType::Function,
 
             "call_expression" | "method_call" => CodeTokenType::Function,
 
-            "string" | "string_literal" | "string_content" | "raw_string_literal"
-            | "interpreted_string_literal" | "template_string" | "template_substitution"
-            | "char_literal" | "escape_sequence" => CodeTokenType::String,
+            "string"
+            | "string_literal"
+            | "string_content"
+            | "raw_string_literal"
+            | "interpreted_string_literal"
+            | "template_string"
+            | "template_substitution"
+            | "char_literal"
+            | "escape_sequence" => CodeTokenType::String,
 
-            "number" | "integer_literal" | "float_literal" | "number_literal"
-            | "decimal_number_literal" | "hex_integer_literal" | "octal_integer_literal"
-            | "binary_integer_literal" | "big_integer_literal" => CodeTokenType::Number,
+            "number"
+            | "integer_literal"
+            | "float_literal"
+            | "number_literal"
+            | "decimal_number_literal"
+            | "hex_integer_literal"
+            | "octal_integer_literal"
+            | "binary_integer_literal"
+            | "big_integer_literal" => CodeTokenType::Number,
 
-            "comment" | "line_comment" | "block_comment" | "doc_comment"
-            | "html_comment" | "multiline_comment" | "singleline_comment" => CodeTokenType::Comment,
+            "comment" | "line_comment" | "block_comment" | "doc_comment" | "html_comment"
+            | "multiline_comment" | "singleline_comment" => CodeTokenType::Comment,
 
-            "type_identifier" | "type" | "primitive_type" | "struct_item" | "enum_item"
-            | "trait_item" | "impl_item" | "class_declaration" | "interface_declaration"
-            | "type_alias_declaration" | "struct_expression" | "enum_expression"
-            | "type_argument" | "generic_type" | "array_type" | "pointer_type"
-            | "reference_type" | "tuple_type" | "unit_type" | "never_type"
-            | "function_type" | "union_type" | "intersection_type" | "optional_type"
-            | "conditional_type" | "parenthesized_type" | "object_type" => CodeTokenType::Type,
+            "type_identifier"
+            | "type"
+            | "primitive_type"
+            | "struct_item"
+            | "enum_item"
+            | "trait_item"
+            | "impl_item"
+            | "class_declaration"
+            | "interface_declaration"
+            | "type_alias_declaration"
+            | "struct_expression"
+            | "enum_expression"
+            | "type_argument"
+            | "generic_type"
+            | "array_type"
+            | "pointer_type"
+            | "reference_type"
+            | "tuple_type"
+            | "unit_type"
+            | "never_type"
+            | "function_type"
+            | "union_type"
+            | "intersection_type"
+            | "optional_type"
+            | "conditional_type"
+            | "parenthesized_type"
+            | "object_type" => CodeTokenType::Type,
 
-            "true" | "false" | "None" | "nil" | "null" | "undefined" | "NaN"
-            | "Infinity" | "Some" | "Ok" | "Err" => CodeTokenType::Constant,
+            "true" | "false" | "None" | "nil" | "null" | "undefined" | "NaN" | "Infinity"
+            | "Some" | "Ok" | "Err" => CodeTokenType::Constant,
 
-            "identifier" | "field_identifier" | "shorthand_property_identifier"
-            | "property_identifier" | "variable_identifier" | "self" | "this" | "super"
-            | "value_identifier" | "property_name" | "_" => CodeTokenType::Variable,
+            "identifier"
+            | "field_identifier"
+            | "shorthand_property_identifier"
+            | "property_identifier"
+            | "variable_identifier"
+            | "self"
+            | "this"
+            | "super"
+            | "value_identifier"
+            | "property_name"
+            | "_" => CodeTokenType::Variable,
 
-            "if" | "else" | "elif" | "for" | "while" | "loop" | "match" | "switch"
-            | "case" | "default" | "break" | "continue" | "return" | "yield" | "await"
-            | "async" | "try" | "catch" | "finally" | "throw" | "raise" | "except"
-            | "fn" | "func" | "def" | "fun" | "let" | "const" | "var" | "val"
-            | "mut" | "pub" | "private" | "protected" | "internal" | "static" | "extern"
-            | "impl" | "trait" | "struct" | "enum" | "class" | "interface" | "extends"
-            | "implements" | "where" | "use" | "import" | "export" | "from" | "as" | "in"
-            | "ref" | "move" | "new" | "delete" | "sizeof" | "typeof"
-            | "instanceof" | "void" | "do" | "goto" | "package" | "module" | "mod"
-            | "crate" | "abstract" | "final" | "override" | "virtual"
-            | "synchronized" | "volatile" | "native" | "transient" | "strictfp"
-            | "throws" | "with" | "using" | "namespace" | "include" | "require"
-            | "defer" | "go" | "select" | "range" | "chan" | "map" | "fallthrough"
-            | "pass" | "lambda" | "global" | "nonlocal" | "assert" | "del" | "and"
-            | "or" | "not" | "is" => CodeTokenType::Keyword,
+            "if" | "else" | "elif" | "for" | "while" | "loop" | "match" | "switch" | "case"
+            | "default" | "break" | "continue" | "return" | "yield" | "await" | "async" | "try"
+            | "catch" | "finally" | "throw" | "raise" | "except" | "fn" | "func" | "def"
+            | "fun" | "let" | "const" | "var" | "val" | "mut" | "pub" | "private" | "protected"
+            | "internal" | "static" | "extern" | "impl" | "trait" | "struct" | "enum" | "class"
+            | "interface" | "extends" | "implements" | "where" | "use" | "import" | "export"
+            | "from" | "as" | "in" | "ref" | "move" | "new" | "delete" | "sizeof" | "typeof"
+            | "instanceof" | "void" | "do" | "goto" | "package" | "module" | "mod" | "crate"
+            | "abstract" | "final" | "override" | "virtual" | "synchronized" | "volatile"
+            | "native" | "transient" | "strictfp" | "throws" | "with" | "using" | "namespace"
+            | "include" | "require" | "defer" | "go" | "select" | "range" | "chan" | "map"
+            | "fallthrough" | "pass" | "lambda" | "global" | "nonlocal" | "assert" | "del"
+            | "and" | "or" | "not" | "is" => CodeTokenType::Keyword,
 
-            "&&" | "||" | "!" | "!=" | "==" | "<=" | ">=" | "<" | ">" | "+"
-            | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "~" | "<<" | ">>"
-            | "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^="
-            | "<<=" | ">>=" | "&&=" | "||=" | "??" | "?."
-            | "++" | "--" | "->" | "=>" | ".." | "..=" | "..." | "::" => CodeTokenType::Operator,
+            "&&" | "||" | "!" | "!=" | "==" | "<=" | ">=" | "<" | ">" | "+" | "-" | "*" | "/"
+            | "%" | "&" | "|" | "^" | "~" | "<<" | ">>" | "=" | "+=" | "-=" | "*=" | "/="
+            | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" | "&&=" | "||=" | "??" | "?." | "++"
+            | "--" | "->" | "=>" | ".." | "..=" | "..." | "::" => CodeTokenType::Operator,
 
-            "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "?"
-            | "@" | "#" | "$" | "\\" | "`" => CodeTokenType::Punctuation,
+            "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "?" | "@" | "#" | "$"
+            | "\\" | "`" => CodeTokenType::Punctuation,
 
             "pair" | "property_assignment" | "field_declaration" => CodeTokenType::Property,
 
-            "jsx_opening_element" | "jsx_closing_element" | "jsx_self_closing_element"
-            | "element" | "start_tag" | "end_tag" | "self_closing_tag" => CodeTokenType::Tag,
+            "jsx_opening_element"
+            | "jsx_closing_element"
+            | "jsx_self_closing_element"
+            | "element"
+            | "start_tag"
+            | "end_tag"
+            | "self_closing_tag" => CodeTokenType::Tag,
 
             "attribute" | "attribute_name" | "attribute_value" | "jsx_attribute"
             | "id_attribute" | "class_attribute" => CodeTokenType::Attribute,

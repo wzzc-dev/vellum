@@ -13,13 +13,8 @@ use crate::{
     },
 };
 
-const AUTO_PAIR_OPENERS: &[(char, char)] = &[
-    ('(', ')'),
-    ('[', ']'),
-    ('{', '}'),
-    ('"', '"'),
-    ('\'', '\''),
-];
+const AUTO_PAIR_OPENERS: &[(char, char)] =
+    &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')];
 
 fn closing_char_for_opener(c: char) -> Option<char> {
     AUTO_PAIR_OPENERS
@@ -50,11 +45,8 @@ fn detect_auto_pair_opportunity(
     closing_char_for_opener(inserted)
 }
 
-const MARKUP_WRAP_CHARS: &[(char, &str, &str)] = &[
-    ('*', "**", "**"),
-    ('`', "`", "`"),
-    ('~', "~~", "~~"),
-];
+const MARKUP_WRAP_CHARS: &[(char, &str, &str)] =
+    &[('*', "**", "**"), ('`', "`", "`"), ('~', "~~", "~~")];
 
 fn detect_wrap_selection_opportunity(
     old_visible: &str,
@@ -243,61 +235,61 @@ impl MarkdownEditor {
                 });
                 self.syncing_input = false;
 
-                self.controller
-                    .dispatch(EditCommand::ToggleInlineMarkup {
-                        before: before.to_string(),
-                        after: after.to_string(),
-                    })
+                self.controller.dispatch(EditCommand::ToggleInlineMarkup {
+                    before: before.to_string(),
+                    after: after.to_string(),
+                })
             } else {
-            let overclose = detect_overclose_opportunity(
-                &self.snapshot.display_map.visible_text,
-                &visible_text,
-                &mirrored_selection,
-            );
-
-            if overclose {
-                let cursor = mirrored_selection.cursor();
-                let char_len = self.snapshot.display_map.visible_text[cursor..]
-                    .chars()
-                    .next()
-                    .map(|c| c.len_utf8())
-                    .unwrap_or(0);
-                let new_cursor = cursor + char_len;
-
-                self.syncing_input = true;
-                self.document_input.update(cx, |input, cx| {
-                    input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
-                });
-                self.syncing_input = false;
-
-                let mut new_visible_selection = SelectionState::collapsed(new_cursor);
-                new_visible_selection.preferred_column = visible_selection.preferred_column;
-                let selection = selection_from_visible_input(&self.snapshot, &new_visible_selection);
-
-                self.controller
-                    .dispatch(EditCommand::SetSelection { selection })
-            } else {
-                let auto_pair_close = detect_auto_pair_opportunity(
+                let overclose = detect_overclose_opportunity(
                     &self.snapshot.display_map.visible_text,
                     &visible_text,
                     &mirrored_selection,
                 );
 
-                let Some((text, selection)) =
-                    reconcile_visible_input_change(&self.snapshot, &visible_text)
-                else {
-                    return;
-                };
+                if overclose {
+                    let cursor = mirrored_selection.cursor();
+                    let char_len = self.snapshot.display_map.visible_text[cursor..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    let new_cursor = cursor + char_len;
 
-                let (text, selection) = if let Some(close_char) = auto_pair_close {
-                    apply_auto_pair_to_source(&text, selection, close_char)
+                    self.syncing_input = true;
+                    self.document_input.update(cx, |input, cx| {
+                        input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
+                    });
+                    self.syncing_input = false;
+
+                    let mut new_visible_selection = SelectionState::collapsed(new_cursor);
+                    new_visible_selection.preferred_column = visible_selection.preferred_column;
+                    let selection =
+                        selection_from_visible_input(&self.snapshot, &new_visible_selection);
+
+                    self.controller
+                        .dispatch(EditCommand::SetSelection { selection })
                 } else {
-                    (text, selection)
-                };
+                    let auto_pair_close = detect_auto_pair_opportunity(
+                        &self.snapshot.display_map.visible_text,
+                        &visible_text,
+                        &mirrored_selection,
+                    );
 
-                self.controller
-                    .dispatch(EditCommand::SyncDocumentState { text, selection })
-            }
+                    let Some((text, selection)) =
+                        reconcile_visible_input_change(&self.snapshot, &visible_text)
+                    else {
+                        return;
+                    };
+
+                    let (text, selection) = if let Some(close_char) = auto_pair_close {
+                        apply_auto_pair_to_source(&text, selection, close_char)
+                    } else {
+                        (text, selection)
+                    };
+
+                    self.controller
+                        .dispatch(EditCommand::SyncDocumentState { text, selection })
+                }
             }
         } else if visible_selection != mirrored_selection {
             let selection = selection_from_visible_input(&self.snapshot, &visible_selection);

@@ -1,14 +1,24 @@
-use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionEvent {
+    pub event_type: String,
+    pub document_text: String,
+    pub document_path: Option<String>,
+}
 
-/// Event data sent from host to extension.
-/// Must match the SDK's EventData enum for postcard serialization compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EventData {
-    DocumentOpened { path: Option<String> },
-    DocumentClosed { path: Option<String> },
-    DocumentChanged { text: String, path: Option<String> },
-    DocumentSaved { path: String },
-    SelectionChanged { start: usize, end: usize },
-    EditorFocused,
-    EditorBlurred,
+impl ExtensionEvent {
+    pub fn document_changed(text: String, path: Option<String>) -> Self {
+        Self {
+            event_type: "document.changed".into(),
+            document_text: text,
+            document_path: path,
+        }
+    }
+
+    pub fn document_opened(text: String, path: Option<String>) -> Self {
+        Self {
+            event_type: "document.opened".into(),
+            document_text: text,
+            document_path: path,
+        }
+    }
 }

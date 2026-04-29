@@ -1,6 +1,6 @@
 use gpui::{
     App, Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement, Styled, Window, div, px, SharedString,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
 
@@ -153,7 +153,10 @@ fn filter_commands(query: &str) -> Vec<usize> {
         .enumerate()
         .filter(|(_, item)| {
             let label_match = item.label.to_lowercase().contains(&query);
-            let keyword_match = item.keywords.iter().any(|k| k.to_lowercase().contains(&query));
+            let keyword_match = item
+                .keywords
+                .iter()
+                .any(|k| k.to_lowercase().contains(&query));
             label_match || keyword_match
         })
         .map(|(i, _)| i)
@@ -244,10 +247,8 @@ impl SlashCommandPanel {
         let viewport_bottom = viewport_top + f32::from(viewport.size.height);
 
         if item_top < viewport_top {
-            self.scroll_handle.set_offset(gpui::point(
-                self.scroll_handle.offset().x,
-                px(-(item_top)),
-            ));
+            self.scroll_handle
+                .set_offset(gpui::point(self.scroll_handle.offset().x, px(-(item_top))));
         } else if item_top + ITEM_HEIGHT > viewport_bottom {
             self.scroll_handle.set_offset(gpui::point(
                 self.scroll_handle.offset().x,

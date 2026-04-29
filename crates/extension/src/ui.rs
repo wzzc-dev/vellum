@@ -169,13 +169,96 @@ pub struct ListItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UiEvent {
-    ButtonClicked { element_id: String },
-    InputChanged { element_id: String, value: String },
-    CheckboxToggled { element_id: String, checked: bool },
-    SelectChanged { element_id: String, index: usize },
-    ToggleChanged { element_id: String, active: bool },
-    LinkClicked { element_id: String },
-    ListItemClicked { element_id: String, item_id: String },
-    DisclosureToggled { element_id: String, open: bool },
-    WebViewMessage { element_id: String, message: String },
+    ButtonClicked {
+        panel_id: String,
+        element_id: String,
+    },
+    InputChanged {
+        panel_id: String,
+        element_id: String,
+        value: String,
+    },
+    CheckboxToggled {
+        panel_id: String,
+        element_id: String,
+        checked: bool,
+    },
+    SelectChanged {
+        panel_id: String,
+        element_id: String,
+        index: usize,
+    },
+    ToggleChanged {
+        panel_id: String,
+        element_id: String,
+        active: bool,
+    },
+    LinkClicked {
+        panel_id: String,
+        element_id: String,
+    },
+    ListItemClicked {
+        panel_id: String,
+        element_id: String,
+        item_id: String,
+    },
+    DisclosureToggled {
+        panel_id: String,
+        element_id: String,
+        open: bool,
+    },
+}
+
+impl UiEvent {
+    pub fn panel_id(&self) -> &str {
+        match self {
+            Self::ButtonClicked { panel_id, .. }
+            | Self::InputChanged { panel_id, .. }
+            | Self::CheckboxToggled { panel_id, .. }
+            | Self::SelectChanged { panel_id, .. }
+            | Self::ToggleChanged { panel_id, .. }
+            | Self::LinkClicked { panel_id, .. }
+            | Self::ListItemClicked { panel_id, .. }
+            | Self::DisclosureToggled { panel_id, .. } => panel_id,
+        }
+    }
+}
+
+impl UiNode {
+    pub fn contains_webview(&self) -> bool {
+        match self {
+            Self::WebView { .. } => true,
+            Self::Column { children, .. }
+            | Self::Row { children, .. }
+            | Self::Disclosure { children, .. } => children.iter().any(Self::contains_webview),
+            Self::List { items } => items.iter().any(list_item_contains_webview),
+            Self::Conditional {
+                when_true,
+                when_false,
+                ..
+            } => {
+                when_true.contains_webview()
+                    || when_false
+                        .as_deref()
+                        .map(Self::contains_webview)
+                        .unwrap_or(false)
+            }
+            Self::Text { .. }
+            | Self::Heading { .. }
+            | Self::Button { .. }
+            | Self::TextInput { .. }
+            | Self::Checkbox { .. }
+            | Self::Select { .. }
+            | Self::Toggle { .. }
+            | Self::Badge { .. }
+            | Self::Progress { .. }
+            | Self::Separator
+            | Self::Spacer
+            | Self::Link { .. } => false,
+        }
+    }
+}
+
+fn list_item_contains_webview(item: &ListItem) -> bool {
+    item.children.iter().any(list_item_contains_webview)
 }

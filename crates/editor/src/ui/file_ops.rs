@@ -42,11 +42,7 @@ impl MarkdownEditor {
         window.dispatch_action(Box::new(Paste), cx);
     }
 
-    fn save_clipboard_image(
-        &self,
-        image: &gpui::Image,
-        cx: &mut Context<Self>,
-    ) -> Option<PathBuf> {
+    fn save_clipboard_image(&self, image: &gpui::Image, cx: &mut Context<Self>) -> Option<PathBuf> {
         let doc_dir = self.controller.current_document_dir()?;
         let assets_dir = doc_dir.join("assets");
         std::fs::create_dir_all(&assets_dir).ok()?;

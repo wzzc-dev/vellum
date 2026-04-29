@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Represents a parsed `extension.toml` manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionManifest {
     pub id: String,
@@ -9,18 +8,17 @@ pub struct ExtensionManifest {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub author: String,
-    /// Relative path from the extension directory to the WASM component.
-    pub entry: String,
-
+    pub repository: String,
+    #[serde(default)]
+    pub wasm: WasmConfig,
     #[serde(default)]
     pub activation: ActivationConfig,
-
     #[serde(default)]
     pub capabilities: Capabilities,
-
     #[serde(default)]
     pub contributes: Contributions,
 }
@@ -30,8 +28,14 @@ fn default_schema_version() -> u32 {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WasmConfig {
+    /// Relative path from the extension directory to the WASM component.
+    #[serde(default)]
+    pub component: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActivationConfig {
-    /// Events that trigger activation, e.g. ["onDocumentOpened:markdown", "onCommand:lint.run"].
     #[serde(default)]
     pub events: Vec<String>,
 }
@@ -50,16 +54,6 @@ pub struct Capabilities {
     pub commands: bool,
     #[serde(default)]
     pub webview: bool,
-    #[serde(default)]
-    pub webview_scripts: bool,
-    #[serde(default)]
-    pub webview_devtools: bool,
-    #[serde(default)]
-    pub workspace_read: bool,
-    #[serde(default)]
-    pub workspace_write: bool,
-    #[serde(default)]
-    pub network: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -97,61 +91,79 @@ fn default_location() -> String {
 }
 
 impl ExtensionManifest {
-    /// Parse an `extension.toml` file from raw bytes.
     pub fn from_toml_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let s = std::str::from_utf8(bytes)?;
-        let manifest: Self = toml::from_str(s)?;
-        manifest.validate()?;
-        Ok(manifest)
+        Self::from_toml_str(s)
     }
 
-    /// Parse an `extension.toml` file from a string.
     pub fn from_toml_str(s: &str) -> anyhow::Result<Self> {
         let manifest: Self = toml::from_str(s)?;
         manifest.validate()?;
         Ok(manifest)
     }
 
-    /// Validate the manifest.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.id.is_empty() {
+        if self.id.trim().is_empty() {
             anyhow::bail!("extension id must not be empty");
         }
-        if self.name.is_empty() {
+        if self.name.trim().is_empty() {
             anyhow::bail!("extension name must not be empty");
         }
-        if self.entry.is_empty() {
-            anyhow::bail!("extension entry must not be empty");
+        if self.version.trim().is_empty() {
+            anyhow::bail!("extension version must not be empty");
         }
-        // Validate command contributions
+        if self.schema_version != 1 {
+            anyhow::bail!(
+                "unsupported extension schema_version: {}",
+                self.schema_version
+            );
+        }
+        if self.wasm.component.trim().is_empty() {
+            anyhow::bail!("extension wasm.component must not be empty");
+        }
+
         for cmd in &self.contributes.commands {
-            if cmd.id.is_empty() {
+            if cmd.id.trim().is_empty() {
                 anyhow::bail!("command contribution id must not be empty");
             }
-            if cmd.title.is_empty() {
+            if cmd.title.trim().is_empty() {
                 anyhow::bail!("command contribution title must not be empty");
             }
         }
-        // Validate panel contributions
+
         for panel in &self.contributes.panels {
-            if panel.id.is_empty() {
+            if panel.id.trim().is_empty() {
                 anyhow::bail!("panel contribution id must not be empty");
             }
-            if panel.title.is_empty() {
+            if panel.title.trim().is_empty() {
                 anyhow::bail!("panel contribution title must not be empty");
             }
         }
+
         Ok(())
     }
 
-    /// Returns the fully qualified command ID: `{extension_id}.{command_id}`.
     pub fn qualified_command_id(&self, command_id: &str) -> String {
         format!("{}.{}", self.id, command_id)
     }
 
-    /// Returns the fully qualified panel ID: `{extension_id}.{panel_id}`.
     pub fn qualified_panel_id(&self, panel_id: &str) -> String {
         format!("{}.{}", self.id, panel_id)
+    }
+
+    pub fn activates_on(&self, event_type: &str) -> bool {
+        self.activation
+            .events
+            .iter()
+            .any(|event| event == event_type)
+    }
+
+    pub fn author_line(&self) -> String {
+        if self.authors.is_empty() {
+            String::new()
+        } else {
+            self.authors.join(", ")
+        }
     }
 }
 
@@ -160,33 +172,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_minimal_manifest() {
-        let toml = r#"
-id = "test.extension"
-name = "Test Extension"
-version = "0.1.0"
-entry = "target/wasm32-wasip2/release/test.wasm"
-"#;
-        let manifest = ExtensionManifest::from_toml_str(toml).unwrap();
-        assert_eq!(manifest.id, "test.extension");
-        assert_eq!(manifest.name, "Test Extension");
-        assert_eq!(manifest.version, "0.1.0");
-        assert_eq!(manifest.schema_version, 1);
-    }
-
-    #[test]
-    fn test_parse_full_manifest() {
+    fn parse_zed_style_manifest() {
         let toml = r#"
 id = "vellum.markdown-lint"
 name = "Markdown Lint"
 version = "0.1.0"
 schema_version = 1
-description = "Checks Markdown documents for common issues"
-author = "Vellum"
-entry = "target/wasm32-wasip2/release/markdown_lint.wasm"
+authors = ["Vellum"]
+description = "Checks Markdown documents"
+repository = "https://example.com"
+
+[wasm]
+component = "target/wasm32-wasip2/release/vellum_markdown_lint.wasm"
 
 [activation]
-events = ["onDocumentOpened:markdown", "onDocumentChanged:markdown"]
+events = ["document.opened", "document.changed"]
 
 [capabilities]
 document_read = true
@@ -201,43 +201,31 @@ title = "Run Markdown Lint"
 key = "cmd-shift-l"
 
 [[contributes.panels]]
-id = "markdown-lint.panel"
+id = "markdown-lint"
 title = "Lint"
 icon = "triangle-alert"
-location = "right"
 "#;
         let manifest = ExtensionManifest::from_toml_str(toml).unwrap();
         assert_eq!(manifest.id, "vellum.markdown-lint");
-        assert_eq!(manifest.capabilities.document_read, true);
-        assert_eq!(manifest.contributes.commands.len(), 1);
-        assert_eq!(manifest.contributes.panels.len(), 1);
+        assert_eq!(manifest.authors, vec!["Vellum"]);
         assert_eq!(
-            manifest.qualified_command_id("markdown-lint.run"),
-            "vellum.markdown-lint.markdown-lint.run"
+            manifest.wasm.component,
+            "target/wasm32-wasip2/release/vellum_markdown_lint.wasm"
+        );
+        assert!(manifest.activates_on("document.changed"));
+        assert_eq!(
+            manifest.qualified_panel_id("markdown-lint"),
+            "vellum.markdown-lint.markdown-lint"
         );
     }
 
     #[test]
-    fn test_validate_empty_id() {
+    fn validate_requires_component() {
         let toml = r#"
-id = ""
-name = "Test"
+id = "test.extension"
+name = "Test Extension"
 version = "0.1.0"
-entry = "test.wasm"
 "#;
-        let result = ExtensionManifest::from_toml_str(toml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_empty_entry() {
-        let toml = r#"
-id = "test"
-name = "Test"
-version = "0.1.0"
-entry = ""
-"#;
-        let result = ExtensionManifest::from_toml_str(toml);
-        assert!(result.is_err());
+        assert!(ExtensionManifest::from_toml_str(toml).is_err());
     }
 }

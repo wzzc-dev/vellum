@@ -11,18 +11,19 @@ use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Entity, FontStyle, FontWeight, Hsla,
     InteractiveElement, IntoElement, IsZero, MouseButton, MouseMoveEvent, ObjectFit, PaintQuad,
     ParentElement, ScrollHandle, SharedString, StatefulInteractiveElement, StrikethroughStyle,
-    Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, WhiteSpace, Window, canvas, div,
-    fill, img, point, px, size,
+    Styled, StyledImage, StyledText, TextRun, TextStyle, UnderlineStyle, WhiteSpace, Window,
+    canvas, div, fill, img, point, px, size,
 };
 use gpui_component::{
     ActiveTheme,
     button::{Button, ButtonVariants as _},
     menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    tooltip::Tooltip,
 };
 
 use crate::{
-    BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, RenderSpanMeta,
-    SelectionState,
+    BlockKind, EditCommand, EditorDecoration, RenderBlock, RenderSpan, RenderSpanKind,
+    RenderSpanMeta, SelectionState,
     core::{
         controller::EditorSnapshot,
         table::{TABLE_COLUMN_GAP, TableModel, char_display_width, str_display_width},
@@ -31,7 +32,8 @@ use crate::{
 };
 
 use super::{
-    BODY_FONT_SIZE, BODY_LINE_HEIGHT, MONOSPACE_FONT_FAMILY, layout::block_presentation,
+    BODY_FONT_SIZE, BODY_LINE_HEIGHT, MONOSPACE_FONT_FAMILY,
+    layout::block_presentation,
     view::{MarkdownEditor, SurfaceSelectionAnchor},
 };
 
@@ -123,6 +125,7 @@ struct RenderPalette {
 
 #[derive(Clone)]
 struct BlockOverlay {
+    extension_decoration_quads: Vec<PaintQuad>,
     find_highlight_quads: Vec<PaintQuad>,
     selection_quads: Vec<PaintQuad>,
     caret_quad: Option<PaintQuad>,
@@ -222,7 +225,9 @@ impl MarkdownEditor {
         let visible_offset = block.visible_range.start + local_visible_offset;
 
         for span in &block.spans {
-            if span.visible_range.start <= visible_offset && visible_offset <= span.visible_range.end {
+            if span.visible_range.start <= visible_offset
+                && visible_offset <= span.visible_range.end
+            {
                 if let Some(crate::RenderSpanMeta::Link { target, .. }) = &span.meta {
                     if !target.is_empty() {
                         return Some(target.clone());
@@ -365,17 +370,18 @@ impl MarkdownEditor {
                 .find(|block| block.id == block_id)
                 .cloned();
             if let Some(block) = block {
-                let source_selection = self.snapshot.display_map.visible_selection_to_source(
-                    &SelectionState {
-                        anchor_byte: block.visible_range.start,
-                        head_byte: block.visible_range.end,
-                        preferred_column: None,
-                        affinity: crate::SelectionAffinity::Downstream,
-                    },
-                );
-                let effects = self
-                    .controller
-                    .dispatch(EditCommand::SetSelection { selection: source_selection });
+                let source_selection =
+                    self.snapshot
+                        .display_map
+                        .visible_selection_to_source(&SelectionState {
+                            anchor_byte: block.visible_range.start,
+                            head_byte: block.visible_range.end,
+                            preferred_column: None,
+                            affinity: crate::SelectionAffinity::Downstream,
+                        });
+                let effects = self.controller.dispatch(EditCommand::SetSelection {
+                    selection: source_selection,
+                });
                 self.apply_effects(window, cx, effects);
                 self.focus_input(window, cx);
                 self.drag_selection_anchor = None;
@@ -392,17 +398,18 @@ impl MarkdownEditor {
                 &self.snapshot.display_map.visible_text,
                 hit.visible_offset,
             ) {
-                let source_selection = self.snapshot.display_map.visible_selection_to_source(
-                    &SelectionState {
-                        anchor_byte: visible_word.start,
-                        head_byte: visible_word.end,
-                        preferred_column: None,
-                        affinity: crate::SelectionAffinity::Downstream,
-                    },
-                );
-                let effects = self
-                    .controller
-                    .dispatch(EditCommand::SetSelection { selection: source_selection });
+                let source_selection =
+                    self.snapshot
+                        .display_map
+                        .visible_selection_to_source(&SelectionState {
+                            anchor_byte: visible_word.start,
+                            head_byte: visible_word.end,
+                            preferred_column: None,
+                            affinity: crate::SelectionAffinity::Downstream,
+                        });
+                let effects = self.controller.dispatch(EditCommand::SetSelection {
+                    selection: source_selection,
+                });
                 self.apply_effects(window, cx, effects);
                 self.focus_input(window, cx);
                 self.drag_selection_anchor = None;
@@ -415,10 +422,11 @@ impl MarkdownEditor {
         }
 
         let anchor = if event.modifiers().shift {
-            self.drag_selection_anchor.unwrap_or(SurfaceSelectionAnchor {
-                source_offset: self.snapshot.selection.anchor_byte,
-                visible_offset: self.snapshot.visible_selection.anchor_byte,
-            })
+            self.drag_selection_anchor
+                .unwrap_or(SurfaceSelectionAnchor {
+                    source_offset: self.snapshot.selection.anchor_byte,
+                    visible_offset: self.snapshot.visible_selection.anchor_byte,
+                })
         } else {
             hit
         };
@@ -440,20 +448,18 @@ impl MarkdownEditor {
         }
 
         let selection_range = self.snapshot.selection.range();
-        let Some(head) = self.surface_selection_anchor_for_position(
-            block_id,
-            position,
-            selection_range,
-            window,
-        ) else {
+        let Some(head) =
+            self.surface_selection_anchor_for_position(block_id, position, selection_range, window)
+        else {
             self.focus_input(window, cx);
             return;
         };
         let anchor = if shift {
-            self.drag_selection_anchor.unwrap_or(SurfaceSelectionAnchor {
-                source_offset: self.snapshot.selection.anchor_byte,
-                visible_offset: self.snapshot.visible_selection.anchor_byte,
-            })
+            self.drag_selection_anchor
+                .unwrap_or(SurfaceSelectionAnchor {
+                    source_offset: self.snapshot.selection.anchor_byte,
+                    visible_offset: self.snapshot.visible_selection.anchor_byte,
+                })
         } else {
             head
         };
@@ -484,12 +490,13 @@ impl MarkdownEditor {
             let mut next_offset = current_offset;
 
             if event.position.y < viewport_bounds.top() + edge_threshold {
-                let distance = (viewport_bounds.top() + edge_threshold - event.position.y).max(px(0.));
+                let distance =
+                    (viewport_bounds.top() + edge_threshold - event.position.y).max(px(0.));
                 next_offset.y = (current_offset.y + distance.min(px(18.))).min(px(0.));
             } else if event.position.y > viewport_bounds.bottom() - edge_threshold {
-                let distance = (event.position.y - (viewport_bounds.bottom() - edge_threshold)).max(px(0.));
-                next_offset.y =
-                    (current_offset.y - distance.min(px(18.))).max(-max_scroll_y);
+                let distance =
+                    (event.position.y - (viewport_bounds.bottom() - edge_threshold)).max(px(0.));
+                next_offset.y = (current_offset.y - distance.min(px(18.))).max(-max_scroll_y);
             }
 
             if next_offset != current_offset {
@@ -559,8 +566,15 @@ const VIRTUAL_RENDER_OVERDRAW_PX: f32 = 400.;
 
 fn estimated_block_height(block: &RenderBlock) -> gpui::Pixels {
     let presentation = block_presentation(&block.kind);
-    let line_count = block.visible_text.chars().filter(|&c| c == '\n').count().max(1);
-    px(presentation.line_height * line_count as f32 + presentation.block_padding_y * 2. + presentation.row_spacing_y * 2.)
+    let line_count = block
+        .visible_text
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+        .max(1);
+    px(presentation.line_height * line_count as f32
+        + presentation.block_padding_y * 2.
+        + presentation.row_spacing_y * 2.)
 }
 
 fn compute_visible_block_range(
@@ -623,6 +637,7 @@ pub(super) fn render_document_surface(
     scroll_handle: ScrollHandle,
     floating_panel_block_id: Option<u64>,
     mut floating_panel: Option<AnyElement>,
+    extension_decorations: Vec<EditorDecoration>,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
 ) -> AnyElement {
@@ -630,10 +645,25 @@ pub(super) fn render_document_surface(
     let fg = cx.theme().foreground;
     let is_dark = fg.l > 0.5;
 
-    let (keyword_hue, string_hue, number_hue, comment_hue, type_hue, constant_hue, function_hue, tag_hue, attribute_hue, escape_hue) = if is_dark {
-        (210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0)
+    let (
+        keyword_hue,
+        string_hue,
+        number_hue,
+        comment_hue,
+        type_hue,
+        constant_hue,
+        function_hue,
+        tag_hue,
+        attribute_hue,
+        escape_hue,
+    ) = if is_dark {
+        (
+            210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0,
+        )
     } else {
-        (210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0)
+        (
+            210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0,
+        )
     };
 
     let palette = RenderPalette {
@@ -648,27 +678,107 @@ pub(super) fn render_document_surface(
         find_match_color: fg.opacity(0.12),
         find_active_match_color: fg.opacity(0.30),
         link_color: if is_dark {
-            Hsla { h: 210. / 360., s: 0.8, l: 0.65, a: 1.0 }
+            Hsla {
+                h: 210. / 360.,
+                s: 0.8,
+                l: 0.65,
+                a: 1.0,
+            }
         } else {
-            Hsla { h: 210. / 360., s: 0.75, l: 0.45, a: 1.0 }
+            Hsla {
+                h: 210. / 360.,
+                s: 0.75,
+                l: 0.45,
+                a: 1.0,
+            }
         },
         highlight_background: if is_dark {
-            Hsla { h: 45. / 360., s: 0.8, l: 0.5, a: 0.25 }
+            Hsla {
+                h: 45. / 360.,
+                s: 0.8,
+                l: 0.5,
+                a: 0.25,
+            }
         } else {
-            Hsla { h: 45. / 360., s: 0.9, l: 0.85, a: 0.5 }
+            Hsla {
+                h: 45. / 360.,
+                s: 0.9,
+                l: 0.85,
+                a: 0.5,
+            }
         },
-        code_keyword_color: Hsla { h: keyword_hue, s: 0.7, l: if is_dark { 0.72 } else { 0.48 }, a: 1.0 },
-        code_function_color: Hsla { h: function_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
-        code_string_color: Hsla { h: string_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
-        code_number_color: Hsla { h: number_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
-        code_comment_color: Hsla { h: comment_hue, s: 0.3, l: if is_dark { 0.55 } else { 0.42 }, a: 1.0 },
-        code_type_color: Hsla { h: type_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
-        code_constant_color: Hsla { h: constant_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
-        code_variable_color: Hsla { h: 0.0, s: 0.0, l: if is_dark { 0.82 } else { 0.2 }, a: 1.0 },
-        code_operator_color: Hsla { h: 0.0, s: 0.0, l: if is_dark { 0.72 } else { 0.35 }, a: 1.0 },
-        code_tag_color: Hsla { h: tag_hue, s: 0.55, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
-        code_attribute_color: Hsla { h: attribute_hue, s: 0.45, l: if is_dark { 0.72 } else { 0.38 }, a: 1.0 },
-        code_escape_color: Hsla { h: escape_hue, s: 0.65, l: if is_dark { 0.72 } else { 0.42 }, a: 1.0 },
+        code_keyword_color: Hsla {
+            h: keyword_hue,
+            s: 0.7,
+            l: if is_dark { 0.72 } else { 0.48 },
+            a: 1.0,
+        },
+        code_function_color: Hsla {
+            h: function_hue,
+            s: 0.65,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
+        code_string_color: Hsla {
+            h: string_hue,
+            s: 0.55,
+            l: if is_dark { 0.72 } else { 0.38 },
+            a: 1.0,
+        },
+        code_number_color: Hsla {
+            h: number_hue,
+            s: 0.65,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
+        code_comment_color: Hsla {
+            h: comment_hue,
+            s: 0.3,
+            l: if is_dark { 0.55 } else { 0.42 },
+            a: 1.0,
+        },
+        code_type_color: Hsla {
+            h: type_hue,
+            s: 0.55,
+            l: if is_dark { 0.72 } else { 0.38 },
+            a: 1.0,
+        },
+        code_constant_color: Hsla {
+            h: constant_hue,
+            s: 0.65,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
+        code_variable_color: Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: if is_dark { 0.82 } else { 0.2 },
+            a: 1.0,
+        },
+        code_operator_color: Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: if is_dark { 0.72 } else { 0.35 },
+            a: 1.0,
+        },
+        code_tag_color: Hsla {
+            h: tag_hue,
+            s: 0.55,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
+        code_attribute_color: Hsla {
+            h: attribute_hue,
+            s: 0.45,
+            l: if is_dark { 0.72 } else { 0.38 },
+            a: 1.0,
+        },
+        code_escape_color: Hsla {
+            h: escape_hue,
+            s: 0.65,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
     };
 
     if snapshot.display_map.blocks.is_empty() {
@@ -765,6 +875,7 @@ pub(super) fn render_document_surface(
                 } else {
                     None
                 },
+                &extension_decorations,
                 window,
             ));
         } else {
@@ -788,6 +899,7 @@ fn render_display_block(
     palette: RenderPalette,
     block_opacity: f32,
     floating_panel: Option<AnyElement>,
+    extension_decorations: &[EditorDecoration],
     window: &mut Window,
 ) -> AnyElement {
     let presentation = block_presentation(&block.kind);
@@ -816,6 +928,22 @@ fn render_display_block(
             }
         })
         .collect();
+    let visible_extension_ranges: Vec<std::ops::Range<usize>> = extension_decorations
+        .iter()
+        .filter_map(|decoration| {
+            let visible_start = display_map.source_to_visible(decoration.start);
+            let visible_end = display_map.source_to_visible(decoration.end);
+            (visible_start < visible_end).then_some(visible_start..visible_end)
+        })
+        .collect();
+    let block_visible_end_for_tooltip = rendered_visible_end(block);
+    let extension_tooltip = extension_decorations.iter().find_map(|decoration| {
+        let tooltip = decoration.tooltip.as_ref()?;
+        let visible_start = display_map.source_to_visible(decoration.start);
+        let visible_end = display_map.source_to_visible(decoration.end);
+        (visible_start < block_visible_end_for_tooltip && visible_end > block.visible_range.start)
+            .then(|| tooltip.clone())
+    });
     let block_id = block.id;
     let block_clone = block.clone();
     let overlay_block = block.clone();
@@ -855,15 +983,23 @@ fn render_display_block(
                 .text_size(px(presentation.font_size))
                 .line_height(px(presentation.line_height))
                 .when(
-                    matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::SourceCode),
+                    matches!(
+                        block.kind,
+                        BlockKind::CodeFence { .. } | BlockKind::SourceCode
+                    ),
                     |this| this.font_family(MONOSPACE_FONT_FAMILY),
                 )
-                .child(styled_text_for_block(&block_clone, palette, window))
+                .child(styled_text_for_block(
+                    &block_clone,
+                    palette,
+                    window,
+                    &visible_extension_ranges,
+                ))
                 .into_any_element(),
         }
     };
 
-    let text_area = div()
+    let text_area_el = div()
         .relative()
         .min_w(px(0.))
         .w_full()
@@ -883,10 +1019,14 @@ fn render_display_block(
                         bounds,
                         palette,
                         &visible_find_ranges,
+                        &visible_extension_ranges,
                         window,
                     )
                 },
                 move |_, overlay, window, _| {
+                    for quad in overlay.extension_decoration_quads {
+                        window.paint_quad(quad);
+                    }
                     for quad in overlay.find_highlight_quads {
                         window.paint_quad(quad);
                     }
@@ -903,8 +1043,14 @@ fn render_display_block(
             .left(px(0.))
             .right(px(0.))
             .bottom(px(0.)),
-        )
-        .into_any_element();
+        );
+    let text_area = match extension_tooltip {
+        Some(tooltip) => text_area_el
+            .id(("extension-decoration-tooltip", block_id))
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .into_any_element(),
+        None => text_area_el.into_any_element(),
+    };
 
     let content = match &block.kind {
         BlockKind::Blockquote => div()
@@ -940,10 +1086,7 @@ fn render_display_block(
                 .pr(px(8.))
                 .child(line_numbers);
 
-            let code_content = div()
-                .flex_1()
-                .min_w(px(0.))
-                .child(text_area);
+            let code_content = div().flex_1().min_w(px(0.)).child(text_area);
 
             div()
                 .w_full()
@@ -978,10 +1121,7 @@ fn render_display_block(
                 .pr(px(8.))
                 .child(line_numbers);
 
-            let code_content = div()
-                .flex_1()
-                .min_w(px(0.))
-                .child(text_area);
+            let code_content = div().flex_1().min_w(px(0.)).child(text_area);
 
             let mut code_surface = div()
                 .w_full()
@@ -1155,8 +1295,18 @@ fn build_block_overlay(
     bounds: Bounds<gpui::Pixels>,
     palette: RenderPalette,
     visible_find_ranges: &[(std::ops::Range<usize>, bool)],
+    visible_extension_ranges: &[std::ops::Range<usize>],
     window: &mut Window,
 ) -> BlockOverlay {
+    let extension_decoration_quads = extension_decoration_quads_for_block(
+        blocks,
+        block_index,
+        block,
+        visible_extension_ranges,
+        bounds,
+        palette,
+        window,
+    );
     let find_highlight_quads = find_highlight_quads_for_block(
         blocks,
         block_index,
@@ -1188,10 +1338,44 @@ fn build_block_overlay(
     };
 
     BlockOverlay {
+        extension_decoration_quads,
         find_highlight_quads,
         selection_quads,
         caret_quad,
     }
+}
+
+fn extension_decoration_quads_for_block(
+    blocks: &[RenderBlock],
+    block_index: usize,
+    block: &RenderBlock,
+    visible_ranges: &[std::ops::Range<usize>],
+    bounds: Bounds<gpui::Pixels>,
+    palette: RenderPalette,
+    window: &mut Window,
+) -> Vec<PaintQuad> {
+    let block_visible_end = rendered_visible_end(block);
+    let color = palette.text_color.opacity(0.12);
+    let mut quads = Vec::new();
+    for visible_range in visible_ranges {
+        let start = visible_range.start.max(block.visible_range.start);
+        let end = visible_range.end.min(block_visible_end);
+        if start >= end {
+            continue;
+        }
+        let local_range = start.saturating_sub(block.visible_range.start)
+            ..end.saturating_sub(block.visible_range.start);
+        quads.extend(highlight_quads_for_block_range(
+            blocks,
+            block_index,
+            block,
+            local_range,
+            bounds,
+            color,
+            window,
+        ));
+    }
+    quads
 }
 
 fn find_highlight_quads_for_block(
@@ -1211,8 +1395,8 @@ fn find_highlight_quads_for_block(
         if start >= end {
             continue;
         }
-        let local_range =
-            start.saturating_sub(block.visible_range.start)..end.saturating_sub(block.visible_range.start);
+        let local_range = start.saturating_sub(block.visible_range.start)
+            ..end.saturating_sub(block.visible_range.start);
         let color = if *is_active {
             palette.find_active_match_color
         } else {
@@ -1249,7 +1433,10 @@ fn highlight_quads_for_block_range(
             return Vec::new();
         }
         let start_line = range.start.min(line_count.saturating_sub(1));
-        let end_line = range.end.saturating_sub(1).min(line_count.saturating_sub(1));
+        let end_line = range
+            .end
+            .saturating_sub(1)
+            .min(line_count.saturating_sub(1));
         let width = (bounds.size.width - text_x_offset).max(px(1.));
         let mut quads = Vec::new();
         let mut y_offset = px(0.);
@@ -1573,6 +1760,7 @@ fn styled_text_for_block(
     block: &RenderBlock,
     palette: RenderPalette,
     window: &Window,
+    visible_extension_ranges: &[Range<usize>],
 ) -> StyledText {
     let text = rendered_text_for_block(block);
     if text.is_empty() {
@@ -1584,11 +1772,85 @@ fn styled_text_for_block(
 
     for span in rendered_spans(block).filter(|span| !span.visible_text.is_empty()) {
         let mut style = base_style.clone();
-        apply_fragment_style(&mut style, span.kind.clone(), span.style, span.meta.as_ref(), palette);
-        runs.push(style.to_run(span.visible_text.len()));
+        apply_fragment_style(
+            &mut style,
+            span.kind.clone(),
+            span.style,
+            span.meta.as_ref(),
+            palette,
+        );
+        push_fragment_runs_with_extension_decorations(
+            &mut runs,
+            &span.visible_text,
+            span.visible_range.clone(),
+            &style,
+            visible_extension_ranges,
+            palette,
+        );
     }
 
     StyledText::new(text).with_runs(runs)
+}
+
+fn push_fragment_runs_with_extension_decorations(
+    runs: &mut Vec<TextRun>,
+    text: &str,
+    visible_range: Range<usize>,
+    base_style: &TextStyle,
+    decoration_ranges: &[Range<usize>],
+    palette: RenderPalette,
+) {
+    if decoration_ranges.is_empty() {
+        runs.push(base_style.clone().to_run(text.len()));
+        return;
+    }
+
+    let mut cuts = vec![0, text.len()];
+    for range in decoration_ranges {
+        let start = range.start.max(visible_range.start);
+        let end = range.end.min(visible_range.end);
+        if start < end {
+            cuts.push(start.saturating_sub(visible_range.start));
+            cuts.push(end.saturating_sub(visible_range.start));
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    for pair in cuts.windows(2) {
+        let start = pair[0];
+        let end = pair[1];
+        if start >= end {
+            continue;
+        }
+
+        let segment = (visible_range.start + start)..(visible_range.start + end);
+        let mut style = base_style.clone();
+        if decoration_ranges
+            .iter()
+            .any(|range| range.start < segment.end && range.end > segment.start)
+        {
+            style.underline = Some(UnderlineStyle {
+                thickness: px(1.5),
+                color: Some(extension_underline_color(palette)),
+                wavy: true,
+            });
+        }
+        runs.push(style.to_run(end - start));
+    }
+}
+
+fn extension_underline_color(palette: RenderPalette) -> Hsla {
+    Hsla {
+        h: 0.0,
+        s: 0.75,
+        l: if palette.text_color.l > 0.5 {
+            0.45
+        } else {
+            0.62
+        },
+        a: 1.0,
+    }
 }
 
 fn render_image_block(
@@ -1713,7 +1975,7 @@ fn render_table_block(
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
                 .font_family(MONOSPACE_FONT_FAMILY)
-                .child(styled_text_for_block(block, palette, window)),
+                .child(styled_text_for_block(block, palette, window, &[])),
         )
         .into_any_element()
 }
@@ -1811,7 +2073,10 @@ fn base_text_style_for_block(block: &RenderBlock, text_color: Hsla, window: &Win
     } else {
         WhiteSpace::Normal
     };
-    if matches!(block.kind, BlockKind::CodeFence { .. } | BlockKind::Table | BlockKind::SourceCode) {
+    if matches!(
+        block.kind,
+        BlockKind::CodeFence { .. } | BlockKind::Table | BlockKind::SourceCode
+    ) {
         style.font_family = SharedString::from(MONOSPACE_FONT_FAMILY);
     }
     style
@@ -2043,9 +2308,9 @@ fn rendered_lines_for_block(block: &RenderBlock) -> Vec<RenderedLine> {
 fn rendered_lines_for_list_block(block: &RenderBlock) -> Vec<RenderedLine> {
     let mut lines = vec![RenderedLine::default()];
 
-    for span in rendered_spans(block).filter(|span| {
-        !span.visible_text.is_empty() && span.kind != RenderSpanKind::TaskMarker
-    }) {
+    for span in rendered_spans(block)
+        .filter(|span| !span.visible_text.is_empty() && span.kind != RenderSpanKind::TaskMarker)
+    {
         let mut remaining = span.visible_text.as_str();
         while let Some(newline_ix) = remaining.find('\n') {
             let mut piece = &remaining[..newline_ix];
@@ -2288,7 +2553,13 @@ fn styled_text_for_line(
     for fragment in &line.fragments {
         text.push_str(&fragment.text);
         let mut style = base_style.clone();
-        apply_fragment_style(&mut style, fragment.kind.clone(), fragment.style, None, palette);
+        apply_fragment_style(
+            &mut style,
+            fragment.kind.clone(),
+            fragment.style,
+            None,
+            palette,
+        );
         runs.push(style.to_run(fragment.text.len()));
     }
 
@@ -2678,9 +2949,11 @@ fn build_editor_context_menu(
             let _ = open::that(&url_clone);
         }));
         let url_clone = url.clone();
-        menu = menu.item(PopupMenuItem::new("Copy Link Address").on_click(move |_, _, cx| {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url_clone.clone()));
-        }));
+        menu = menu.item(
+            PopupMenuItem::new("Copy Link Address").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url_clone.clone()));
+            }),
+        );
         menu = menu.separator();
     }
 

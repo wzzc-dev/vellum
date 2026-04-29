@@ -1,9 +1,15 @@
 use std::rc::Rc;
 
-use gpui::{AnyElement, ElementId, StatefulInteractiveElement as _, prelude::FluentBuilder as _, uniform_list};
+use gpui::{
+    AnyElement, ElementId, StatefulInteractiveElement as _, prelude::FluentBuilder as _,
+    uniform_list,
+};
 use gpui_component::Disableable;
 use gpui_component::{
-    Selectable, button::ButtonGroup, input::Input, menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    Selectable,
+    button::ButtonGroup,
+    input::Input,
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
 };
 
@@ -18,7 +24,10 @@ struct FileTreeEntry {
     is_expanded: bool,
 }
 
-fn flatten_tree_items(items: &[gpui_component::tree::TreeItem], depth: usize) -> Vec<FileTreeEntry> {
+fn flatten_tree_items(
+    items: &[gpui_component::tree::TreeItem],
+    depth: usize,
+) -> Vec<FileTreeEntry> {
     let mut result = Vec::new();
     for item in items {
         let path = PathBuf::from(item.id.as_ref());
@@ -92,11 +101,7 @@ impl VellumApp {
                                                 }
                                             }
                                         })
-                                        .child(
-                                            Input::new(input)
-                                                .w_full()
-                                                .text_sm()
-                                        )
+                                        .child(Input::new(input).w_full().text_sm())
                                         .into_any_element()
                                 } else {
                                     div()
@@ -135,7 +140,11 @@ impl VellumApp {
                                             if path.is_file() {
                                                 if let Some(entity) = view.upgrade() {
                                                     let _ = entity.update(cx, |this, cx| {
-                                                        this.open_file_in_current_tab(path.clone(), window, cx);
+                                                        this.open_file_in_current_tab(
+                                                            path.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
                                                     });
                                                 }
                                             }
@@ -147,7 +156,12 @@ impl VellumApp {
                                 let view = view.clone();
                                 let path = path.clone();
                                 move |menu, _, _| {
-                                    build_file_tree_context_menu(menu, view.clone(), path.clone(), is_folder)
+                                    build_file_tree_context_menu(
+                                        menu,
+                                        view.clone(),
+                                        path.clone(),
+                                        is_folder,
+                                    )
                                 }
                             });
 
@@ -185,14 +199,15 @@ impl VellumApp {
             .iter()
             .filter(|item| {
                 filter_text.is_empty()
-                    || item.title.to_lowercase().contains(&filter_text.to_lowercase())
+                    || item
+                        .title
+                        .to_lowercase()
+                        .contains(&filter_text.to_lowercase())
             })
             .cloned()
             .collect();
 
-        let filter_bar = div()
-            .w_full()
-            .child(Input::new(&filter_input));
+        let filter_bar = div().w_full().child(Input::new(&filter_input));
 
         if filtered_items.is_empty() {
             return div()
@@ -259,7 +274,13 @@ impl VellumApp {
             .flex_col()
             .gap_2()
             .child(filter_bar)
-            .child(div().flex_1().min_h(px(0.)).overflow_y_scrollbar().child(items))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scrollbar()
+                    .child(items),
+            )
             .into_any_element()
     }
 
@@ -322,8 +343,13 @@ impl VellumApp {
                     .justify_center()
                     .rounded(px(4.))
                     .text_sm()
-                    .when(self.find_case_sensitive, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
-                    .when(!self.find_case_sensitive, |this| this.text_color(cx.theme().muted_foreground))
+                    .when(self.find_case_sensitive, |this| {
+                        this.bg(cx.theme().primary.opacity(0.15))
+                            .text_color(cx.theme().primary)
+                    })
+                    .when(!self.find_case_sensitive, |this| {
+                        this.text_color(cx.theme().muted_foreground)
+                    })
                     .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
                     .on_click({
                         let view = view.clone();
@@ -346,8 +372,13 @@ impl VellumApp {
                     .justify_center()
                     .rounded(px(4.))
                     .text_sm()
-                    .when(self.find_whole_word, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
-                    .when(!self.find_whole_word, |this| this.text_color(cx.theme().muted_foreground))
+                    .when(self.find_whole_word, |this| {
+                        this.bg(cx.theme().primary.opacity(0.15))
+                            .text_color(cx.theme().primary)
+                    })
+                    .when(!self.find_whole_word, |this| {
+                        this.text_color(cx.theme().muted_foreground)
+                    })
                     .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
                     .on_click({
                         let view = view.clone();
@@ -370,8 +401,13 @@ impl VellumApp {
                     .justify_center()
                     .rounded(px(4.))
                     .text_sm()
-                    .when(self.find_regex, |this| this.bg(cx.theme().primary.opacity(0.15)).text_color(cx.theme().primary))
-                    .when(!self.find_regex, |this| this.text_color(cx.theme().muted_foreground))
+                    .when(self.find_regex, |this| {
+                        this.bg(cx.theme().primary.opacity(0.15))
+                            .text_color(cx.theme().primary)
+                    })
+                    .when(!self.find_regex, |this| {
+                        this.text_color(cx.theme().muted_foreground)
+                    })
                     .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
                     .on_click({
                         let view = view.clone();
@@ -525,10 +561,17 @@ impl VellumApp {
             .into_any_element()
     }
 
-    fn render_plugin_panel(&mut self, panel_id: u32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_plugin_panel(
+        &mut self,
+        panel_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.extension_host.open_panel(panel_id);
+        self.drain_extension_outputs(Some(window), cx);
         let ui_node = self.extension_host.panel_ui(panel_id).cloned();
         match ui_node {
-            Some(node) => self.render_ui_node(&node, window, cx),
+            Some(node) => self.render_ui_node(panel_id, &node, window, cx),
             None => div()
                 .size_full()
                 .flex()
@@ -541,18 +584,33 @@ impl VellumApp {
         }
     }
 
-    fn render_ui_node(&mut self, node: &vellum_extension::ui::UiNode, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_ui_node(
+        &mut self,
+        panel_id: &str,
+        node: &vellum_extension::ui::UiNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         match node {
-            vellum_extension::ui::UiNode::Column { children, gap, padding, scrollable } => {
+            vellum_extension::ui::UiNode::Column {
+                children,
+                gap,
+                padding,
+                scrollable,
+            } => {
                 let mut el = div().flex().flex_col().w_full();
                 if let Some(g) = gap {
                     el = el.gap(px(*g));
                 }
                 if let Some(p) = padding {
-                    el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
+                    el = el
+                        .pt(px(p.top))
+                        .pr(px(p.right))
+                        .pb(px(p.bottom))
+                        .pl(px(p.left));
                 }
                 for child in children {
-                    el = el.child(self.render_ui_node(child, window, cx));
+                    el = el.child(self.render_ui_node(panel_id, child, window, cx));
                 }
                 if *scrollable {
                     el.overflow_y_scrollbar().into_any_element()
@@ -560,16 +618,24 @@ impl VellumApp {
                     el.into_any_element()
                 }
             }
-            vellum_extension::ui::UiNode::Row { children, gap, padding } => {
+            vellum_extension::ui::UiNode::Row {
+                children,
+                gap,
+                padding,
+            } => {
                 let mut el = div().flex().flex_row().w_full();
                 if let Some(g) = gap {
                     el = el.gap(px(*g));
                 }
                 if let Some(p) = padding {
-                    el = el.pt(px(p.top)).pr(px(p.right)).pb(px(p.bottom)).pl(px(p.left));
+                    el = el
+                        .pt(px(p.top))
+                        .pr(px(p.right))
+                        .pb(px(p.bottom))
+                        .pl(px(p.left));
                 }
                 for child in children {
-                    el = el.child(self.render_ui_node(child, window, cx));
+                    el = el.child(self.render_ui_node(panel_id, child, window, cx));
                 }
                 el.into_any_element()
             }
@@ -596,7 +662,10 @@ impl VellumApp {
             }
             vellum_extension::ui::UiNode::Heading { content, level } => {
                 let size = match level {
-                    1 => 24.0, 2 => 20.0, 3 => 16.0, _ => 14.0,
+                    1 => 24.0,
+                    2 => 20.0,
+                    3 => 16.0,
+                    _ => 14.0,
                 };
                 div()
                     .text_size(px(size))
@@ -604,7 +673,13 @@ impl VellumApp {
                     .child(content.clone())
                     .into_any_element()
             }
-            vellum_extension::ui::UiNode::Button { id, label, variant, disabled, .. } => {
+            vellum_extension::ui::UiNode::Button {
+                id,
+                label,
+                variant,
+                disabled,
+                ..
+            } => {
                 let btn = Button::new(ElementId::Name(format!("plugin-btn-{}", id).into()))
                     .label(label.clone());
                 let btn = match variant {
@@ -616,18 +691,22 @@ impl VellumApp {
                 let btn = btn.disabled(*disabled);
                 let view = cx.entity().downgrade();
                 let event_id = id.clone();
-                btn.on_click(move |_, _, cx| {
+                let event_panel_id = panel_id.to_string();
+                btn.on_click(move |_, window, cx| {
                     if let Some(entity) = view.upgrade() {
                         let _ = entity.update(cx, |this, cx| {
                             this.extension_host.handle_ui_event(
                                 vellum_extension::ui::UiEvent::ButtonClicked {
+                                    panel_id: event_panel_id.clone(),
                                     element_id: event_id.clone(),
                                 },
                             );
+                            this.drain_extension_outputs(Some(window), cx);
                             cx.notify();
                         });
                     }
-                }).into_any_element()
+                })
+                .into_any_element()
             }
             vellum_extension::ui::UiNode::Badge { label, severity } => {
                 let color = match severity {
@@ -645,15 +724,16 @@ impl VellumApp {
                     .child(label.clone())
                     .into_any_element()
             }
-            vellum_extension::ui::UiNode::Separator => {
-                div().w_full().h(px(1.)).bg(cx.theme().border.opacity(0.18)).into_any_element()
-            }
-            vellum_extension::ui::UiNode::Spacer => {
-                div().flex_1().into_any_element()
-            }
+            vellum_extension::ui::UiNode::Separator => div()
+                .w_full()
+                .h(px(1.))
+                .bg(cx.theme().border.opacity(0.18))
+                .into_any_element(),
+            vellum_extension::ui::UiNode::Spacer => div().flex_1().into_any_element(),
             vellum_extension::ui::UiNode::Link { id, label } => {
                 let view = cx.entity().downgrade();
                 let event_id = id.clone();
+                let event_panel_id = panel_id.to_string();
                 div()
                     .id(ElementId::Name(format!("plugin-link-{}", id).into()))
                     .text_color(cx.theme().primary)
@@ -661,21 +741,27 @@ impl VellumApp {
                     .cursor_pointer()
                     .hover(|s| s.underline())
                     .child(label.clone())
-                    .on_click(move |_, _, cx| {
+                    .on_click(move |_, window, cx| {
                         if let Some(entity) = view.upgrade() {
                             let _ = entity.update(cx, |this, cx| {
                                 this.extension_host.handle_ui_event(
                                     vellum_extension::ui::UiEvent::LinkClicked {
+                                        panel_id: event_panel_id.clone(),
                                         element_id: event_id.clone(),
                                     },
                                 );
+                                this.drain_extension_outputs(Some(window), cx);
                                 cx.notify();
                             });
                         }
                     })
                     .into_any_element()
             }
-            vellum_extension::ui::UiNode::Disclosure { label, open, children } => {
+            vellum_extension::ui::UiNode::Disclosure {
+                label,
+                open,
+                children,
+            } => {
                 let key = format!("disclosure-{}", label);
                 let is_open = self.disclosure_state.get(&key).copied().unwrap_or(*open);
                 let icon = if is_open { "▾" } else { "▸" };
@@ -697,8 +783,13 @@ impl VellumApp {
                         .on_click(move |_, _, cx| {
                             if let Some(entity) = view.upgrade() {
                                 let _ = entity.update(cx, |this, cx| {
-                                    let current = this.disclosure_state.get(&key_for_click).copied().unwrap_or(false);
-                                    this.disclosure_state.insert(key_for_click.clone(), !current);
+                                    let current = this
+                                        .disclosure_state
+                                        .get(&key_for_click)
+                                        .copied()
+                                        .unwrap_or(false);
+                                    this.disclosure_state
+                                        .insert(key_for_click.clone(), !current);
                                     cx.notify();
                                 });
                             }
@@ -706,7 +797,7 @@ impl VellumApp {
                 );
                 if is_open {
                     for child in children {
-                        el = el.child(self.render_ui_node(child, window, cx));
+                        el = el.child(self.render_ui_node(panel_id, child, window, cx));
                     }
                 }
                 el.into_any_element()
@@ -741,11 +832,21 @@ impl VellumApp {
                         ),
                 );
                 if let Some(l) = label {
-                    el = el.child(div().text_xs().text_color(cx.theme().muted_foreground).child(l.clone()));
+                    el = el.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(l.clone()),
+                    );
                 }
                 el.into_any_element()
             }
-            vellum_extension::ui::UiNode::TextInput { id, placeholder, value, .. } => {
+            vellum_extension::ui::UiNode::TextInput {
+                id,
+                placeholder,
+                value,
+                ..
+            } => {
                 let _ = (id, placeholder, value);
                 div()
                     .text_sm()
@@ -753,7 +854,11 @@ impl VellumApp {
                     .child("[text input]")
                     .into_any_element()
             }
-            vellum_extension::ui::UiNode::Select { id, options, selected } => {
+            vellum_extension::ui::UiNode::Select {
+                id,
+                options,
+                selected,
+            } => {
                 let _ = (id, options, selected);
                 div()
                     .text_sm()
@@ -763,10 +868,7 @@ impl VellumApp {
             }
             vellum_extension::ui::UiNode::Toggle { id, label, active } => {
                 let _ = (id, active);
-                div()
-                    .text_sm()
-                    .child(label.clone())
-                    .into_any_element()
+                div().text_sm().child(label.clone()).into_any_element()
             }
             vellum_extension::ui::UiNode::List { items } => {
                 let mut el = div().flex().flex_col().gap_1().w_full();
@@ -782,18 +884,32 @@ impl VellumApp {
                 }
                 el.into_any_element()
             }
-            vellum_extension::ui::UiNode::Conditional { condition, when_true, when_false } => {
+            vellum_extension::ui::UiNode::Conditional {
+                condition,
+                when_true,
+                when_false,
+            } => {
                 if *condition {
-                    self.render_ui_node(when_true, window, cx)
+                    self.render_ui_node(panel_id, when_true, window, cx)
                 } else if let Some(when_false) = when_false {
-                    self.render_ui_node(when_false, window, cx)
+                    self.render_ui_node(panel_id, when_false, window, cx)
                 } else {
                     div().into_any_element()
                 }
             }
-            vellum_extension::ui::UiNode::WebView { id, url, allow_scripts, allow_devtools } => {
+            vellum_extension::ui::UiNode::WebView {
+                id,
+                url,
+                allow_scripts,
+                allow_devtools,
+            } => {
                 if let Some(webview_entity) = self.webview_manager.get_or_create(
-                    id, url, *allow_scripts, *allow_devtools, window, cx,
+                    id,
+                    url,
+                    *allow_scripts,
+                    *allow_devtools,
+                    window,
+                    cx,
                 ) {
                     div()
                         .id(ElementId::Name(format!("webview-{}", id).into()))
@@ -818,7 +934,11 @@ impl VellumApp {
         }
     }
 
-    fn render_extensions_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_extensions_panel(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let manifests = self.loaded_extension_manifests();
         let disabled_ids: Vec<String> = self.extension_host.registry().disabled_ids().to_vec();
 
@@ -844,6 +964,8 @@ impl VellumApp {
             let is_enabled = !disabled_ids.contains(&ext_id);
             let view = cx.entity().downgrade();
             let id_for_toggle = ext_id.clone();
+            let commands = manifest.contributes.commands.clone();
+            let manifest_for_commands = manifest.clone();
 
             let toggle_label = if is_enabled { "Disable" } else { "Enable" };
             let toggle_btn = Button::new(ElementId::Name(format!("ext-toggle-{}", ext_id).into()))
@@ -857,58 +979,88 @@ impl VellumApp {
                     }
                 });
 
-            content = content.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .p_2()
-                    .rounded(px(4.))
-                    .border_1()
-                    .border_color(cx.theme().border.opacity(0.18))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(manifest.name.clone()),
-                            )
-                            .child(toggle_btn),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("v{} by {}", manifest.version, manifest.author)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(manifest.description.clone()),
-                    ),
-            );
+            let mut card = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(cx.theme().border.opacity(0.18))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(manifest.name.clone()),
+                        )
+                        .child(toggle_btn),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "v{} by {}",
+                            manifest.version,
+                            manifest.author_line()
+                        )),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(manifest.description.clone()),
+                );
+
+            if !commands.is_empty() {
+                let mut command_row = div().flex().flex_row().gap_1().pt_1();
+                for command in commands {
+                    let qualified_id = manifest_for_commands.qualified_command_id(&command.id);
+                    let view = cx.entity().downgrade();
+                    command_row = command_row.child(
+                        Button::new(ElementId::Name(
+                            format!("ext-command-{}", qualified_id).into(),
+                        ))
+                        .label(command.title)
+                        .ghost()
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            if let Some(entity) = view.upgrade() {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.extension_host.execute_command(&qualified_id);
+                                    this.drain_extension_outputs(Some(window), cx);
+                                });
+                            }
+                        }),
+                    );
+                }
+                card = card.child(command_row);
+            }
+
+            content = content.child(card);
         }
 
         for ext_id in &disabled_ids {
             if !manifests.iter().any(|m| &m.id == ext_id) {
                 let view = cx.entity().downgrade();
                 let id_for_toggle = ext_id.clone();
-                let toggle_btn = Button::new(ElementId::Name(format!("ext-toggle-{}", ext_id).into()))
-                    .label("Enable")
-                    .ghost()
-                    .on_click(move |_, _, cx| {
-                        if let Some(entity) = view.upgrade() {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.toggle_extension(id_for_toggle.clone(), cx);
-                            });
-                        }
-                    });
+                let toggle_btn =
+                    Button::new(ElementId::Name(format!("ext-toggle-{}", ext_id).into()))
+                        .label("Enable")
+                        .ghost()
+                        .on_click(move |_, _, cx| {
+                            if let Some(entity) = view.upgrade() {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.toggle_extension(id_for_toggle.clone(), cx);
+                                });
+                            }
+                        });
 
                 content = content.child(
                     div()
@@ -921,11 +1073,7 @@ impl VellumApp {
                         .border_1()
                         .border_color(cx.theme().border.opacity(0.18))
                         .opacity(0.5)
-                        .child(
-                            div()
-                                .text_sm()
-                                .child(format!("{} (disabled)", ext_id)),
-                        )
+                        .child(div().text_sm().child(format!("{} (disabled)", ext_id)))
                         .child(toggle_btn),
                 );
             }
@@ -981,10 +1129,15 @@ impl VellumApp {
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
 
-    fn render_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_right_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let view = cx.entity();
-        let body = match self.right_panel_view {
-            RightPanelView::Plugins => self.render_extensions_panel(cx),
+        let current_right_panel_view = self.right_panel_view.clone();
+        let body = match &current_right_panel_view {
+            RightPanelView::Plugins => self.render_extensions_panel(window, cx),
             RightPanelView::Plugin(panel_id) => self.render_plugin_panel(panel_id, window, cx),
         };
 
@@ -998,11 +1151,11 @@ impl VellumApp {
             );
 
         for panel in self.extension_host.sidebar_panels() {
-            let panel_id = panel.id;
+            let panel_id = panel.qualified_id.clone();
             tabs = tabs.child(
                 Button::new(ElementId::Name(format!("right-plugin-{}", panel_id).into()))
                     .label(panel.label.clone())
-                    .selected(self.right_panel_view == RightPanelView::Plugin(panel_id)),
+                    .selected(self.right_panel_view == RightPanelView::Plugin(panel_id.clone())),
             );
         }
 
@@ -1013,7 +1166,7 @@ impl VellumApp {
                 let plugin_index = selected.iter().find(|&&i| i >= 1).copied().unwrap_or(1) - 1;
                 let view_ref = view.read(cx);
                 if let Some(panel) = view_ref.extension_host.sidebar_panels().get(plugin_index) {
-                    RightPanelView::Plugin(panel.id)
+                    RightPanelView::Plugin(panel.qualified_id.clone())
                 } else {
                     RightPanelView::Plugins
                 }
@@ -1063,7 +1216,12 @@ impl Render for VellumApp {
             .when(self.find_panel_visible, |this| {
                 this.child(self.render_find_bar(cx))
             })
-            .child(div().flex_1().min_h(px(0.)).child(self.active_editor_entity().clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(self.active_editor_entity().clone()),
+            )
             .into_any_element();
 
         let mut layout = h_resizable("vellum-layout");
@@ -1129,6 +1287,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_previous_tab))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_manage_plugins))
+            .on_action(cx.listener(Self::on_install_dev_extension))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)
@@ -1236,134 +1395,132 @@ fn build_file_tree_context_menu(
     is_folder: bool,
 ) -> PopupMenu {
     if is_folder {
-        menu
-            .item(PopupMenuItem::new("New File").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.create_new_file_in_folder(path.clone(), window, cx);
-                        });
-                    }
+        menu.item(PopupMenuItem::new("New File").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.create_new_file_in_folder(path.clone(), window, cx);
+                    });
                 }
-            }))
-            .item(PopupMenuItem::new("New Folder").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.create_new_folder(path.clone(), window, cx);
-                        });
-                    }
+            }
+        }))
+        .item(PopupMenuItem::new("New Folder").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.create_new_folder(path.clone(), window, cx);
+                    });
                 }
-            }))
-            .separator()
-            .item(PopupMenuItem::new("Copy Path").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.copy_path_to_clipboard(&path, window, cx);
-                        });
-                    }
+            }
+        }))
+        .separator()
+        .item(PopupMenuItem::new("Copy Path").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.copy_path_to_clipboard(&path, window, cx);
+                    });
                 }
-            }))
-            .item(PopupMenuItem::new("Reveal in Finder").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, _, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, _cx| {
-                            this.reveal_in_finder(&path);
-                        });
-                    }
+            }
+        }))
+        .item(PopupMenuItem::new("Reveal in Finder").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, _, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, _cx| {
+                        this.reveal_in_finder(&path);
+                    });
                 }
-            }))
-            .separator()
-            .item(PopupMenuItem::new("Rename").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.start_rename(path.clone(), window, cx);
-                        });
-                    }
+            }
+        }))
+        .separator()
+        .item(PopupMenuItem::new("Rename").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.start_rename(path.clone(), window, cx);
+                    });
                 }
-            }))
-            .item(PopupMenuItem::new("Delete").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.delete_file(path.clone(), window, cx);
-                        });
-                    }
+            }
+        }))
+        .item(PopupMenuItem::new("Delete").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.delete_file(path.clone(), window, cx);
+                    });
                 }
-            }))
+            }
+        }))
     } else {
-        menu
-            .item(PopupMenuItem::new("Open in New Tab").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.open_file(path.clone(), window, cx);
-                        });
-                    }
+        menu.item(PopupMenuItem::new("Open in New Tab").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.open_file(path.clone(), window, cx);
+                    });
                 }
-            }))
-            .separator()
-            .item(PopupMenuItem::new("Copy Path").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.copy_path_to_clipboard(&path, window, cx);
-                        });
-                    }
+            }
+        }))
+        .separator()
+        .item(PopupMenuItem::new("Copy Path").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.copy_path_to_clipboard(&path, window, cx);
+                    });
                 }
-            }))
-            .item(PopupMenuItem::new("Reveal in Finder").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, _, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, _cx| {
-                            this.reveal_in_finder(&path);
-                        });
-                    }
+            }
+        }))
+        .item(PopupMenuItem::new("Reveal in Finder").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, _, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, _cx| {
+                        this.reveal_in_finder(&path);
+                    });
                 }
-            }))
-            .separator()
-            .item(PopupMenuItem::new("Rename").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.start_rename(path.clone(), window, cx);
-                        });
-                    }
+            }
+        }))
+        .separator()
+        .item(PopupMenuItem::new("Rename").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.start_rename(path.clone(), window, cx);
+                    });
                 }
-            }))
-            .item(PopupMenuItem::new("Delete").on_click({
-                let view = view.clone();
-                let path = path.clone();
-                move |_, window, cx| {
-                    if let Some(entity) = view.upgrade() {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.delete_file(path.clone(), window, cx);
-                        });
-                    }
+            }
+        }))
+        .item(PopupMenuItem::new("Delete").on_click({
+            let view = view.clone();
+            let path = path.clone();
+            move |_, window, cx| {
+                if let Some(entity) = view.upgrade() {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.delete_file(path.clone(), window, cx);
+                    });
                 }
-            }))
+            }
+        }))
     }
 }
 
@@ -1373,17 +1530,16 @@ pub(super) fn build_tab_context_menu(
     tab_index: usize,
     tab_count: usize,
 ) -> PopupMenu {
-    let mut menu = menu
-        .item(PopupMenuItem::new("Close").on_click({
-            let view = view.clone();
-            move |_, window, cx| {
-                if let Some(entity) = view.upgrade() {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.close_tab(tab_index, window, cx);
-                    });
-                }
+    let mut menu = menu.item(PopupMenuItem::new("Close").on_click({
+        let view = view.clone();
+        move |_, window, cx| {
+            if let Some(entity) = view.upgrade() {
+                let _ = entity.update(cx, |this, cx| {
+                    this.close_tab(tab_index, window, cx);
+                });
             }
-        }));
+        }
+    }));
 
     if tab_count > 1 {
         menu = menu.item(PopupMenuItem::new("Close Others").on_click({

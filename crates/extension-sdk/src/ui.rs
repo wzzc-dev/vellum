@@ -169,15 +169,44 @@ pub struct ListItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UiEvent {
-    ButtonClicked { element_id: String },
-    InputChanged { element_id: String, value: String },
-    CheckboxToggled { element_id: String, checked: bool },
-    SelectChanged { element_id: String, index: usize },
-    ToggleChanged { element_id: String, active: bool },
-    LinkClicked { element_id: String },
-    ListItemClicked { element_id: String, item_id: String },
-    DisclosureToggled { element_id: String, open: bool },
-    WebViewMessage { element_id: String, message: String },
+    ButtonClicked {
+        panel_id: String,
+        element_id: String,
+    },
+    InputChanged {
+        panel_id: String,
+        element_id: String,
+        value: String,
+    },
+    CheckboxToggled {
+        panel_id: String,
+        element_id: String,
+        checked: bool,
+    },
+    SelectChanged {
+        panel_id: String,
+        element_id: String,
+        index: usize,
+    },
+    ToggleChanged {
+        panel_id: String,
+        element_id: String,
+        active: bool,
+    },
+    LinkClicked {
+        panel_id: String,
+        element_id: String,
+    },
+    ListItemClicked {
+        panel_id: String,
+        element_id: String,
+        item_id: String,
+    },
+    DisclosureToggled {
+        panel_id: String,
+        element_id: String,
+        open: bool,
+    },
 }
 
 impl UiNode {
@@ -583,15 +612,5 @@ impl WebViewBuilder {
             allow_scripts: self.allow_scripts,
             allow_devtools: self.allow_devtools,
         }
-    }
-}
-
-pub fn decode_ui_event(data_ptr: u32, data_len: u32) -> UiEvent {
-    let bytes = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize) };
-    match postcard::from_bytes(bytes) {
-        Ok(event) => event,
-        Err(_) => UiEvent::ButtonClicked {
-            element_id: String::new(),
-        },
     }
 }

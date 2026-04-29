@@ -2,12 +2,17 @@ id = "vellum.markdown-lint"
 name = "Markdown Lint"
 version = "0.1.0"
 schema_version = 1
+authors = ["Vellum"]
 description = "Checks Markdown documents for common issues"
-author = "Vellum"
-entry = "markdown_lint.wasm"
+repository = ""
+
+[wasm]
+# This example is a workspace member, so `cargo build -p vellum-markdown-lint`
+# writes the component under the workspace root target directory.
+component = "../../target/wasm32-wasip2/release/vellum_markdown_lint.wasm"
 
 [activation]
-events = ["onDocumentOpened:markdown", "onDocumentChanged:markdown"]
+events = ["document.opened", "document.changed"]
 
 [capabilities]
 document_read = true
@@ -21,8 +26,12 @@ id = "markdown-lint.run"
 title = "Run Markdown Lint"
 key = "cmd-shift-l"
 
+[[contributes.commands]]
+id = "markdown-lint.clear"
+title = "Clear Lint Results"
+
 [[contributes.panels]]
-id = "markdown-lint.panel"
+id = "markdown-lint"
 title = "Lint"
 icon = "triangle-alert"
 location = "right"

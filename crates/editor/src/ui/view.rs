@@ -23,7 +23,8 @@ use crate::{
 
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
-    input_bridge::build_document_input, slash_command::{SlashCommandAction, SlashCommandPanel},
+    input_bridge::build_document_input,
+    slash_command::{SlashCommandAction, SlashCommandPanel},
     surface::{render_document_surface, rendered_visible_end},
 };
 
@@ -31,6 +32,13 @@ use super::{
 pub enum EditorEvent {
     Changed(EditorSnapshot),
     OpenFile(std::path::PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorDecoration {
+    pub start: usize,
+    pub end: usize,
+    pub tooltip: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +67,7 @@ pub struct MarkdownEditor {
     pub(super) slash_command_panel: SlashCommandPanel,
     scroll_target: Option<gpui::Point<gpui::Pixels>>,
     scroll_animation_generation: u64,
+    pub(super) extension_decorations: Vec<EditorDecoration>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -111,6 +120,7 @@ impl MarkdownEditor {
             slash_command_panel: SlashCommandPanel::new(),
             scroll_target: None,
             scroll_animation_generation: 0,
+            extension_decorations: Vec::new(),
         }
     }
 
@@ -131,12 +141,64 @@ impl MarkdownEditor {
         cx.notify();
     }
 
-    pub fn set_typewriter_mode(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_typewriter_mode(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.typewriter_mode = enabled;
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
         cx.notify();
+    }
+
+    pub fn set_extension_decorations(
+        &mut self,
+        decorations: Vec<EditorDecoration>,
+        cx: &mut Context<Self>,
+    ) {
+        self.extension_decorations = decorations;
+        cx.notify();
+    }
+
+    pub fn replace_byte_range(
+        &mut self,
+        start: usize,
+        end: usize,
+        replacement: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let text = &self.snapshot.document_text;
+        if start > end || end > text.len() {
+            return Err(format!("edit range {start}..{end} is outside document"));
+        }
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            return Err(format!(
+                "edit range {start}..{end} is not on UTF-8 boundaries"
+            ));
+        }
+
+        let effects = self.controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Upstream,
+            },
+        });
+        self.apply_effects(window, cx, effects);
+
+        let effects = self
+            .controller
+            .dispatch(EditCommand::ReplaceSelection { text: replacement });
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        Ok(())
     }
 
     pub(super) fn emit_changed(&mut self, cx: &mut Context<Self>) {
@@ -199,7 +261,8 @@ impl MarkdownEditor {
             .visible_to_source(slash_visible_offset)
             .source_offset;
 
-        self.slash_command_panel.show(slash_visible_offset, slash_source_offset);
+        self.slash_command_panel
+            .show(slash_visible_offset, slash_source_offset);
     }
 
     fn execute_slash_command(
@@ -676,15 +739,23 @@ impl MarkdownEditor {
             .display_map
             .blocks
             .iter()
-            .find(|block| cursor >= block.visible_range.start && cursor <= rendered_visible_end(block))
+            .find(|block| {
+                cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+            })
             .map(|block| block.id)
     }
 
     pub(crate) fn scroll_cursor_into_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cursor_block_id = self.snapshot.display_map.blocks.iter().find(|block| {
-            let cursor = self.snapshot.visible_selection.cursor();
-            cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
-        }).map(|block| block.id);
+        let cursor_block_id = self
+            .snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| {
+                let cursor = self.snapshot.visible_selection.cursor();
+                cursor >= block.visible_range.start && cursor <= rendered_visible_end(block)
+            })
+            .map(|block| block.id);
 
         let Some(block_id) = cursor_block_id else {
             return;
@@ -740,33 +811,34 @@ impl MarkdownEditor {
             .spawn(cx, async move |cx| {
                 loop {
                     gpui::Timer::after(Duration::from_millis(16)).await;
-                    let done = cx.update_window_entity(&view, |this, _window, cx| {
-                        if this.scroll_animation_generation != generation {
-                            return true;
-                        }
-                        let Some(target) = this.scroll_target else {
-                            return true;
-                        };
-                        let current = this.scroll_handle.offset();
-                        let factor: f32 = 0.18;
-                        let dx = (target.x - current.x) * factor;
-                        let dy = (target.y - current.y) * factor;
-                        let new_x = current.x + dx;
-                        let new_y = current.y + dy;
-                        let distance_x = (target.x - new_x).abs();
-                        let distance_y = (target.y - new_y).abs();
-                        let threshold = px(0.5);
-                        let reached = distance_x < threshold && distance_y < threshold;
-                        if reached {
-                            this.scroll_handle.set_offset(target);
-                            this.scroll_target = None;
-                        } else {
-                            this.scroll_handle.set_offset(gpui::point(new_x, new_y));
-                        }
-                        cx.notify();
-                        reached
-                    })
-                    .unwrap_or(true);
+                    let done = cx
+                        .update_window_entity(&view, |this, _window, cx| {
+                            if this.scroll_animation_generation != generation {
+                                return true;
+                            }
+                            let Some(target) = this.scroll_target else {
+                                return true;
+                            };
+                            let current = this.scroll_handle.offset();
+                            let factor: f32 = 0.18;
+                            let dx = (target.x - current.x) * factor;
+                            let dy = (target.y - current.y) * factor;
+                            let new_x = current.x + dx;
+                            let new_y = current.y + dy;
+                            let distance_x = (target.x - new_x).abs();
+                            let distance_y = (target.y - new_y).abs();
+                            let threshold = px(0.5);
+                            let reached = distance_x < threshold && distance_y < threshold;
+                            if reached {
+                                this.scroll_handle.set_offset(target);
+                                this.scroll_target = None;
+                            } else {
+                                this.scroll_handle.set_offset(gpui::point(new_x, new_y));
+                            }
+                            cx.notify();
+                            reached
+                        })
+                        .unwrap_or(true);
                     if done {
                         break;
                     }
@@ -930,59 +1002,60 @@ impl Render for MarkdownEditor {
                         .track_scroll(&self.scroll_handle)
                         .vertical_scrollbar(&self.scroll_handle)
                         .child(
-                        div().w_full().px_8().pt(px(28.)).pb(px(44.)).child(
-                            div()
-                                .mx_auto()
-                                .max_w(px(MAX_EDITOR_WIDTH))
-                                .w_full()
-                                .when_some(conflict_banner, |this, banner| this.child(banner))
-                                .child(
-                                    div()
-                                        .relative()
-                                        .w_full()
-                                        .child(
-                                            Input::new(&self.document_input)
-                                                .appearance(false)
-                                                .bordered(false)
-                                                .focus_bordered(false)
-                                                .absolute()
-                                                .top(px(0.))
-                                                .left(px(0.))
-                                                .right(px(0.))
-                                                .bottom(px(0.))
-                                                .w_full()
-                                                .h_full()
-                                                .px(px(0.))
-                                                .py(px(0.))
-                                                .text_size(px(BODY_FONT_SIZE))
-                                                .line_height(px(BODY_LINE_HEIGHT))
-                                                .opacity(0.),
-                                        )
-                                        .child(render_document_surface(
-                                           &view,
-                                           &self.snapshot,
-                                           self.input_focused,
-                                           self.cursor_blink_visible,
-                                           self.focus_highlight_mode,
-                                           self.block_bounds.clone(),
-                                           self.block_heights.clone(),
-                                           self.scroll_handle.clone(),
-                                           if self.slash_command_panel.is_visible() {
-                                               self.cursor_block_id()
-                                           } else {
-                                               None
-                                           },
-                                           self.slash_command_panel.render_panel(
-                                               window,
-                                               cx,
-                                               self.cursor_panel_y_in_block(),
-                                           ),
-                                           window,
-                                           cx,
-                                       )),
-                                ),
+                            div().w_full().px_8().pt(px(28.)).pb(px(44.)).child(
+                                div()
+                                    .mx_auto()
+                                    .max_w(px(MAX_EDITOR_WIDTH))
+                                    .w_full()
+                                    .when_some(conflict_banner, |this, banner| this.child(banner))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .w_full()
+                                            .child(
+                                                Input::new(&self.document_input)
+                                                    .appearance(false)
+                                                    .bordered(false)
+                                                    .focus_bordered(false)
+                                                    .absolute()
+                                                    .top(px(0.))
+                                                    .left(px(0.))
+                                                    .right(px(0.))
+                                                    .bottom(px(0.))
+                                                    .w_full()
+                                                    .h_full()
+                                                    .px(px(0.))
+                                                    .py(px(0.))
+                                                    .text_size(px(BODY_FONT_SIZE))
+                                                    .line_height(px(BODY_LINE_HEIGHT))
+                                                    .opacity(0.),
+                                            )
+                                            .child(render_document_surface(
+                                                &view,
+                                                &self.snapshot,
+                                                self.input_focused,
+                                                self.cursor_blink_visible,
+                                                self.focus_highlight_mode,
+                                                self.block_bounds.clone(),
+                                                self.block_heights.clone(),
+                                                self.scroll_handle.clone(),
+                                                if self.slash_command_panel.is_visible() {
+                                                    self.cursor_block_id()
+                                                } else {
+                                                    None
+                                                },
+                                                self.slash_command_panel.render_panel(
+                                                    window,
+                                                    cx,
+                                                    self.cursor_panel_y_in_block(),
+                                                ),
+                                                self.extension_decorations.clone(),
+                                                window,
+                                                cx,
+                                            )),
+                                    ),
+                            ),
                         ),
-                    ),
                 ),
             )
     }
@@ -1001,8 +1074,9 @@ mod tests {
     use super::*;
     use crate::ui::surface::{
         caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
-        rendered_visible_end, rendered_visible_len, shape_block_lines_uncached as shape_block_lines,
-        surface_empty_block_line_count, text_content_x_offset,
+        rendered_visible_end, rendered_visible_len,
+        shape_block_lines_uncached as shape_block_lines, surface_empty_block_line_count,
+        text_content_x_offset,
     };
     use crate::{BlockKind, RenderSpanKind, SelectionAffinity};
 
@@ -2949,7 +3023,10 @@ mod tests {
 
         let snapshot = snapshot(&view, cx);
         assert!(!snapshot.selection.is_collapsed());
-        assert_eq!(snapshot.selection.anchor_byte, first_snapshot.selection.anchor_byte);
+        assert_eq!(
+            snapshot.selection.anchor_byte,
+            first_snapshot.selection.anchor_byte
+        );
         assert!(snapshot.selection.head_byte > first_snapshot.selection.head_byte);
     }
 

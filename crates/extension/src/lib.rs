@@ -9,11 +9,10 @@ pub mod ui;
 // Re-export for backward compatibility
 pub use host::ExtensionHost;
 
-/// Backward-compatible alias for ExtensionHost.
-pub type PluginManager = ExtensionHost;
-
-/// Backward-compatible alias for ExtensionManifest.
-pub type PluginManifest = manifest::ExtensionManifest;
+pub use contributions::{
+    Decoration, DecorationKind, PendingEdit, RegisteredCommand, RegisteredPanel, UnderlineStyle,
+};
+pub use host::ExtensionOutputs;
 
 #[cfg(test)]
 mod tests;

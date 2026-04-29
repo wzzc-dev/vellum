@@ -1,6 +1,8 @@
 use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
 use gpui_component::{
-    Selectable, Sizable as _, button::ButtonGroup, menu::{ContextMenuExt, DropdownMenu as _, PopupMenuItem},
+    Selectable, Sizable as _,
+    button::ButtonGroup,
+    menu::{ContextMenuExt, DropdownMenu as _, PopupMenuItem},
 };
 
 use super::render::build_tab_context_menu;
@@ -192,7 +194,8 @@ impl VellumApp {
     }
 
     fn reveal_right_panel_toggle(&mut self, cx: &mut Context<Self>) {
-        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        self.right_panel_toggle_hide_generation =
+            self.right_panel_toggle_hide_generation.wrapping_add(1);
         if !self.right_panel_toggle_visible {
             self.right_panel_toggle_visible = true;
             cx.notify();
@@ -200,7 +203,8 @@ impl VellumApp {
     }
 
     fn hide_right_panel_toggle(&mut self, cx: &mut Context<Self>) {
-        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        self.right_panel_toggle_hide_generation =
+            self.right_panel_toggle_hide_generation.wrapping_add(1);
         if self.right_panel_toggle_visible && !self.right_panel_visible {
             self.right_panel_toggle_visible = false;
             cx.notify();
@@ -212,24 +216,32 @@ impl VellumApp {
             return;
         }
 
-        self.right_panel_toggle_hide_generation = self.right_panel_toggle_hide_generation.wrapping_add(1);
+        self.right_panel_toggle_hide_generation =
+            self.right_panel_toggle_hide_generation.wrapping_add(1);
         let generation = self.right_panel_toggle_hide_generation;
         let view = cx.entity();
-        window.spawn(cx, async move |cx| {
-            Timer::after(Duration::from_secs(3)).await;
-            let _ = view.update(cx, |this, cx| {
-                if this.right_panel_toggle_hide_generation == generation
-                    && !this.right_panel_visible
-                    && !this.right_panel_toggle_hovered
-                {
-                    this.right_panel_toggle_visible = false;
-                    cx.notify();
-                }
-            });
-        }).detach();
+        window
+            .spawn(cx, async move |cx| {
+                Timer::after(Duration::from_secs(3)).await;
+                let _ = view.update(cx, |this, cx| {
+                    if this.right_panel_toggle_hide_generation == generation
+                        && !this.right_panel_visible
+                        && !this.right_panel_toggle_hovered
+                    {
+                        this.right_panel_toggle_visible = false;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
     }
 
-    pub(super) fn on_right_panel_toggle_hover(&mut self, hovered: &bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_right_panel_toggle_hover(
+        &mut self,
+        hovered: &bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.right_panel_toggle_hovered = *hovered;
         if *hovered {
             self.reveal_right_panel_toggle(cx);
@@ -238,7 +250,12 @@ impl VellumApp {
         }
     }
 
-    pub(super) fn on_right_panel_hit_area_hover(&mut self, hovered: &bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_right_panel_hit_area_hover(
+        &mut self,
+        hovered: &bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if *hovered {
             self.reveal_right_panel_toggle(cx);
         } else if !self.right_panel_toggle_hovered {
@@ -248,13 +265,10 @@ impl VellumApp {
 
     pub(super) fn toggle_extension(&mut self, extension_id: String, cx: &mut Context<Self>) {
         if self.extension_host.registry().is_disabled(&extension_id) {
-            self.extension_host.registry_mut().enable(&extension_id);
-            // Re-activate the extension
-            if let Err(e) = self.extension_host.activate_discovered() {
-                eprintln!("failed to re-activate extension {}: {}", extension_id, e);
+            if let Err(e) = self.extension_host.enable_extension(&extension_id) {
+                eprintln!("failed to enable extension {}: {}", extension_id, e);
             }
         } else {
-            self.extension_host.registry_mut().disable(&extension_id);
             self.webview_manager.remove_all();
             if let Err(e) = self.extension_host.unload_extension(&extension_id) {
                 eprintln!("failed to unload extension {}: {}", extension_id, e);
@@ -263,7 +277,60 @@ impl VellumApp {
         cx.notify();
     }
 
-    pub(super) fn loaded_extension_manifests(&self) -> Vec<vellum_extension::manifest::ExtensionManifest> {
+    pub(super) fn drain_extension_outputs(
+        &mut self,
+        mut window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let outputs = self.extension_host.take_outputs();
+        if let Some(status) = outputs.status_message {
+            self.set_status(status);
+        }
+
+        if let Some(decorations) = outputs.decorations {
+            let editor_decorations = decorations
+                .into_iter()
+                .map(|decoration| EditorDecoration {
+                    start: decoration.start,
+                    end: decoration.end,
+                    tooltip: decoration.tooltip,
+                })
+                .collect::<Vec<_>>();
+            let editor = self.active_editor_entity();
+            editor.update(cx, |editor, cx| {
+                editor.set_extension_decorations(editor_decorations, cx);
+            });
+        }
+
+        if let Some(window) = window.as_deref_mut() {
+            for edit in outputs.pending_edits {
+                let result = match edit {
+                    vellum_extension::PendingEdit::Insert { position, text } => {
+                        self.active_editor_entity().update(cx, |editor, cx| {
+                            editor.replace_byte_range(position, position, text, window, cx)
+                        })
+                    }
+                    vellum_extension::PendingEdit::ReplaceRange { start, end, text } => {
+                        self.active_editor_entity().update(cx, |editor, cx| {
+                            editor.replace_byte_range(start, end, text, window, cx)
+                        })
+                    }
+                };
+                if let Err(err) = result {
+                    self.set_status(format!("Extension edit rejected: {err}"));
+                }
+            }
+        } else if !outputs.pending_edits.is_empty() {
+            self.set_status("Extension edit skipped because no window was available");
+        }
+
+        self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+        cx.notify();
+    }
+
+    pub(super) fn loaded_extension_manifests(
+        &self,
+    ) -> Vec<vellum_extension::manifest::ExtensionManifest> {
         self.extension_host.loaded_manifests()
     }
 
@@ -346,14 +413,14 @@ impl VellumApp {
                             };
                             let path = path.clone();
                             let view = view.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                move |_, window, cx| {
                                     let path = path.clone();
                                     let _ = view.update(cx, |this, cx| {
                                         this.open_file(path, window, cx);
                                     });
-                                })
-                            );
+                                },
+                            ));
                         }
                         menu.separator()
                     })
@@ -404,14 +471,18 @@ impl VellumApp {
                         }
                     }))
                     .separator()
-                    .item(PopupMenuItem::new("Plugins").icon(IconName::Settings).on_click({
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |this, cx| {
-                                this.open_right_panel(RightPanelView::Plugins, cx);
-                            });
-                        }
-                    }))
+                    .item(
+                        PopupMenuItem::new("Plugins")
+                            .icon(IconName::Settings)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.open_right_panel(RightPanelView::Plugins, cx);
+                                    });
+                                }
+                            }),
+                    )
             })
     }
 
@@ -445,9 +516,7 @@ impl VellumApp {
                 menu = menu.separator();
 
                 if manifests.is_empty() && disabled_ids.is_empty() {
-                    menu = menu.item(
-                        PopupMenuItem::new("No extensions loaded").disabled(true),
-                    );
+                    menu = menu.item(PopupMenuItem::new("No extensions loaded").disabled(true));
                 } else {
                     for manifest in &manifests {
                         let is_enabled = !disabled_ids.contains(&manifest.id);
@@ -622,10 +691,14 @@ impl VellumApp {
                         ButtonGroup::new("editor-view-mode-status")
                             .compact()
                             .ghost()
-                            .child(Button::new("view-mode-live-preview").label("LivePreview").selected(
-                                self.editor_snapshot.view_mode
-                                    == editor::EditorViewMode::LivePreview,
-                            ))
+                            .child(
+                                Button::new("view-mode-live-preview")
+                                    .label("LivePreview")
+                                    .selected(
+                                        self.editor_snapshot.view_mode
+                                            == editor::EditorViewMode::LivePreview,
+                                    ),
+                            )
                             .child(Button::new("view-mode-source").label("Source").selected(
                                 self.editor_snapshot.view_mode == editor::EditorViewMode::Source,
                             ))
@@ -681,7 +754,11 @@ impl VellumApp {
             .children(self.tabs.iter().enumerate().map(|(i, tab)| {
                 let path = tab.editor.read(cx).document_path();
                 let title = match path {
-                    Some(p) => p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                    Some(p) => p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
                     None => "Untitled".to_string(),
                 };
                 let is_dirty = tab.editor.read(cx).snapshot().dirty;
@@ -709,14 +786,16 @@ impl VellumApp {
                         gpui::Hsla::transparent_black()
                     })
                     .bg(if is_active { active_bg } else { background })
-                    .hover(move |style| {
-                        if is_active {
-                            style
-                        } else {
-                            style.bg(hover_bg)
-                        }
+                    .hover(
+                        move |style| {
+                            if is_active { style } else { style.bg(hover_bg) }
+                        },
+                    )
+                    .text_color(if is_active {
+                        foreground
+                    } else {
+                        muted_foreground
                     })
-                    .text_color(if is_active { foreground } else { muted_foreground })
                     .child(
                         div()
                             .max_w(px(160.))

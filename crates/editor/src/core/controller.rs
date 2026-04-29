@@ -12,8 +12,8 @@ use super::{
     document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
     table::{TableCellRef, TableModel, TableNavDirection},
     text_ops::{
-        adjust_block_markup, detect_auto_format, AutoFormatAction, byte_offset_for_line_column,
-        clamp_to_char_boundary, compute_document_diff, count_document_words,
+        AutoFormatAction, adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
+        compute_document_diff, count_document_words, detect_auto_format,
         line_column_for_byte_offset, pipe_table_enter_transform, semantic_enter_transform,
         set_blockquote_markup, set_heading_markup, set_list_markup,
     },
@@ -933,9 +933,10 @@ impl EditorController {
             } => self.move_caret_to_adjacent_block(direction, preferred_column),
             EditCommand::DeleteBackward => self.delete_backward(),
             EditCommand::DeleteForward => self.delete_forward(),
-            EditCommand::DeleteSurroundingPair { before_len, after_len } => {
-                self.delete_surrounding_pair(before_len, after_len)
-            }
+            EditCommand::DeleteSurroundingPair {
+                before_len,
+                after_len,
+            } => self.delete_surrounding_pair(before_len, after_len),
             EditCommand::ToggleHeading { depth } => self.toggle_heading(depth),
             EditCommand::Undo => self.undo(),
             EditCommand::Redo => self.redo(),
@@ -1304,7 +1305,9 @@ impl EditorController {
         };
         let current = self.document.block_text(&block);
         let target_depth = match block.kind {
-            BlockKind::Heading { depth: current_depth } if current_depth == depth && depth > 0 => 0,
+            BlockKind::Heading {
+                depth: current_depth,
+            } if current_depth == depth && depth > 0 => 0,
             _ => depth.min(6),
         };
         let updated = set_heading_markup(&current, target_depth);
@@ -1447,10 +1450,18 @@ impl EditorController {
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
         let (edit_range, insertion, base_offset) = if is_empty {
-            (block.content_range.clone(), table_template.to_string(), block.content_range.start)
+            (
+                block.content_range.clone(),
+                table_template.to_string(),
+                block.content_range.start,
+            )
         } else {
             let insert_pos = block.byte_range.end;
-            (insert_pos..insert_pos, format!("\n\n{table_template}"), insert_pos + 2)
+            (
+                insert_pos..insert_pos,
+                format!("\n\n{table_template}"),
+                insert_pos + 2,
+            )
         };
         // Cursor should land in the first body cell of the table.
         // "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |"
@@ -2718,7 +2729,10 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "> Hello");
-        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Blockquote));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Blockquote
+        ));
     }
 
     #[test]
@@ -2740,7 +2754,10 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello");
-        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Paragraph));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Paragraph
+        ));
     }
 
     #[test]
@@ -2784,7 +2801,10 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello");
-        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::Paragraph));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::Paragraph
+        ));
     }
 
     #[test]
@@ -3313,7 +3333,10 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello\n\n---\n\n");
-        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::ThematicBreak));
+        assert!(matches!(
+            snapshot.blocks[1].kind,
+            crate::BlockKind::ThematicBreak
+        ));
     }
 
     #[test]
@@ -3336,7 +3359,10 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello\n\n```\n\n```");
         assert_eq!(snapshot.selection, SelectionState::collapsed(11));
-        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::CodeFence { .. }));
+        assert!(matches!(
+            snapshot.blocks[1].kind,
+            crate::BlockKind::CodeFence { .. }
+        ));
     }
 
     #[test]

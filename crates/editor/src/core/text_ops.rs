@@ -327,9 +327,7 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
 
     if trimmed.len() >= 3 {
         let first = trimmed.chars().next()?;
-        if (first == '-' || first == '*' || first == '_')
-            && trimmed.chars().all(|c| c == first)
-        {
+        if (first == '-' || first == '*' || first == '_') && trimmed.chars().all(|c| c == first) {
             return Some(AutoFormatAction::HorizontalRule);
         }
     }
@@ -355,7 +353,8 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
     }
 
     let line_start = text.trim_start();
-    if line_start.starts_with("- ") || line_start.starts_with("* ") || line_start.starts_with("+ ") {
+    if line_start.starts_with("- ") || line_start.starts_with("* ") || line_start.starts_with("+ ")
+    {
         return Some(AutoFormatAction::BulletList);
     }
 
@@ -402,8 +401,13 @@ pub(crate) fn semantic_enter_transform(
         }
         BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
-        BlockKind::CodeFence { .. } => code_fence_enter_transform(&edited.text, edited.cursor_offset),
-        BlockKind::ThematicBreak => Some(thematic_break_enter_transform(&edited.text, edited.cursor_offset)),
+        BlockKind::CodeFence { .. } => {
+            code_fence_enter_transform(&edited.text, edited.cursor_offset)
+        }
+        BlockKind::ThematicBreak => Some(thematic_break_enter_transform(
+            &edited.text,
+            edited.cursor_offset,
+        )),
         _ => None,
     }
 }
@@ -448,11 +452,7 @@ pub(crate) fn pipe_table_enter_transform(
     })
 }
 
-pub fn byte_offset_for_line_column(
-    text: &str,
-    target_line: usize,
-    target_column: usize,
-) -> usize {
+pub fn byte_offset_for_line_column(text: &str, target_line: usize, target_column: usize) -> usize {
     let mut offset = 0usize;
 
     for (line_ix, segment) in text.split('\n').enumerate() {
@@ -560,10 +560,7 @@ fn thematic_break_enter_transform(text: &str, cursor_offset: usize) -> SemanticE
 fn heading_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
     // Find the heading marker length: "## " → 3
     let trimmed = text.trim_start();
-    let marker_len = trimmed
-        .chars()
-        .take_while(|ch| *ch == '#')
-        .count();
+    let marker_len = trimmed.chars().take_while(|ch| *ch == '#').count();
     // The content after "## " (or "##" with no space)
     let content_start = if trimmed.get(marker_len..marker_len + 1) == Some(" ") {
         marker_len + 1
@@ -1217,19 +1214,17 @@ mod tests {
 
     #[test]
     fn detect_auto_format_returns_none_for_non_paragraph() {
-        assert_eq!(detect_auto_format(&BlockKind::Heading { depth: 1 }, "# Hello"), None);
+        assert_eq!(
+            detect_auto_format(&BlockKind::Heading { depth: 1 }, "# Hello"),
+            None
+        );
         assert_eq!(detect_auto_format(&BlockKind::List, "- Hello"), None);
     }
 
     #[test]
     fn thematic_break_enter_creates_new_paragraph() {
-        let transform = semantic_enter_transform(
-            &BlockKind::ThematicBreak,
-            "---",
-            None,
-            3,
-        )
-        .unwrap();
+        let transform =
+            semantic_enter_transform(&BlockKind::ThematicBreak, "---", None, 3).unwrap();
         assert_eq!(transform.replacement, "---\n\n");
         assert_eq!(transform.cursor_offset, 5);
     }

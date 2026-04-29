@@ -179,12 +179,7 @@ impl VellumApp {
         }
     }
 
-    pub(super) fn on_next_tab(
-        &mut self,
-        _: &NextTab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.len() > 1 {
             let index = (self.active_tab_index + 1) % self.tabs.len();
             self.switch_to_tab(index, window, cx);
@@ -198,5 +193,14 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.open_right_panel(RightPanelView::Plugins, cx);
+    }
+
+    pub(super) fn on_install_dev_extension(
+        &mut self,
+        _: &InstallDevExtension,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.install_dev_extension(window, cx);
     }
 }

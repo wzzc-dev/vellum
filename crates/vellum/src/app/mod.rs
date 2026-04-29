@@ -6,23 +6,23 @@ use std::{
 
 use anyhow::Result;
 use editor::{
-    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
-    FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection,
-    LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote,
-    ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5,
-    ToggleHeading6, ToggleOrderedList, ToggleParagraph, ToggleSourceMode, UndoEdit,
-    bind_keys as bind_editor_keys,
+    BoldSelection, DemoteBlock, EditorDecoration, EditorEvent, EditorSnapshot, ExitBlockEdit,
+    FocusNextBlock, FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable,
+    ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
+    ToggleBlockquote, ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3,
+    ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleOrderedList, ToggleParagraph,
+    ToggleSourceMode, UndoEdit, bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyBinding, ParentElement, Render, Styled, Subscription, Timer, VisualContext, Window,
     WindowHandle, WindowOptions, actions, div, px,
 };
-use gpui_component::input::{InputEvent, InputState};
 #[cfg(target_os = "macos")]
 use gpui::{Menu, MenuItem, OsAction, SystemMenuType};
 #[cfg(target_os = "macos")]
 use gpui_component::input::{Copy, Cut, Paste, SelectAll};
+use gpui_component::input::{InputEvent, InputState};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, TitleBar,
     button::{Button, ButtonVariants as _},
@@ -31,8 +31,8 @@ use gpui_component::{
     tree::TreeState,
 };
 use rfd::FileDialog;
-use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 use vellum_extension::ExtensionHost;
+use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 
 use webview::WebViewManager;
 
@@ -67,6 +67,7 @@ actions!(
         PreviousTab,
         NextTab,
         ManagePlugins,
+        InstallDevExtension,
     ]
 );
 
@@ -87,11 +88,11 @@ enum SidebarView {
     Outline,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum RightPanelView {
     #[default]
     Plugins,
-    Plugin(u32),
+    Plugin(String),
 }
 
 /// A single find match: byte offset range in the source document.
@@ -264,6 +265,12 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             this.open_right_panel(RightPanelView::Plugins, cx);
         });
     });
+    let window = main_window;
+    cx.on_action(move |_: &InstallDevExtension, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.install_dev_extension(window, cx);
+        });
+    });
     cx.set_menus(vec![
         Menu {
             name: "Vellum".into(),
@@ -362,6 +369,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             name: "Plugins".into(),
             items: vec![
                 MenuItem::action("Manage Plugins...", ManagePlugins),
+                MenuItem::action("Install Dev Extension...", InstallDevExtension),
             ],
         },
     ]);
@@ -396,8 +404,8 @@ impl VellumApp {
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
 
-        let editor_subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
-            match event {
+        let editor_subscription =
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
                 EditorEvent::Changed(snapshot) => {
                     this.editor_snapshot = snapshot.clone();
                     if !snapshot.status_message.is_empty() {
@@ -410,30 +418,38 @@ impl VellumApp {
                     this.pending_file_opens.push(path.clone());
                     cx.notify();
                 }
-            }
-        });
+            });
 
-        let find_input_subscription = cx.subscribe(&find_query_input, |this: &mut Self, _, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
-                let value = this.find_query_input.read(cx).value();
-                this.set_find_query(value);
-                cx.notify();
-            }
-        });
+        let find_input_subscription = cx.subscribe(
+            &find_query_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let value = this.find_query_input.read(cx).value();
+                    this.set_find_query(value);
+                    cx.notify();
+                }
+            },
+        );
 
-        let replace_input_subscription = cx.subscribe(&replace_query_input, |this: &mut Self, _, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
-                this.replace_query = this.replace_query_input.read(cx).value().to_string();
-            }
-        });
+        let replace_input_subscription = cx.subscribe(
+            &replace_query_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.replace_query = this.replace_query_input.read(cx).value().to_string();
+                }
+            },
+        );
 
-        let outline_input_subscription = cx.subscribe(&outline_filter_input, |this: &mut Self, _, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
-                let value = this.outline_filter_input.read(cx).value();
-                this.set_outline_filter(value);
-                cx.notify();
-            }
-        });
+        let outline_input_subscription = cx.subscribe(
+            &outline_filter_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let value = this.outline_filter_input.read(cx).value();
+                    this.set_outline_filter(value);
+                    cx.notify();
+                }
+            },
+        );
 
         let mut this = Self {
             app_state: AppState::default(),
@@ -469,7 +485,12 @@ impl VellumApp {
             find_query_input,
             replace_query_input,
             outline_filter_input,
-            find_input_subscriptions: vec![editor_subscription, find_input_subscription, replace_input_subscription, outline_input_subscription],
+            find_input_subscriptions: vec![
+                editor_subscription,
+                find_input_subscription,
+                replace_input_subscription,
+                outline_input_subscription,
+            ],
             renaming_path: None,
             rename_input: None,
             extension_host: ExtensionHost::new().unwrap_or_else(|e| {
@@ -483,7 +504,13 @@ impl VellumApp {
             focus_mode: false,
         };
         window.focus(&this.focus_handle);
-        this.restore_last_opened_document(window, cx);
+
+        // Discover dev extensions registered via Plugins > Install Dev Extension.
+        if let Ok(discovered) = this.extension_host.load_dev_extensions() {
+            for id in &discovered {
+                eprintln!("discovered dev extension: {}", id);
+            }
+        }
 
         // Discover extensions in ~/.vellum/extensions/
         if let Some(ext_dir) = dirs::home_dir().map(|d| d.join(".vellum").join("extensions")) {
@@ -508,12 +535,7 @@ impl VellumApp {
             }
         }
 
-        // Activate all discovered extensions
-        if let Ok(activated) = this.extension_host.activate_discovered() {
-            for id in &activated {
-                eprintln!("activated extension: {}", id);
-            }
-        }
+        this.restore_last_opened_document(window, cx);
 
         this
     }
@@ -527,10 +549,17 @@ impl VellumApp {
     }
 
     fn active_editor_mut(&mut self) -> Option<&mut Entity<MarkdownEditor>> {
-        self.tabs.get_mut(self.active_tab_index).map(|tab| &mut tab.editor)
+        self.tabs
+            .get_mut(self.active_tab_index)
+            .map(|tab| &mut tab.editor)
     }
 
-    fn open_editor_tab(&mut self, editor: Entity<MarkdownEditor>, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_editor_tab(
+        &mut self,
+        editor: Entity<MarkdownEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let new_tab = EditorTab { editor };
         self.tabs.push(new_tab);
         self.active_tab_index = self.tabs.len() - 1;
@@ -580,7 +609,9 @@ impl VellumApp {
         if self.tabs.len() <= 1 {
             return;
         }
-        let keep = self.tabs.remove(self.active_tab_index.min(self.tabs.len() - 1));
+        let keep = self
+            .tabs
+            .remove(self.active_tab_index.min(self.tabs.len() - 1));
         self.tabs.clear();
         self.tabs.push(keep);
         self.active_tab_index = 0;
@@ -600,8 +631,8 @@ impl VellumApp {
     fn subscribe_active_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor() {
             let editor = editor.clone();
-            let subscription = cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
-                match event {
+            let subscription =
+                cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::Changed(snapshot) => {
                         this.editor_snapshot = snapshot.clone();
                         if !snapshot.status_message.is_empty() {
@@ -610,23 +641,32 @@ impl VellumApp {
                         this.refresh_find_matches();
 
                         let text = snapshot.document_text.clone();
-                        let path = snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string());
-                        this.extension_host.update_document(text.clone(), path.clone());
+                        let path = snapshot
+                            .path
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().to_string());
+                        this.extension_host
+                            .update_document(text.clone(), path.clone());
                         this.extension_host.dispatch_event(
                             "document.changed",
-                            snapshot.path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default().as_str(),
+                            snapshot
+                                .path
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                                .as_str(),
                             &text,
                             path.as_deref(),
                         );
+                        this.drain_extension_outputs(None, cx);
 
                         cx.notify();
                     }
                     EditorEvent::OpenFile(path) => {
-                         this.pending_file_opens.push(path.clone());
-                         cx.notify();
-                     }
-                }
-            });
+                        this.pending_file_opens.push(path.clone());
+                        cx.notify();
+                    }
+                });
             self.find_input_subscriptions.push(subscription);
         }
     }
@@ -700,12 +740,15 @@ impl VellumApp {
                 let current_cursor = self.editor_snapshot.selection.cursor();
                 self.find_matches
                     .iter()
-                    .position(|item| item.range.start <= current_cursor && current_cursor <= item.range.end)
+                    .position(|item| {
+                        item.range.start <= current_cursor && current_cursor <= item.range.end
+                    })
                     .or(Some(0))
             };
         }
 
-        self.editor_snapshot.find_matches = self.find_matches.iter().map(|m| m.range.clone()).collect();
+        self.editor_snapshot.find_matches =
+            self.find_matches.iter().map(|m| m.range.clone()).collect();
         self.editor_snapshot.active_find_index = self.active_find_index;
     }
 
@@ -799,10 +842,7 @@ fn find_matches_ext(
             .case_insensitive(!case_sensitive)
             .build();
         match re {
-            Ok(re) => re
-                .find_iter(haystack)
-                .map(|m| m.start()..m.end())
-                .collect(),
+            Ok(re) => re.find_iter(haystack).map(|m| m.start()..m.end()).collect(),
             Err(_) => Vec::new(),
         }
     } else if !case_sensitive {

@@ -28,13 +28,10 @@ impl WebViewManager {
             return Some(entity.clone());
         }
 
-        let mut builder = WebViewBuilder::new()
-            .with_url(url);
+        let mut builder = WebViewBuilder::new().with_url(url);
 
         if allow_scripts {
-            builder = builder.with_initialization_script(
-                "window.__vellum_ready = true;"
-            );
+            builder = builder.with_initialization_script("window.__vellum_ready = true;");
         }
 
         #[cfg(debug_assertions)]

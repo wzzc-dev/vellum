@@ -1,117 +1,50 @@
 use crate::manifest::ExtensionManifest;
 
-/// Checks whether an extension is allowed to perform a given action
-/// based on its declared capabilities.
-pub struct PermissionChecker;
+#[derive(Debug, Clone, Copy)]
+pub enum Capability {
+    DocumentRead,
+    DocumentWrite,
+    Decorations,
+    Panels,
+    Commands,
+    Webview,
+}
 
-impl PermissionChecker {
-    pub fn check_document_read(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.document_read {
-            anyhow::bail!(
-                "extension '{}' does not have 'document_read' capability",
-                manifest.id
-            );
+impl Capability {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DocumentRead => "document_read",
+            Self::DocumentWrite => "document_write",
+            Self::Decorations => "decorations",
+            Self::Panels => "panels",
+            Self::Commands => "commands",
+            Self::Webview => "webview",
         }
-        Ok(())
     }
+}
 
-    pub fn check_document_write(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.document_write {
-            anyhow::bail!(
-                "extension '{}' does not have 'document_write' capability",
-                manifest.id
-            );
-        }
-        Ok(())
+pub fn has_capability(manifest: &ExtensionManifest, capability: Capability) -> bool {
+    match capability {
+        Capability::DocumentRead => manifest.capabilities.document_read,
+        Capability::DocumentWrite => manifest.capabilities.document_write,
+        Capability::Decorations => manifest.capabilities.decorations,
+        Capability::Panels => manifest.capabilities.panels,
+        Capability::Commands => manifest.capabilities.commands,
+        Capability::Webview => manifest.capabilities.webview,
     }
+}
 
-    pub fn check_decorations(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.decorations {
-            anyhow::bail!(
-                "extension '{}' does not have 'decorations' capability",
-                manifest.id
-            );
-        }
+pub fn check_capability(
+    manifest: &ExtensionManifest,
+    capability: Capability,
+) -> anyhow::Result<()> {
+    if has_capability(manifest, capability) {
         Ok(())
-    }
-
-    pub fn check_panels(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.panels {
-            anyhow::bail!(
-                "extension '{}' does not have 'panels' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_commands(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.commands {
-            anyhow::bail!(
-                "extension '{}' does not have 'commands' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_webview(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.webview {
-            anyhow::bail!(
-                "extension '{}' does not have 'webview' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_webview_scripts(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.webview_scripts {
-            anyhow::bail!(
-                "extension '{}' does not have 'webview_scripts' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_webview_devtools(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.webview_devtools {
-            anyhow::bail!(
-                "extension '{}' does not have 'webview_devtools' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_workspace_read(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.workspace_read {
-            anyhow::bail!(
-                "extension '{}' does not have 'workspace_read' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_workspace_write(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.workspace_write {
-            anyhow::bail!(
-                "extension '{}' does not have 'workspace_write' capability",
-                manifest.id
-            );
-        }
-        Ok(())
-    }
-
-    pub fn check_network(manifest: &ExtensionManifest) -> anyhow::Result<()> {
-        if !manifest.capabilities.network {
-            anyhow::bail!(
-                "extension '{}' does not have 'network' capability",
-                manifest.id
-            );
-        }
-        Ok(())
+    } else {
+        anyhow::bail!(
+            "extension '{}' does not have '{}' capability",
+            manifest.id,
+            capability.name()
+        )
     }
 }

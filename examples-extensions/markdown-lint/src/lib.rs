@@ -1,16 +1,13 @@
 use vellum_extension_sdk::decoration::{
-    Decoration, DecorationKind, ProtocolResponse, Tooltip, TooltipPosition, UnderlineStyle,
-    WebViewRequest,
+    Decoration, DecorationKind, Tooltip, TooltipPosition, UnderlineStyle,
 };
-use vellum_extension_sdk::event::{EventData, EventType};
+use vellum_extension_sdk::event::ExtensionEvent;
 use vellum_extension_sdk::ui::{ButtonVariant, Severity, TextStyle, UiEvent, UiNode};
-use vellum_extension_sdk::{Plugin, PluginContext, PluginManifest};
+use vellum_extension_sdk::{Extension, ExtensionContext, ExtensionManifest};
 
 #[derive(Default)]
 struct MarkdownLintPlugin {
     diagnostics: Vec<LintDiagnostic>,
-    panel_id: u32,
-    run_command_id: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -32,101 +29,124 @@ struct LintFix {
     replacement: String,
 }
 
-impl Plugin for MarkdownLintPlugin {
-    fn manifest() -> PluginManifest {
-        PluginManifest {
+impl Extension for MarkdownLintPlugin {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn manifest() -> ExtensionManifest {
+        ExtensionManifest {
             id: "vellum.markdown-lint".into(),
             name: "Markdown Lint".into(),
             version: "0.1.0".into(),
             description: "Checks Markdown documents for common issues".into(),
-            author: "Vellum".into(),
+            authors: vec!["Vellum".into()],
         }
     }
 
-    fn init(&mut self, ctx: &mut PluginContext) {
-        ctx.subscribe(EventType::DocumentChanged);
-        ctx.subscribe(EventType::DocumentOpened);
-
-        self.panel_id = ctx.register_sidebar_panel("markdown-lint", "Lint", "triangle-alert");
-        self.run_command_id = ctx.register_command(
-            "markdown-lint.run",
-            "Run Markdown Lint",
-            Some("cmd-shift-l"),
-        );
-        ctx.register_command("markdown-lint.clear", "Clear Lint Results", None);
+    fn activate(&mut self, ctx: &mut ExtensionContext) -> Result<(), String> {
+        self.update_panel_ui(ctx)
     }
 
-    fn handle_event(&mut self, event: EventData, ctx: &mut PluginContext) {
-        match event {
-            EventData::DocumentChanged { text, .. } => {
-                self.run_lint_and_update(&text, ctx);
-            }
-            EventData::DocumentOpened { .. } => {
-                let text = ctx.document_text();
-                self.run_lint_and_update(&text, ctx);
-            }
-            _ => {}
+    fn handle_event(
+        &mut self,
+        event: ExtensionEvent,
+        ctx: &mut ExtensionContext,
+    ) -> Result<(), String> {
+        if event.is_document_changed() {
+            self.run_lint_and_update(&event.document_text, ctx)?;
+        } else if event.is_document_opened() {
+            let text = ctx.document_text()?;
+            self.run_lint_and_update(&text, ctx)?;
         }
+        Ok(())
     }
 
-    fn execute_command(&mut self, command_id: u32, ctx: &mut PluginContext) {
-        if command_id == self.run_command_id {
-            let text = ctx.document_text();
-            self.run_lint_and_update(&text, ctx);
-        } else if command_id == self.run_command_id + 1 {
+    fn execute_command(
+        &mut self,
+        command_id: String,
+        ctx: &mut ExtensionContext,
+    ) -> Result<(), String> {
+        if command_id == "vellum.markdown-lint.markdown-lint.run" {
+            let text = ctx.document_text()?;
+            self.run_lint_and_update(&text, ctx)?;
+        } else if command_id == "vellum.markdown-lint.markdown-lint.clear" {
             self.diagnostics.clear();
-            ctx.clear_decorations();
-            self.update_panel_ui(ctx);
+            ctx.clear_decorations()?;
+            self.update_panel_ui(ctx)?;
         }
+        Ok(())
     }
 
-    fn handle_ui_event(&mut self, event: UiEvent, ctx: &mut PluginContext) {
+    fn handle_ui_event(
+        &mut self,
+        event: UiEvent,
+        ctx: &mut ExtensionContext,
+    ) -> Result<(), String> {
         match event {
-            UiEvent::ButtonClicked { element_id } => match element_id.as_str() {
+            UiEvent::ButtonClicked { element_id, .. } => match element_id.as_str() {
                 "run-lint" => {
-                    let text = ctx.document_text();
-                    self.run_lint_and_update(&text, ctx);
+                    let text = ctx.document_text()?;
+                    self.run_lint_and_update(&text, ctx)?;
                 }
                 "clear-lint" => {
                     self.diagnostics.clear();
-                    ctx.clear_decorations();
-                    self.update_panel_ui(ctx);
+                    ctx.clear_decorations()?;
+                    self.update_panel_ui(ctx)?;
                 }
                 id if id.starts_with("fix-") => {
-                    if let Some(idx) = id.strip_prefix("fix-").and_then(|s| s.parse::<usize>().ok())
+                    if let Some(idx) = id
+                        .strip_prefix("fix-")
+                        .and_then(|s| s.parse::<usize>().ok())
                     {
                         if let Some(diag) = self.diagnostics.get(idx) {
                             if let Some(fix) = &diag.fix {
-                                ctx.replace_range(fix.range_start, fix.range_end, &fix.replacement);
+                                ctx.replace_range(
+                                    fix.range_start,
+                                    fix.range_end,
+                                    &fix.replacement,
+                                )?;
                             }
                         }
                     }
                 }
                 _ => {}
             },
-            UiEvent::LinkClicked { element_id } => {
+            UiEvent::LinkClicked { element_id, .. } => {
                 if let Some(idx) = element_id
                     .strip_prefix("diag-")
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     if let Some(diag) = self.diagnostics.get(idx) {
-                        ctx.replace_range(diag.column, diag.column, "");
+                        ctx.replace_range(diag.column, diag.column, "")?;
                     }
                 }
             }
             _ => {}
         }
+        Ok(())
     }
 
-    fn handle_hover(&mut self, hover_data: &str, _ctx: &mut PluginContext) -> Option<Tooltip> {
-        let idx: usize = hover_data.parse().ok()?;
-        let diag = self.diagnostics.get(idx)?;
+    fn handle_hover(
+        &mut self,
+        hover_data: String,
+        _ctx: &mut ExtensionContext,
+    ) -> Result<Option<Tooltip>, String> {
+        let Some(idx) = hover_data.parse::<usize>().ok() else {
+            return Ok(None);
+        };
+        let Some(diag) = self.diagnostics.get(idx) else {
+            return Ok(None);
+        };
 
         let mut children = vec![
             UiNode::row()
                 .gap(6.0)
                 .child(UiNode::badge(&diag.rule).severity(diag.severity).build())
-                .child(UiNode::styled_text(&diag.message, TextStyle::default().bold()))
+                .child(UiNode::styled_text(
+                    &diag.message,
+                    TextStyle::default().bold(),
+                ))
                 .build(),
             UiNode::styled_text(
                 &format!("Line {}, Column {}", diag.line, diag.column),
@@ -142,39 +162,26 @@ impl Plugin for MarkdownLintPlugin {
             );
         }
 
-        Some(Tooltip {
+        Ok(Some(Tooltip {
             content: UiNode::column()
                 .gap(6.0)
                 .padding(8.0)
                 .children(children)
                 .build(),
             position: TooltipPosition::Above,
-        })
-    }
-
-    fn handle_webview_request(
-        &mut self,
-        request: WebViewRequest,
-        ctx: &mut PluginContext,
-    ) -> Option<ProtocolResponse> {
-        if request.url.contains("/preview") {
-            let text = ctx.document_text();
-            let html = markdown_to_html(&text);
-            Some(ProtocolResponse {
-                mime_type: "text/html".into(),
-                body: html.into_bytes(),
-            })
-        } else {
-            None
-        }
+        }))
     }
 }
 
 impl MarkdownLintPlugin {
-    fn run_lint_and_update(&mut self, text: &str, ctx: &mut PluginContext) {
+    fn run_lint_and_update(
+        &mut self,
+        text: &str,
+        ctx: &mut ExtensionContext,
+    ) -> Result<(), String> {
         self.diagnostics = run_lint(text);
-        self.update_decorations(ctx);
-        self.update_panel_ui(ctx);
+        self.update_decorations(ctx)?;
+        self.update_panel_ui(ctx)?;
 
         let error_count = self
             .diagnostics
@@ -190,13 +197,14 @@ impl MarkdownLintPlugin {
             ctx.set_status_message(&format!(
                 "Lint: {} errors, {} warnings",
                 error_count, warn_count
-            ));
+            ))?;
         } else {
-            ctx.set_status_message("Lint: No issues found");
+            ctx.set_status_message("Lint: No issues found")?;
         }
+        Ok(())
     }
 
-    fn update_decorations(&self, ctx: &mut PluginContext) {
+    fn update_decorations(&self, ctx: &mut ExtensionContext) -> Result<(), String> {
         let decorations: Vec<Decoration> = self
             .diagnostics
             .iter()
@@ -221,10 +229,10 @@ impl MarkdownLintPlugin {
                 }
             })
             .collect();
-        ctx.set_decorations(decorations);
+        ctx.set_decorations(decorations)
     }
 
-    fn update_panel_ui(&self, ctx: &mut PluginContext) {
+    fn update_panel_ui(&self, ctx: &mut ExtensionContext) -> Result<(), String> {
         let errors: Vec<_> = self
             .diagnostics
             .iter()
@@ -321,19 +329,7 @@ impl MarkdownLintPlugin {
             ));
         }
 
-        root = root.child(
-            UiNode::disclosure("Preview")
-                .open(false)
-                .child(
-                    UiNode::webview("md-preview", "https://example.com")
-                        .allow_scripts(false)
-                        .allow_devtools(false)
-                        .build(),
-                )
-                .build(),
-        );
-
-        ctx.set_panel_ui(self.panel_id, root.build());
+        ctx.set_panel_ui("markdown-lint", root.build())
     }
 }
 
@@ -455,26 +451,4 @@ fn run_lint(text: &str) -> Vec<LintDiagnostic> {
     diagnostics
 }
 
-fn markdown_to_html(text: &str) -> String {
-    let mut body = String::new();
-    for line in text.lines() {
-        if line.starts_with("# ") {
-            body.push_str(&format!("<h1>{}</h1>", &line[2..]));
-        } else if line.starts_with("## ") {
-            body.push_str(&format!("<h2>{}</h2>", &line[3..]));
-        } else if line.starts_with("### ") {
-            body.push_str(&format!("<h3>{}</h3>", &line[4..]));
-        } else if line.trim().is_empty() {
-            body.push_str("<br/>");
-        } else {
-            let escaped = line.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-            body.push_str(&format!("<p>{}</p>", escaped));
-        }
-    }
-    format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>body{{font-family:sans-serif;padding:12px;font-size:14px;}}</style></head><body>{}</body></html>",
-        body
-    )
-}
-
-vellum_extension_sdk::vellum_extension!(MarkdownLintPlugin);
+vellum_extension_sdk::register_extension!(MarkdownLintPlugin);

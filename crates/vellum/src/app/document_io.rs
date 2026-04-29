@@ -53,6 +53,32 @@ impl VellumApp {
             .detach();
     }
 
+    pub(super) fn install_dev_extension(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        window
+            .spawn(cx, async move |cx| {
+                let Some(folder) = FileDialog::new().pick_folder() else {
+                    return;
+                };
+                let _ = cx.update_window_entity(&view, |this, _window, cx| {
+                    match this.extension_host.install_dev_extension(folder.clone()) {
+                        Ok(id) => {
+                            this.set_status(format!("Installed dev extension {id}"));
+                            this.open_right_panel(RightPanelView::Plugins, cx);
+                        }
+                        Err(err) => {
+                            this.set_status(format!(
+                                "Failed to install dev extension {}: {err}",
+                                folder.display()
+                            ));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+    }
+
     fn apply_open_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         if !self.set_workspace_root(Some(folder.clone()), cx) {
             return;
@@ -99,7 +125,8 @@ impl VellumApp {
         }
 
         let new_editor = cx.new(|cx| MarkdownEditor::new(window, cx));
-        let open_result = new_editor.update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
+        let open_result =
+            new_editor.update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
         match open_result {
             Ok(()) => {
                 self.tabs.push(EditorTab { editor: new_editor });
@@ -118,6 +145,18 @@ impl VellumApp {
                 let _ = write_last_opened_path(&path);
                 self.recent_files = crate::path::add_recent_file(&path);
                 self.clear_status();
+                let snapshot = self.editor_snapshot.clone();
+                let event_path = snapshot
+                    .path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string());
+                self.extension_host.dispatch_event(
+                    "document.opened",
+                    event_path.as_deref().unwrap_or_default(),
+                    &snapshot.document_text,
+                    event_path.as_deref(),
+                );
+                self.drain_extension_outputs(Some(window), cx);
                 cx.notify();
             }
             Err(err) => {
@@ -154,6 +193,19 @@ impl VellumApp {
                 self.workspace.selected_file = Some(path.clone());
                 let _ = write_last_opened_path(&path);
                 self.clear_status();
+                self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+                let snapshot = self.editor_snapshot.clone();
+                let event_path = snapshot
+                    .path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string());
+                self.extension_host.dispatch_event(
+                    "document.opened",
+                    event_path.as_deref().unwrap_or_default(),
+                    &snapshot.document_text,
+                    event_path.as_deref(),
+                );
+                self.drain_extension_outputs(Some(window), cx);
                 cx.notify();
             }
             Err(err) => {
@@ -194,7 +246,10 @@ impl VellumApp {
             return self.save_document_as(window, cx);
         }
 
-        if let Err(err) = self.active_editor_entity().update(cx, |editor, cx| editor.save(window, cx)) {
+        if let Err(err) = self
+            .active_editor_entity()
+            .update(cx, |editor, cx| editor.save(window, cx))
+        {
             if err
                 .to_string()
                 .contains("cannot save without a target path")
@@ -204,7 +259,11 @@ impl VellumApp {
             return Err(err);
         }
 
-        let saved_path = self.active_editor_entity().read(cx).document_path().cloned();
+        let saved_path = self
+            .active_editor_entity()
+            .read(cx)
+            .document_path()
+            .cloned();
         if let Some(path) = saved_path {
             self.workspace.selected_file = Some(path.clone());
             let _ = write_last_opened_path(&path);
@@ -372,15 +431,11 @@ impl VellumApp {
         let path_str = path.to_string_lossy().to_string();
         #[cfg(target_os = "macos")]
         {
-            let _ = std::process::Command::new("pbcopy")
-                .arg(&path_str)
-                .spawn();
+            let _ = std::process::Command::new("pbcopy").arg(&path_str).spawn();
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = std::process::Command::new("wl-copy")
-                .arg(&path_str)
-                .spawn();
+            let _ = std::process::Command::new("wl-copy").arg(&path_str).spawn();
         }
     }
 
@@ -439,7 +494,11 @@ impl VellumApp {
         let is_dir = path.is_dir();
 
         let confirmed = rfd::MessageDialog::new()
-            .set_title(if is_dir { "Delete Folder" } else { "Delete File" })
+            .set_title(if is_dir {
+                "Delete Folder"
+            } else {
+                "Delete File"
+            })
             .set_description(format!(
                 "Are you sure you want to delete \"{}\"?",
                 file_name
@@ -513,17 +572,19 @@ impl VellumApp {
             state.set_value(file_name, window, cx);
             state
         });
-        let subscription = cx.subscribe(&input, |this: &mut Self, _, event: &InputEvent, cx| {
-            match event {
-                InputEvent::PressEnter { .. } => {
-                    this.confirm_rename_without_window(cx);
-                }
-                InputEvent::Blur => {
-                    this.confirm_rename_without_window(cx);
-                }
-                _ => {}
-            }
-        });
+        let subscription =
+            cx.subscribe(
+                &input,
+                |this: &mut Self, _, event: &InputEvent, cx| match event {
+                    InputEvent::PressEnter { .. } => {
+                        this.confirm_rename_without_window(cx);
+                    }
+                    InputEvent::Blur => {
+                        this.confirm_rename_without_window(cx);
+                    }
+                    _ => {}
+                },
+            );
         self.find_input_subscriptions.push(subscription);
         self.renaming_path = Some(path);
         self.rename_input = Some(input);
@@ -536,11 +597,7 @@ impl VellumApp {
         cx.notify();
     }
 
-    pub(super) fn confirm_rename(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn confirm_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.renaming_path.take() else {
             return;
         };

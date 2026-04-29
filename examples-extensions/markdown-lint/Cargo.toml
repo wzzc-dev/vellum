@@ -8,5 +8,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 vellum-extension-sdk = { path = "../../crates/extension-sdk" }
-postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }

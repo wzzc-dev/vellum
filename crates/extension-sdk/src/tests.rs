@@ -1,46 +1,45 @@
 use crate::decoration::{Decoration, DecorationKind, UnderlineStyle};
-use crate::event::{EventData, EventType};
-use crate::manifest::PluginManifest;
+use crate::event::ExtensionEvent;
+use crate::host::VersionedPayload;
+use crate::manifest::ExtensionManifest;
 use crate::ui::{ButtonVariant, Severity, TextStyle, UiNode};
 
 #[test]
-fn test_manifest_serialization() {
-    let manifest = PluginManifest {
-        id: "test.plugin".into(),
+fn manifest_serializes_as_json() {
+    let manifest = ExtensionManifest {
+        id: "test.extension".into(),
         name: "Test".into(),
         version: "0.1.0".into(),
-        description: "Test plugin".into(),
-        author: "Author".into(),
+        description: "Test extension".into(),
+        authors: vec!["Vellum".into()],
     };
-    let bytes = postcard::to_allocvec(&manifest).unwrap();
-    let decoded: PluginManifest = postcard::from_bytes(&bytes).unwrap();
+
+    let bytes = serde_json::to_vec(&manifest).unwrap();
+    let decoded: ExtensionManifest = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(manifest.id, decoded.id);
+    assert_eq!(manifest.authors, decoded.authors);
 }
 
 #[test]
-fn test_event_type_values() {
-    assert_eq!(EventType::DocumentOpened as u32, 0);
-    assert_eq!(EventType::DocumentClosed as u32, 1);
-    assert_eq!(EventType::DocumentChanged as u32, 2);
-    assert_eq!(EventType::DocumentSaved as u32, 3);
-    assert_eq!(EventType::SelectionChanged as u32, 4);
-    assert_eq!(EventType::EditorFocused as u32, 5);
-    assert_eq!(EventType::EditorBlurred as u32, 6);
-}
-
-#[test]
-fn test_event_data_serialization() {
-    let event = EventData::DocumentChanged {
-        text: "hello".into(),
-        path: Some("/test.md".into()),
+fn event_helpers_match_zed_style_activation_events() {
+    let opened = ExtensionEvent {
+        event_type: "document.opened".into(),
+        document_text: "# Title".into(),
+        document_path: Some("/test.md".into()),
     };
-    let bytes = postcard::to_allocvec(&event).unwrap();
-    let decoded: EventData = postcard::from_bytes(&bytes).unwrap();
-    assert!(matches!(decoded, EventData::DocumentChanged { .. }));
+    let changed = ExtensionEvent {
+        event_type: "document.changed".into(),
+        document_text: "# Changed".into(),
+        document_path: None,
+    };
+
+    assert!(opened.is_document_opened());
+    assert!(!opened.is_document_changed());
+    assert!(changed.is_document_changed());
 }
 
 #[test]
-fn test_ui_node_builder() {
+fn ui_node_payload_uses_versioned_json() {
     let node = UiNode::column()
         .gap(8.0)
         .padding(12.0)
@@ -53,7 +52,10 @@ fn test_ui_node_builder() {
                 .build(),
         )
         .child(UiNode::separator())
-        .child(UiNode::styled_text("muted text", TextStyle::small().muted()))
+        .child(UiNode::styled_text(
+            "muted text",
+            TextStyle::small().muted(),
+        ))
         .child(
             UiNode::button("btn1", "Run")
                 .variant(ButtonVariant::Primary)
@@ -68,13 +70,14 @@ fn test_ui_node_builder() {
         )
         .build();
 
-    let bytes = postcard::to_allocvec(&node).unwrap();
-    let decoded: UiNode = postcard::from_bytes(&bytes).unwrap();
-    assert!(matches!(decoded, UiNode::Column { .. }));
+    let bytes = serde_json::to_vec(&VersionedPayload::new(node)).unwrap();
+    let decoded: VersionedPayload<UiNode> = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded.version, 1);
+    assert!(matches!(decoded.data, UiNode::Column { .. }));
 }
 
 #[test]
-fn test_text_style_builder() {
+fn text_style_builder_sets_expected_flags() {
     let style = TextStyle::small().muted().bold().italic().monospace();
     assert_eq!(style.size, Some(11.0));
     assert_eq!(style.color.as_deref(), Some("muted-foreground"));
@@ -84,21 +87,21 @@ fn test_text_style_builder() {
 }
 
 #[test]
-fn test_decoration_serialization() {
-    let decos = vec![
-        Decoration {
-            id: "d1".into(),
-            start: 5,
-            end: 10,
-            kind: DecorationKind::Underline {
-                color: "red".into(),
-                style: UnderlineStyle::Wavy,
-            },
-            tooltip: Some("error".into()),
-            hover_data: None,
+fn decoration_payload_uses_versioned_json() {
+    let decorations = vec![Decoration {
+        id: "d1".into(),
+        start: 5,
+        end: 10,
+        kind: DecorationKind::Underline {
+            color: "red".into(),
+            style: UnderlineStyle::Wavy,
         },
-    ];
-    let bytes = postcard::to_allocvec(&decos).unwrap();
-    let decoded: Vec<Decoration> = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(decos.len(), decoded.len());
+        tooltip: Some("error".into()),
+        hover_data: None,
+    }];
+
+    let bytes = serde_json::to_vec(&VersionedPayload::new(decorations)).unwrap();
+    let decoded: VersionedPayload<Vec<Decoration>> = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded.version, 1);
+    assert_eq!(decoded.data.len(), 1);
 }

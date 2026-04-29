@@ -1,269 +1,261 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use wasmi::{Engine, Instance, Linker, Memory, Module, Store};
+use anyhow::{Context as _, Result};
+use wasmtime::component::{Component, Linker};
+use wasmtime::{Config, Engine, Store};
+use wasmtime_wasi::ResourceTable;
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::contributions::{
-    Decoration, OverlayPanel, PendingEdit, ProtocolResponse, RegisteredCommand, RegisteredPanel,
-    Tooltip, WebViewRequest,
+    Decoration, PendingEdit, RegisteredCommand, RegisteredPanel, Tooltip, VersionedPayload,
 };
+use crate::event::ExtensionEvent;
 use crate::manifest::ExtensionManifest;
-use crate::permissions::PermissionChecker;
+use crate::permissions::{Capability, check_capability};
 use crate::registry::{ExtensionRegistry, ExtensionState};
 use crate::ui::{UiEvent, UiNode};
 
-// ── Per-extension host state (wasmi host state) ───────────────
-
-pub struct ExtensionHostState {
-    pub extension_id: String,
-    pub extension_path: PathBuf,
-    pub manifest: ExtensionManifest,
-
-    // Memory allocator
-    pub alloc_offset: u32,
-
-    // Pending contributions
-    pub pending_commands: Vec<RegisteredCommand>,
-    pub pending_panels: Vec<RegisteredPanel>,
-    pub pending_subscriptions: Vec<(u32, u32)>,
-    pub next_command_id: u32,
-    pub next_panel_id: u32,
-    pub next_subscription_id: u32,
-
-    // Document state
-    pub document_text: String,
-    pub document_path: Option<String>,
-
-    // UI state
-    pub panel_uis: HashMap<u32, UiNode>,
-    pub decorations: Vec<Decoration>,
-    pub active_overlay: Option<OverlayPanel>,
-    pub active_tooltip: Option<Tooltip>,
-    pub status_message: Option<String>,
-
-    // Edit queue
-    pub pending_edits: Vec<PendingEdit>,
-
-    // WebView state
-    pub pending_webview_requests: Vec<WebViewRequest>,
-    pub next_webview_id: u32,
-    pub protocol_responses: HashMap<u32, ProtocolResponse>,
+#[allow(dead_code)]
+mod bindings {
+    wasmtime::component::bindgen!({
+        path: "wit",
+        world: "extension-world",
+    });
 }
 
-impl ExtensionHostState {
-    pub fn new(
-        extension_id: String,
-        extension_path: PathBuf,
-        manifest: ExtensionManifest,
-    ) -> Self {
+use bindings::ExtensionWorld;
+use bindings::vellum::extension::types::{
+    ActivationContext, ExtensionError, ExtensionEvent as WitExtensionEvent, HostError, LogLevel,
+    UiEvent as WitUiEvent,
+};
+
+pub type PanelId = String;
+
+#[derive(Debug, Clone, Default)]
+pub struct ExtensionOutputs {
+    pub status_message: Option<String>,
+    pub pending_edits: Vec<PendingEdit>,
+    pub decorations: Option<Vec<Decoration>>,
+    pub panel_uis: HashMap<PanelId, UiNode>,
+}
+
+impl ExtensionOutputs {
+    fn merge(&mut self, other: ExtensionOutputs) {
+        if other.status_message.is_some() {
+            self.status_message = other.status_message;
+        }
+        self.pending_edits.extend(other.pending_edits);
+        if other.decorations.is_some() {
+            self.decorations = other.decorations;
+        }
+        self.panel_uis.extend(other.panel_uis);
+    }
+}
+
+pub struct ExtensionRuntimeState {
+    extension_id: String,
+    manifest: ExtensionManifest,
+    wasi_ctx: WasiCtx,
+    resource_table: ResourceTable,
+    document_text: String,
+    document_path: Option<String>,
+    outputs: ExtensionOutputs,
+}
+
+impl ExtensionRuntimeState {
+    fn new(extension_id: String, manifest: ExtensionManifest) -> Self {
         Self {
             extension_id,
-            extension_path,
             manifest,
-            alloc_offset: 65536,
-            pending_commands: Vec::new(),
-            pending_panels: Vec::new(),
-            pending_subscriptions: Vec::new(),
-            next_command_id: 1,
-            next_panel_id: 1,
-            next_subscription_id: 1,
+            wasi_ctx: WasiCtxBuilder::new().build(),
+            resource_table: ResourceTable::new(),
             document_text: String::new(),
             document_path: None,
-            panel_uis: HashMap::new(),
-            decorations: Vec::new(),
-            active_overlay: None,
-            active_tooltip: None,
-            status_message: None,
-            pending_edits: Vec::new(),
-            pending_webview_requests: Vec::new(),
-            next_webview_id: 1,
-            protocol_responses: HashMap::new(),
+            outputs: ExtensionOutputs::default(),
         }
     }
 
-    pub fn update_document(&mut self, text: String, path: Option<String>) {
+    fn set_document(&mut self, text: String, path: Option<String>) {
         self.document_text = text;
         self.document_path = path;
     }
 
-    pub fn take_commands(&mut self) -> Vec<RegisteredCommand> {
-        std::mem::take(&mut self.pending_commands)
+    fn take_outputs(&mut self) -> ExtensionOutputs {
+        std::mem::take(&mut self.outputs)
     }
 
-    pub fn take_panels(&mut self) -> Vec<RegisteredPanel> {
-        std::mem::take(&mut self.pending_panels)
+    fn permission_error(&self, capability: Capability) -> HostError {
+        HostError {
+            message: format!(
+                "extension '{}' does not have '{}' capability",
+                self.extension_id,
+                capability.name()
+            ),
+        }
     }
 
-    pub fn take_subscriptions(&mut self) -> Vec<(u32, u32)> {
-        std::mem::take(&mut self.pending_subscriptions)
-    }
-
-    pub fn take_status_message(&mut self) -> Option<String> {
-        std::mem::take(&mut self.status_message)
-    }
-
-    pub fn take_edits(&mut self) -> Vec<PendingEdit> {
-        std::mem::take(&mut self.pending_edits)
-    }
-
-    pub fn take_webview_requests(&mut self) -> Vec<WebViewRequest> {
-        std::mem::take(&mut self.pending_webview_requests)
+    fn require(&self, capability: Capability) -> std::result::Result<(), HostError> {
+        check_capability(&self.manifest, capability).map_err(|_| self.permission_error(capability))
     }
 }
 
-// ── Loaded extension ──────────────────────────────────────────
+impl IoView for ExtensionRuntimeState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.resource_table
+    }
+}
+
+impl WasiView for ExtensionRuntimeState {
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi_ctx
+    }
+}
+
+impl bindings::vellum::extension::types::Host for ExtensionRuntimeState {}
+
+impl bindings::vellum::extension::host::Host for ExtensionRuntimeState {
+    fn log(&mut self, level: LogLevel, message: String) {
+        eprintln!("[extension:{}:{level:?}] {message}", self.extension_id);
+    }
+
+    fn show_status_message(&mut self, message: String) -> std::result::Result<(), HostError> {
+        self.outputs.status_message = Some(message);
+        Ok(())
+    }
+}
+
+impl bindings::vellum::extension::editor::Host for ExtensionRuntimeState {
+    fn document_text(&mut self) -> std::result::Result<String, HostError> {
+        self.require(Capability::DocumentRead)?;
+        Ok(self.document_text.clone())
+    }
+
+    fn document_path(&mut self) -> std::result::Result<Option<String>, HostError> {
+        self.require(Capability::DocumentRead)?;
+        Ok(self.document_path.clone())
+    }
+
+    fn replace_range(
+        &mut self,
+        start: u64,
+        end: u64,
+        text: String,
+    ) -> std::result::Result<(), HostError> {
+        self.require(Capability::DocumentWrite)?;
+        self.outputs.pending_edits.push(PendingEdit::ReplaceRange {
+            start: start as usize,
+            end: end as usize,
+            text,
+        });
+        Ok(())
+    }
+
+    fn insert_text(&mut self, position: u64, text: String) -> std::result::Result<(), HostError> {
+        self.require(Capability::DocumentWrite)?;
+        self.outputs.pending_edits.push(PendingEdit::Insert {
+            position: position as usize,
+            text,
+        });
+        Ok(())
+    }
+
+    fn set_decorations(&mut self, data: Vec<u8>) -> std::result::Result<(), HostError> {
+        self.require(Capability::Decorations)?;
+        let payload: VersionedPayload<Vec<Decoration>> =
+            serde_json::from_slice(&data).map_err(|err| HostError {
+                message: format!("invalid decorations payload: {err}"),
+            })?;
+        if payload.version != 1 {
+            return Err(HostError {
+                message: format!(
+                    "unsupported decorations payload version: {}",
+                    payload.version
+                ),
+            });
+        }
+        self.outputs.decorations = Some(payload.data);
+        Ok(())
+    }
+
+    fn clear_decorations(&mut self) -> std::result::Result<(), HostError> {
+        self.require(Capability::Decorations)?;
+        self.outputs.decorations = Some(Vec::new());
+        Ok(())
+    }
+}
+
+impl bindings::vellum::extension::ui::Host for ExtensionRuntimeState {
+    fn set_panel_view(
+        &mut self,
+        panel_id: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<(), HostError> {
+        self.require(Capability::Panels)?;
+        let payload: VersionedPayload<UiNode> =
+            serde_json::from_slice(&data).map_err(|err| HostError {
+                message: format!("invalid panel payload: {err}"),
+            })?;
+        if payload.version != 1 {
+            return Err(HostError {
+                message: format!("unsupported panel payload version: {}", payload.version),
+            });
+        }
+        if payload.data.contains_webview() {
+            self.require(Capability::Webview)?;
+        }
+        let qualified = self.manifest.qualified_panel_id(&panel_id);
+        self.outputs.panel_uis.insert(qualified, payload.data);
+        Ok(())
+    }
+}
 
 struct LoadedExtension {
     manifest: ExtensionManifest,
-    instance: Instance,
-    store: Store<ExtensionHostState>,
-    memory: Memory,
-    subscribed_events: Vec<u32>,
+    store: Store<ExtensionRuntimeState>,
+    bindings: ExtensionWorld,
 }
-
-// ── Extension Host ────────────────────────────────────────────
 
 pub struct ExtensionHost {
     engine: Engine,
-    linker: Linker<ExtensionHostState>,
+    linker: Linker<ExtensionRuntimeState>,
     registry: ExtensionRegistry,
-    loaded_extensions: Vec<LoadedExtension>,
-
-    // Aggregated contributions
+    loaded_extensions: HashMap<String, LoadedExtension>,
     commands: Vec<RegisteredCommand>,
     sidebar_panels: Vec<RegisteredPanel>,
-    panel_uis: HashMap<u32, UiNode>,
-    decorations: Vec<Decoration>,
-    active_overlay: Option<OverlayPanel>,
-    active_tooltip: Option<Tooltip>,
-    pending_status_message: Option<String>,
-    pending_edits: Vec<PendingEdit>,
-    webview_requests: Vec<WebViewRequest>,
+    panel_uis: HashMap<PanelId, UiNode>,
+    outputs: ExtensionOutputs,
+    document_text: String,
+    document_path: Option<String>,
+    dev_extensions_file: PathBuf,
 }
 
 impl ExtensionHost {
     pub fn new() -> Result<Self> {
-        let engine = Engine::default();
-        let mut linker = <Linker<ExtensionHostState>>::new(&engine);
-
-        // Register host functions
-        Self::register_host_functions(&mut linker)?;
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config)?;
+        let mut linker = Linker::new(&engine);
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        ExtensionWorld::add_to_linker::<
+            ExtensionRuntimeState,
+            wasmtime::component::HasSelf<ExtensionRuntimeState>,
+        >(&mut linker, |state| state)?;
 
         Ok(Self {
             engine,
             linker,
             registry: ExtensionRegistry::new(),
-            loaded_extensions: Vec::new(),
+            loaded_extensions: HashMap::new(),
             commands: Vec::new(),
             sidebar_panels: Vec::new(),
             panel_uis: HashMap::new(),
-            decorations: Vec::new(),
-            active_overlay: None,
-            active_tooltip: None,
-            pending_status_message: None,
-            pending_edits: Vec::new(),
-            webview_requests: Vec::new(),
+            outputs: ExtensionOutputs::default(),
+            document_text: String::new(),
+            document_path: None,
+            dev_extensions_file: default_dev_extensions_file(),
         })
     }
-
-    fn register_host_functions(linker: &mut Linker<ExtensionHostState>) -> Result<()> {
-        linker
-            .func_wrap("env", "host_alloc", host_alloc_impl)
-            .context("failed to define host_alloc")?;
-        linker
-            .func_wrap("env", "host_dealloc", host_dealloc_impl)
-            .context("failed to define host_dealloc")?;
-        linker
-            .func_wrap("env", "host_register_command", host_register_command_impl)
-            .context("failed to define host_register_command")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_register_sidebar_panel",
-                host_register_sidebar_panel_impl,
-            )
-            .context("failed to define host_register_sidebar_panel")?;
-        linker
-            .func_wrap("env", "host_subscribe_event", host_subscribe_event_impl)
-            .context("failed to define host_subscribe_event")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_set_status_message",
-                host_set_status_message_impl,
-            )
-            .context("failed to define host_set_status_message")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_get_document_text",
-                host_get_document_text_impl,
-            )
-            .context("failed to define host_get_document_text")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_get_document_path",
-                host_get_document_path_impl,
-            )
-            .context("failed to define host_get_document_path")?;
-        linker
-            .func_wrap("env", "host_set_panel_ui", host_set_panel_ui_impl)
-            .context("failed to define host_set_panel_ui")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_set_decorations",
-                host_set_decorations_impl,
-            )
-            .context("failed to define host_set_decorations")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_clear_decorations",
-                host_clear_decorations_impl,
-            )
-            .context("failed to define host_clear_decorations")?;
-        linker
-            .func_wrap("env", "host_show_overlay", host_show_overlay_impl)
-            .context("failed to define host_show_overlay")?;
-        linker
-            .func_wrap("env", "host_hide_overlay", host_hide_overlay_impl)
-            .context("failed to define host_hide_overlay")?;
-        linker
-            .func_wrap("env", "host_show_tooltip", host_show_tooltip_impl)
-            .context("failed to define host_show_tooltip")?;
-        linker
-            .func_wrap("env", "host_hide_tooltip", host_hide_tooltip_impl)
-            .context("failed to define host_hide_tooltip")?;
-        linker
-            .func_wrap("env", "host_insert_text", host_insert_text_impl)
-            .context("failed to define host_insert_text")?;
-        linker
-            .func_wrap("env", "host_replace_range", host_replace_range_impl)
-            .context("failed to define host_replace_range")?;
-        linker
-            .func_wrap("env", "host_create_webview", host_create_webview_impl)
-            .context("failed to define host_create_webview")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_navigate_webview",
-                host_navigate_webview_impl,
-            )
-            .context("failed to define host_navigate_webview")?;
-        linker
-            .func_wrap(
-                "env",
-                "host_respond_webview_request",
-                host_respond_webview_request_impl,
-            )
-            .context("failed to define host_respond_webview_request")?;
-        Ok(())
-    }
-
-    // ── Registry access ───────────────────────────────────────
 
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
@@ -273,284 +265,278 @@ impl ExtensionHost {
         &mut self.registry
     }
 
-    // ── Discovery ─────────────────────────────────────────────
-
     pub fn discover_in_dir(&mut self, dir: &Path) -> Result<Vec<String>> {
-        self.registry.discover_in_dir(dir)
+        let discovered = self.registry.discover_in_dir(dir)?;
+        self.rebuild_static_contributions();
+        Ok(discovered)
+    }
+
+    pub fn load_dev_extensions(&mut self) -> Result<Vec<String>> {
+        self.registry
+            .load_dev_extensions_file(&self.dev_extensions_file)?;
+        let discovered = self.registry.discover_dev_extensions()?;
+        self.rebuild_static_contributions();
+        Ok(discovered)
+    }
+
+    pub fn install_dev_extension(&mut self, dir: PathBuf) -> Result<String> {
+        let id = self.registry.discover_extension_dir(&dir, true)?;
+        self.registry.add_dev_extension_dir(dir);
+        self.registry
+            .save_dev_extensions_file(&self.dev_extensions_file)?;
+        self.rebuild_static_contributions();
+        Ok(id)
+    }
+
+    pub fn save_dev_extension_state(&self) -> Result<()> {
+        self.registry
+            .save_dev_extensions_file(&self.dev_extensions_file)
     }
 
     pub fn activate_discovered(&mut self) -> Result<Vec<String>> {
-        let to_activate: Vec<String> = self
-            .registry
-            .discovered_extensions()
-            .iter()
-            .map(|e| e.manifest.id.clone())
-            .collect();
-
-        let mut activated = Vec::new();
-        for ext_id in to_activate {
-            match self.load_and_activate(&ext_id) {
-                Ok(()) => activated.push(ext_id),
-                Err(e) => {
-                    eprintln!("failed to activate extension {}: {}", ext_id, e);
-                    self.registry.mark_failed(&ext_id, format!("{}", e));
-                }
-            }
-        }
-        Ok(activated)
+        Ok(Vec::new())
     }
 
-    fn load_and_activate(&mut self, extension_id: &str) -> Result<()> {
+    pub fn unload_extension(&mut self, extension_id: &str) -> Result<()> {
+        if let Some(mut loaded) = self.loaded_extensions.remove(extension_id) {
+            let _ = loaded.bindings.call_deactivate(&mut loaded.store);
+        }
+        self.registry.disable(extension_id);
+        self.panel_uis
+            .retain(|panel_id, _| !panel_id.starts_with(&format!("{extension_id}.")));
+        self.save_dev_extension_state()?;
+        self.rebuild_static_contributions();
+        Ok(())
+    }
+
+    pub fn enable_extension(&mut self, extension_id: &str) -> Result<()> {
+        self.registry.enable(extension_id);
+        self.save_dev_extension_state()?;
+        self.rebuild_static_contributions();
+        Ok(())
+    }
+
+    pub fn activate_extension(&mut self, extension_id: &str) -> Result<()> {
+        if self.loaded_extensions.contains_key(extension_id) {
+            return Ok(());
+        }
+        if self.registry.is_disabled(extension_id) {
+            return Ok(());
+        }
+
         let entry = self
             .registry
             .get(extension_id)
-            .ok_or_else(|| anyhow::anyhow!("extension not found: {}", extension_id))?
+            .ok_or_else(|| anyhow::anyhow!("extension not found: {extension_id}"))?
             .clone();
-
-        let wasm_path = entry.directory.join(&entry.manifest.entry);
-        if !wasm_path.exists() {
-            anyhow::bail!("extension entry file not found: {}", wasm_path.display());
+        let component_path = entry.directory.join(&entry.manifest.wasm.component);
+        if !component_path.exists() {
+            anyhow::bail!(
+                "extension component not found: {}",
+                component_path.display()
+            );
         }
 
-        let wasm_bytes = std::fs::read(&wasm_path)
-            .with_context(|| format!("failed to read WASM: {}", wasm_path.display()))?;
-
-        let module = Module::new(&self.engine, &wasm_bytes)
-            .context("failed to compile WASM module")?;
-
-        let state = ExtensionHostState::new(
-            extension_id.to_string(),
-            entry.directory.clone(),
-            entry.manifest.clone(),
+        let component = Component::from_file(&self.engine, &component_path)
+            .with_context(|| format!("failed to load component {}", component_path.display()))?;
+        let mut store = Store::new(
+            &self.engine,
+            ExtensionRuntimeState::new(extension_id.to_string(), entry.manifest.clone()),
         );
-        let mut store = Store::new(&self.engine, state);
+        store
+            .data_mut()
+            .set_document(self.document_text.clone(), self.document_path.clone());
+        let bindings = ExtensionWorld::instantiate(&mut store, &component, &self.linker)
+            .context("failed to instantiate extension component")?;
 
-        let instance_pre = self
-            .linker
-            .instantiate(&mut store, &module)
-            .context("failed to instantiate WASM module")?;
-
-        let instance = instance_pre
-            .start(&mut store)
-            .context("failed to start WASM module")?;
-
-        let memory = get_memory(&instance, &store)?;
-
-        // Call plugin_init
-        Self::call_init(&instance, &mut store)?;
-
-        // Collect contributions
-        let new_commands = store.data_mut().take_commands();
-        let new_panels = store.data_mut().take_panels();
-        let new_subscriptions = store.data_mut().take_subscriptions();
-
-        let subscribed_events: Vec<u32> = new_subscriptions
-            .iter()
-            .map(|(event_type, _)| *event_type)
-            .collect();
-
-        self.commands.extend(new_commands);
-        self.sidebar_panels.extend(new_panels);
-
-        let loaded = LoadedExtension {
-            manifest: entry.manifest.clone(),
-            instance,
-            store,
-            memory,
-            subscribed_events,
+        let ctx = ActivationContext {
+            extension_id: extension_id.to_string(),
+            extension_path: entry.directory.to_string_lossy().to_string(),
         };
-        self.loaded_extensions.push(loaded);
-        self.registry.mark_active(extension_id);
-
-        Ok(())
-    }
-
-    // ── Unload ────────────────────────────────────────────────
-
-    pub fn unload_extension(&mut self, extension_id: &str) -> Result<()> {
-        if let Some(pos) = self
-            .loaded_extensions
-            .iter()
-            .position(|p| p.manifest.id == extension_id)
-        {
-            let mut plugin = self.loaded_extensions.remove(pos);
-            Self::call_shutdown(&mut plugin);
-            self.commands.retain(|c| c.extension_id != extension_id);
-            self.sidebar_panels
-                .retain(|p| p.extension_id != extension_id);
+        if let Err(err) = bindings.call_activate(&mut store, &ctx)? {
+            anyhow::bail!(err.message);
         }
-        self.registry.disable(extension_id);
+
+        self.loaded_extensions.insert(
+            extension_id.to_string(),
+            LoadedExtension {
+                manifest: entry.manifest.clone(),
+                store,
+                bindings,
+            },
+        );
+        self.registry.mark_active(extension_id);
+        self.collect_extension_state(extension_id);
         Ok(())
     }
-
-    // ── Event dispatch ────────────────────────────────────────
 
     pub fn dispatch_event(
         &mut self,
         event_type: &str,
-        document_id: &str,
+        _document_id: &str,
         document_text: &str,
         document_path: Option<&str>,
     ) {
-        // Map string event type to u32 code matching SDK EventType enum
-        let event_type_code: u32 = match event_type {
-            "document.opened" => 0,
-            "document.closed" => 1,
-            "document.changed" => 2,
-            "document.saved" => 3,
-            "selection.changed" => 4,
-            "editor.focused" => 5,
-            "editor.blurred" => 6,
-            _ => 2, // default to DocumentChanged
-        };
+        self.update_document(
+            document_text.to_string(),
+            document_path.map(ToOwned::to_owned),
+        );
 
-        // Serialize event data using the EventData enum for postcard compatibility
-        let event_data = crate::event::EventData::DocumentChanged {
-            text: document_text.to_string(),
-            path: document_path.map(|s| s.to_string()),
-        };
-        let event_bytes = postcard::to_allocvec(&event_data).unwrap_or_default();
+        let to_activate: Vec<String> = self
+            .registry
+            .available_extensions()
+            .into_iter()
+            .filter(|entry| entry.manifest.activates_on(event_type))
+            .map(|entry| entry.manifest.id.clone())
+            .collect();
 
-        for i in 0..self.loaded_extensions.len() {
-            let plugin = &mut self.loaded_extensions[i];
-            plugin.store.data_mut().update_document(
-                document_text.to_string(),
-                document_path.map(|s| s.to_string()),
-            );
-
-            // plugin_handle_event expects (event_type: u32, data_ptr: u32, data_len: u32)
-            if let Ok(func) = plugin.instance.get_typed_func::<(u32, u32, u32), ()>(
-                &plugin.store,
-                "plugin_handle_event",
-            ) {
-                let data_ptr = Self::write_to_plugin_memory(plugin, &event_bytes);
-                let _ = func.call(
-                    &mut plugin.store,
-                    (event_type_code, data_ptr, event_bytes.len() as u32),
-                );
+        for extension_id in to_activate {
+            if let Err(err) = self.activate_extension(&extension_id) {
+                self.registry.mark_failed(&extension_id, err.to_string());
+                eprintln!("failed to activate extension {extension_id}: {err}");
             }
+        }
 
-            let plugin = &mut self.loaded_extensions[i];
-            Self::collect_plugin_state(
-                plugin,
-                &mut self.panel_uis,
-                &mut self.decorations,
-                &mut self.active_overlay,
-                &mut self.active_tooltip,
-                &mut self.pending_status_message,
-                &mut self.pending_edits,
-                &mut self.webview_requests,
-            );
+        let event = ExtensionEvent {
+            event_type: event_type.to_string(),
+            document_text: document_text.to_string(),
+            document_path: document_path.map(ToOwned::to_owned),
+        };
+        let loaded: Vec<String> = self.loaded_extensions.keys().cloned().collect();
+        for extension_id in loaded {
+            if self
+                .loaded_extensions
+                .get(&extension_id)
+                .map(|loaded| loaded.manifest.activates_on(event_type))
+                .unwrap_or(false)
+            {
+                if let Err(err) = self.call_handle_event(&extension_id, event.clone()) {
+                    self.registry.mark_failed(&extension_id, err.to_string());
+                    eprintln!("extension event failed for {extension_id}: {err}");
+                }
+            }
         }
     }
 
-    pub fn execute_command(&mut self, command_id: u32) -> bool {
-        for i in 0..self.loaded_extensions.len() {
-            let plugin = &mut self.loaded_extensions[i];
-            if let Ok(func) = plugin
-                .instance
-                .get_typed_func::<u32, ()>(&plugin.store, "plugin_execute_command")
-            {
-                let _ = func.call(&mut plugin.store, command_id);
-                Self::collect_plugin_state(
-                    plugin,
-                    &mut self.panel_uis,
-                    &mut self.decorations,
-                    &mut self.active_overlay,
-                    &mut self.active_tooltip,
-                    &mut self.pending_status_message,
-                    &mut self.pending_edits,
-                    &mut self.webview_requests,
-                );
-                return true;
-            }
+    pub fn execute_command(&mut self, qualified_command_id: &str) -> bool {
+        let Some(command) = self
+            .commands
+            .iter()
+            .find(|command| command.qualified_id == qualified_command_id)
+            .cloned()
+        else {
+            return false;
+        };
+
+        if let Err(err) = self.activate_extension(&command.extension_id) {
+            self.registry
+                .mark_failed(&command.extension_id, err.to_string());
+            eprintln!(
+                "failed to activate extension {}: {err}",
+                command.extension_id
+            );
+            return false;
         }
-        false
+
+        match self.loaded_extensions.get_mut(&command.extension_id) {
+            Some(loaded) => {
+                let result = loaded
+                    .bindings
+                    .call_execute_command(&mut loaded.store, &command.qualified_id);
+                if let Err(err) = result.and_then(extension_call_result) {
+                    self.registry
+                        .mark_failed(&command.extension_id, err.to_string());
+                    eprintln!(
+                        "extension command failed for {}: {err}",
+                        command.extension_id
+                    );
+                    return false;
+                }
+                self.collect_extension_state(&command.extension_id);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn open_panel(&mut self, qualified_panel_id: &str) {
+        let Some(panel) = self
+            .sidebar_panels
+            .iter()
+            .find(|panel| panel.qualified_id == qualified_panel_id)
+            .cloned()
+        else {
+            return;
+        };
+
+        if let Err(err) = self.activate_extension(&panel.extension_id) {
+            self.registry
+                .mark_failed(&panel.extension_id, err.to_string());
+            eprintln!("failed to activate extension {}: {err}", panel.extension_id);
+        }
     }
 
     pub fn handle_ui_event(&mut self, event: UiEvent) {
-        let encoded = postcard::to_allocvec(&event).unwrap_or_default();
+        let panel_id = event.panel_id().to_string();
+        let Some(panel) = self
+            .sidebar_panels
+            .iter()
+            .find(|panel| panel.qualified_id == panel_id)
+            .cloned()
+        else {
+            return;
+        };
 
-        for i in 0..self.loaded_extensions.len() {
-            let plugin = &mut self.loaded_extensions[i];
-            if let Ok(func) = plugin.instance.get_typed_func::<(u32, u32), ()>(
-                &plugin.store,
-                "plugin_handle_ui_event",
-            ) {
-                let data_ptr = Self::write_to_plugin_memory(plugin, &encoded);
-                let _ = func.call(&mut plugin.store, (data_ptr, encoded.len() as u32));
-            }
-
-            let plugin = &mut self.loaded_extensions[i];
-            Self::collect_plugin_state(
-                plugin,
-                &mut self.panel_uis,
-                &mut self.decorations,
-                &mut self.active_overlay,
-                &mut self.active_tooltip,
-                &mut self.pending_status_message,
-                &mut self.pending_edits,
-                &mut self.webview_requests,
-            );
+        if let Err(err) = self.activate_extension(&panel.extension_id) {
+            self.registry
+                .mark_failed(&panel.extension_id, err.to_string());
+            eprintln!("failed to activate extension {}: {err}", panel.extension_id);
+            return;
         }
+
+        let wit_event = ui_event_to_wit(event);
+        if let Some(loaded) = self.loaded_extensions.get_mut(&panel.extension_id) {
+            let result = loaded
+                .bindings
+                .call_handle_ui_event(&mut loaded.store, &wit_event);
+            if let Err(err) = result.and_then(extension_call_result) {
+                self.registry
+                    .mark_failed(&panel.extension_id, err.to_string());
+                eprintln!(
+                    "extension UI event failed for {}: {err}",
+                    panel.extension_id
+                );
+            }
+        }
+        self.collect_extension_state(&panel.extension_id);
     }
 
     pub fn handle_hover(&mut self, hover_data: &str) -> Option<Tooltip> {
-        let hover_bytes = hover_data.as_bytes();
-
-        for i in 0..self.loaded_extensions.len() {
-            let plugin = &mut self.loaded_extensions[i];
-            if let Ok(func) = plugin.instance.get_typed_func::<(u32, u32), u64>(
-                &plugin.store,
-                "plugin_handle_hover",
-            ) {
-                let data_ptr = Self::write_to_plugin_memory(plugin, hover_bytes);
-                let result = func.call(&mut plugin.store, (data_ptr, hover_bytes.len() as u32));
-                if let Ok(packed) = result {
-                    if packed != 0 {
-                        let ptr = (packed >> 32) as u32;
-                        let len = (packed & 0xFFFFFFFF) as u32;
-                        let bytes = read_memory(&plugin.memory, &plugin.store, ptr, len);
-                        if let Ok(tooltip) = postcard::from_bytes::<Option<Tooltip>>(&bytes) {
-                            if let Some(t) = tooltip {
-                                return Some(t);
-                            }
+        for extension_id in self.loaded_extensions.keys().cloned().collect::<Vec<_>>() {
+            let Some(loaded) = self.loaded_extensions.get_mut(&extension_id) else {
+                continue;
+            };
+            let result = loaded
+                .bindings
+                .call_handle_hover(&mut loaded.store, hover_data);
+            match result {
+                Ok(Ok(Some(bytes))) => {
+                    if let Ok(payload) = serde_json::from_slice::<VersionedPayload<Tooltip>>(&bytes)
+                    {
+                        if payload.version == 1 {
+                            return Some(payload.data);
                         }
                     }
                 }
+                Ok(Ok(None)) => {}
+                Ok(Err(err)) => {
+                    eprintln!("extension hover failed for {extension_id}: {}", err.message)
+                }
+                Err(err) => eprintln!("extension hover trapped for {extension_id}: {err}"),
             }
         }
         None
     }
-
-    pub fn dispatch_webview_request(&mut self, request: WebViewRequest) {
-        let encoded = postcard::to_allocvec(&request).unwrap_or_default();
-
-        for i in 0..self.loaded_extensions.len() {
-            let plugin = &mut self.loaded_extensions[i];
-            if let Ok(func) = plugin.instance.get_typed_func::<(u32, u32), ()>(
-                &plugin.store,
-                "plugin_handle_webview_request",
-            ) {
-                let data_ptr = Self::write_to_plugin_memory(plugin, &encoded);
-                let _ = func.call(&mut plugin.store, (data_ptr, encoded.len() as u32));
-            }
-
-            let plugin = &mut self.loaded_extensions[i];
-            Self::collect_plugin_state(
-                plugin,
-                &mut self.panel_uis,
-                &mut self.decorations,
-                &mut self.active_overlay,
-                &mut self.active_tooltip,
-                &mut self.pending_status_message,
-                &mut self.pending_edits,
-                &mut self.webview_requests,
-            );
-        }
-    }
-
-    // ── Accessors ─────────────────────────────────────────────
 
     pub fn commands(&self) -> &[RegisteredCommand] {
         &self.commands
@@ -560,519 +546,264 @@ impl ExtensionHost {
         &self.sidebar_panels
     }
 
-    pub fn panel_ui(&self, panel_id: u32) -> Option<&UiNode> {
-        self.panel_uis.get(&panel_id)
-    }
-
-    pub fn decorations(&self) -> &[Decoration] {
-        &self.decorations
-    }
-
-    pub fn active_overlay(&self) -> Option<&OverlayPanel> {
-        self.active_overlay.as_ref()
-    }
-
-    pub fn take_status_message(&mut self) -> Option<String> {
-        std::mem::take(&mut self.pending_status_message)
-    }
-
-    pub fn take_edits(&mut self) -> Vec<PendingEdit> {
-        std::mem::take(&mut self.pending_edits)
-    }
-
-    pub fn take_webview_requests(&mut self) -> Vec<WebViewRequest> {
-        std::mem::take(&mut self.webview_requests)
+    pub fn panel_ui(&self, panel_id: &str) -> Option<&UiNode> {
+        self.panel_uis.get(panel_id)
     }
 
     pub fn loaded_manifests(&self) -> Vec<ExtensionManifest> {
-        self.loaded_extensions
-            .iter()
-            .map(|e| e.manifest.clone())
+        self.registry
+            .all_entries()
+            .into_iter()
+            .map(|entry| entry.manifest.clone())
             .collect()
     }
 
     pub fn update_document(&mut self, text: String, path: Option<String>) {
-        for plugin in &mut self.loaded_extensions {
-            plugin
+        self.document_text = text.clone();
+        self.document_path = path.clone();
+        for loaded in self.loaded_extensions.values_mut() {
+            loaded
                 .store
                 .data_mut()
-                .update_document(text.clone(), path.clone());
+                .set_document(text.clone(), path.clone());
         }
     }
 
+    pub fn take_outputs(&mut self) -> ExtensionOutputs {
+        let mut outputs = std::mem::take(&mut self.outputs);
+        if !self.panel_uis.is_empty() {
+            outputs.panel_uis.extend(self.panel_uis.clone());
+        }
+        outputs
+    }
+
     pub fn shutdown_all(&mut self) {
-        for plugin in &mut self.loaded_extensions {
-            Self::call_shutdown(plugin);
+        for loaded in self.loaded_extensions.values_mut() {
+            let _ = loaded.bindings.call_deactivate(&mut loaded.store);
         }
         self.loaded_extensions.clear();
     }
 
-    // ── Internal helpers ──────────────────────────────────────
-
-    fn call_init(instance: &Instance, store: &mut Store<ExtensionHostState>) -> Result<()> {
-        let func = instance
-            .get_typed_func::<(), ()>(&*store, "plugin_init")
-            .context("WASM module does not export 'plugin_init'")?;
-        func.call(&mut *store, ())
-            .context("failed to call plugin_init")
-    }
-
-    fn call_shutdown(plugin: &mut LoadedExtension) {
-        if let Ok(func) = plugin
-            .instance
-            .get_typed_func::<(), ()>(&plugin.store, "plugin_shutdown")
-        {
-            let _ = func.call(&mut plugin.store, ());
+    fn rebuild_static_contributions(&mut self) {
+        self.commands.clear();
+        self.sidebar_panels.clear();
+        for entry in self.registry.all_entries() {
+            if matches!(entry.state, ExtensionState::Disabled) {
+                continue;
+            }
+            if entry.manifest.capabilities.commands {
+                for command in &entry.manifest.contributes.commands {
+                    self.commands.push(RegisteredCommand {
+                        qualified_id: entry.manifest.qualified_command_id(&command.id),
+                        command_id: command.id.clone(),
+                        label: command.title.clone(),
+                        key_binding: command.key.clone(),
+                        extension_id: entry.manifest.id.clone(),
+                    });
+                }
+            }
+            if entry.manifest.capabilities.panels {
+                for panel in &entry.manifest.contributes.panels {
+                    self.sidebar_panels.push(RegisteredPanel {
+                        qualified_id: entry.manifest.qualified_panel_id(&panel.id),
+                        panel_id: panel.id.clone(),
+                        label: panel.title.clone(),
+                        icon: panel.icon.clone(),
+                        extension_id: entry.manifest.id.clone(),
+                    });
+                }
+            }
         }
     }
 
-    fn write_to_plugin_memory(plugin: &mut LoadedExtension, data: &[u8]) -> u32 {
-        let ptr = plugin.store.data_mut().alloc_offset;
-        plugin.store.data_mut().alloc_offset += data.len() as u32;
-
-        if write_memory(&plugin.memory, &mut plugin.store, ptr, data).is_ok() {
-            ptr
-        } else {
-            0
-        }
-    }
-
-    fn collect_plugin_state(
-        plugin: &mut LoadedExtension,
-        panel_uis: &mut HashMap<u32, UiNode>,
-        decorations: &mut Vec<Decoration>,
-        active_overlay: &mut Option<OverlayPanel>,
-        active_tooltip: &mut Option<Tooltip>,
-        status_message: &mut Option<String>,
-        pending_edits: &mut Vec<PendingEdit>,
-        webview_requests: &mut Vec<WebViewRequest>,
-    ) {
-        let state = plugin.store.data_mut();
-
-        if let Some(msg) = state.take_status_message() {
-            *status_message = Some(msg);
-        }
-
-        for (panel_id, ui) in state.panel_uis.drain() {
-            panel_uis.insert(panel_id, ui);
-        }
-
-        if !state.decorations.is_empty() {
-            *decorations = std::mem::take(&mut state.decorations);
-        }
-
-        if state.active_overlay.is_some() {
-            *active_overlay = state.active_overlay.take();
-        }
-
-        if state.active_tooltip.is_some() {
-            *active_tooltip = state.active_tooltip.take();
-        }
-
-        let edits = state.take_edits();
-        if !edits.is_empty() {
-            pending_edits.extend(edits);
-        }
-
-        let requests = state.take_webview_requests();
-        if !requests.is_empty() {
-            webview_requests.extend(requests);
-        }
-    }
-}
-
-// ── Memory helpers ────────────────────────────────────────────
-
-fn get_memory(
-    instance: &wasmi::Instance,
-    store: &Store<ExtensionHostState>,
-) -> Result<Memory> {
-    instance
-        .get_export(&store, "memory")
-        .and_then(|e| e.into_memory())
-        .ok_or_else(|| anyhow::anyhow!("WASM module does not export 'memory'"))
-}
-
-fn read_memory(memory: &Memory, store: &Store<ExtensionHostState>, ptr: u32, len: u32) -> Vec<u8> {
-    let data = memory.data(&store);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end <= data.len() {
-        data[start..end].to_vec()
-    } else {
-        Vec::new()
-    }
-}
-
-fn write_memory(
-    memory: &Memory,
-    store: &mut Store<ExtensionHostState>,
-    ptr: u32,
-    data: &[u8],
-) -> Result<()> {
-    let mem_data = memory.data_mut(&mut *store);
-    let start = ptr as usize;
-    let end = start + data.len();
-    if end <= mem_data.len() {
-        mem_data[start..end].copy_from_slice(data);
+    fn call_handle_event(&mut self, extension_id: &str, event: ExtensionEvent) -> Result<()> {
+        let Some(loaded) = self.loaded_extensions.get_mut(extension_id) else {
+            return Ok(());
+        };
+        let event = WitExtensionEvent {
+            event_type: event.event_type,
+            document_text: event.document_text,
+            document_path: event.document_path,
+        };
+        let result = loaded.bindings.call_handle_event(&mut loaded.store, &event);
+        result.and_then(extension_call_result)?;
+        self.collect_extension_state(extension_id);
         Ok(())
-    } else {
-        anyhow::bail!("write out of bounds: {}..{} > {}", start, end, mem_data.len())
     }
-}
 
-fn read_string_from_caller(
-    caller: &wasmi::Caller<ExtensionHostState>,
-    ptr: u32,
-    len: u32,
-) -> String {
-    let memory = match caller.get_export("memory") {
-        Some(wasmi::Extern::Memory(mem)) => mem,
-        _ => return String::new(),
-    };
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end <= data.len() {
-        String::from_utf8_lossy(&data[start..end]).into_owned()
-    } else {
-        String::new()
-    }
-}
-
-// ── Host function implementations ─────────────────────────────
-
-fn host_alloc_impl(mut caller: wasmi::Caller<ExtensionHostState>, size: u32) -> u32 {
-    let old_offset = caller.data_mut().alloc_offset;
-    caller.data_mut().alloc_offset = old_offset + size;
-    old_offset
-}
-
-fn host_dealloc_impl(_caller: wasmi::Caller<ExtensionHostState>, _ptr: u32, _size: u32) {}
-
-fn host_register_command_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    id_ptr: u32,
-    id_len: u32,
-    label_ptr: u32,
-    label_len: u32,
-    key_ptr: u32,
-    key_len: u32,
-) -> u32 {
-    let id = read_string_from_caller(&caller, id_ptr, id_len);
-    let label = read_string_from_caller(&caller, label_ptr, label_len);
-    let key_binding = if key_len > 0 {
-        Some(read_string_from_caller(&caller, key_ptr, key_len))
-    } else {
-        None
-    };
-
-    let data = caller.data_mut();
-    let cmd_id = data.next_command_id;
-    data.next_command_id += 1;
-    data.pending_commands.push(RegisteredCommand {
-        id: cmd_id,
-        command_id: id,
-        label,
-        key_binding,
-        extension_id: data.extension_id.clone(),
-    });
-    cmd_id
-}
-
-fn host_register_sidebar_panel_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    id_ptr: u32,
-    id_len: u32,
-    label_ptr: u32,
-    label_len: u32,
-    icon: u32,
-) -> u32 {
-    let id = read_string_from_caller(&caller, id_ptr, id_len);
-    let label = read_string_from_caller(&caller, label_ptr, label_len);
-    let icon_name = match icon {
-        0 => "file-text",
-        1 => "search",
-        2 => "triangle-alert",
-        3 => "settings",
-        4 => "bar-chart",
-        _ => "file-text",
-    };
-
-    let data = caller.data_mut();
-    let panel_id = data.next_panel_id;
-    data.next_panel_id += 1;
-    data.pending_panels.push(RegisteredPanel {
-        id: panel_id,
-        panel_id: id,
-        label,
-        icon: icon_name.into(),
-        extension_id: data.extension_id.clone(),
-    });
-    panel_id
-}
-
-fn host_subscribe_event_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    event_type: u32,
-) -> u32 {
-    let data = caller.data_mut();
-    let sub_id = data.next_subscription_id;
-    data.next_subscription_id += 1;
-    data.pending_subscriptions.push((event_type, sub_id));
-    sub_id
-}
-
-fn host_set_status_message_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    msg_ptr: u32,
-    msg_len: u32,
-) {
-    let msg = read_string_from_caller(&caller, msg_ptr, msg_len);
-    caller.data_mut().status_message = Some(msg);
-}
-
-fn host_get_document_text_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    buf_ptr: u32,
-    buf_len: u32,
-) -> u32 {
-    let text_bytes = caller.data().document_text.as_bytes().to_vec();
-    let write_len = (text_bytes.len() as u32).min(buf_len) as usize;
-    if write_len > 0 {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return 0,
-        };
-        let start = buf_ptr as usize;
-        if let Some(slice) = memory.data_mut(&mut caller).get_mut(start..start + write_len) {
-            slice.copy_from_slice(&text_bytes[..write_len]);
-        }
-    }
-    write_len as u32
-}
-
-fn host_get_document_path_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    buf_ptr: u32,
-    buf_len: u32,
-) -> u32 {
-    let path_bytes = match &caller.data().document_path {
-        Some(p) => p.as_bytes().to_vec(),
-        None => return 0,
-    };
-    let write_len = (path_bytes.len() as u32).min(buf_len) as usize;
-    if write_len > 0 {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return 0,
-        };
-        let start = buf_ptr as usize;
-        if let Some(slice) = memory.data_mut(&mut caller).get_mut(start..start + write_len) {
-            slice.copy_from_slice(&path_bytes[..write_len]);
-        }
-    }
-    write_len as u32
-}
-
-fn host_set_panel_ui_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    panel_id: u32,
-    ui_ptr: u32,
-    ui_len: u32,
-) {
-    let bytes = {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return,
-        };
-        let data = memory.data(&caller);
-        let start = ui_ptr as usize;
-        let end = start + ui_len as usize;
-        if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
+    fn collect_extension_state(&mut self, extension_id: &str) {
+        let Some(loaded) = self.loaded_extensions.get_mut(extension_id) else {
             return;
+        };
+        let outputs = loaded.store.data_mut().take_outputs();
+        if !outputs.panel_uis.is_empty() {
+            self.panel_uis.extend(outputs.panel_uis.clone());
         }
-    };
-    if let Ok(ui) = postcard::from_bytes::<UiNode>(&bytes) {
-        caller.data_mut().panel_uis.insert(panel_id, ui);
+        self.outputs.merge(outputs);
     }
 }
 
-fn host_set_decorations_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    decos_ptr: u32,
-    decos_len: u32,
-) {
-    let bytes = {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return,
-        };
-        let data = memory.data(&caller);
-        let start = decos_ptr as usize;
-        let end = start + decos_len as usize;
-        if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            return;
-        }
-    };
-    if let Ok(decos) = postcard::from_bytes::<Vec<Decoration>>(&bytes) {
-        caller.data_mut().decorations = decos;
+fn extension_call_result(result: std::result::Result<(), ExtensionError>) -> wasmtime::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => anyhow::bail!(err.message),
     }
 }
 
-fn host_clear_decorations_impl(mut caller: wasmi::Caller<ExtensionHostState>) {
-    caller.data_mut().decorations.clear();
-}
-
-fn host_show_overlay_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    overlay_ptr: u32,
-    overlay_len: u32,
-) {
-    let bytes = {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return,
-        };
-        let data = memory.data(&caller);
-        let start = overlay_ptr as usize;
-        let end = start + overlay_len as usize;
-        if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            return;
-        }
-    };
-    if let Ok(overlay) = postcard::from_bytes::<OverlayPanel>(&bytes) {
-        caller.data_mut().active_overlay = Some(overlay);
+fn ui_event_to_wit(event: UiEvent) -> WitUiEvent {
+    match event {
+        UiEvent::ButtonClicked {
+            panel_id,
+            element_id,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "button.clicked".into(),
+            value: None,
+            index: None,
+            checked: None,
+        },
+        UiEvent::InputChanged {
+            panel_id,
+            element_id,
+            value,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "input.changed".into(),
+            value: Some(value),
+            index: None,
+            checked: None,
+        },
+        UiEvent::CheckboxToggled {
+            panel_id,
+            element_id,
+            checked,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "checkbox.toggled".into(),
+            value: None,
+            index: None,
+            checked: Some(checked),
+        },
+        UiEvent::SelectChanged {
+            panel_id,
+            element_id,
+            index,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "select.changed".into(),
+            value: None,
+            index: Some(index as u32),
+            checked: None,
+        },
+        UiEvent::ToggleChanged {
+            panel_id,
+            element_id,
+            active,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "toggle.changed".into(),
+            value: None,
+            index: None,
+            checked: Some(active),
+        },
+        UiEvent::LinkClicked {
+            panel_id,
+            element_id,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "link.clicked".into(),
+            value: None,
+            index: None,
+            checked: None,
+        },
+        UiEvent::ListItemClicked {
+            panel_id,
+            element_id,
+            item_id,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "list.item.clicked".into(),
+            value: Some(item_id),
+            index: None,
+            checked: None,
+        },
+        UiEvent::DisclosureToggled {
+            panel_id,
+            element_id,
+            open,
+        } => WitUiEvent {
+            panel_id,
+            element_id,
+            event_kind: "disclosure.toggled".into(),
+            value: None,
+            index: None,
+            checked: Some(open),
+        },
     }
 }
 
-fn host_hide_overlay_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    _id_ptr: u32,
-    _id_len: u32,
-) {
-    caller.data_mut().active_overlay = None;
+fn default_dev_extensions_file() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".vellum")
+        .join("dev-extensions.toml")
 }
 
-fn host_show_tooltip_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    _position: u32,
-    content_ptr: u32,
-    content_len: u32,
-) {
-    let bytes = {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{Capabilities, ExtensionManifest, WasmConfig};
+
+    #[test]
+    fn host_initializes() {
+        assert!(ExtensionHost::new().is_ok());
+    }
+
+    #[test]
+    fn panel_view_rejects_webview_without_capability() {
+        let manifest = ExtensionManifest {
+            id: "test.webview".into(),
+            name: "WebView Test".into(),
+            version: "0.1.0".into(),
+            schema_version: 1,
+            authors: Vec::new(),
+            description: String::new(),
+            repository: String::new(),
+            wasm: WasmConfig {
+                component: "target/wasm32-wasip2/release/test.wasm".into(),
+            },
+            activation: Default::default(),
+            capabilities: Capabilities {
+                panels: true,
+                webview: false,
+                ..Default::default()
+            },
+            contributes: Default::default(),
         };
-        let data = memory.data(&caller);
-        let start = content_ptr as usize;
-        let end = start + content_len as usize;
-        if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            return;
-        }
-    };
-    if let Ok(content) = postcard::from_bytes::<UiNode>(&bytes) {
-        caller.data_mut().active_tooltip = Some(Tooltip {
-            content,
-            position: crate::contributions::TooltipPosition::Above,
+        let mut state = ExtensionRuntimeState::new("test.webview".into(), manifest);
+        let payload = VersionedPayload::new(UiNode::WebView {
+            id: "preview".into(),
+            url: "https://example.com".into(),
+            allow_scripts: false,
+            allow_devtools: false,
         });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+
+        let err = <ExtensionRuntimeState as bindings::vellum::extension::ui::Host>::set_panel_view(
+            &mut state,
+            "panel".into(),
+            bytes,
+        )
+        .unwrap_err();
+
+        assert!(err.message.contains("webview"));
     }
-}
-
-fn host_hide_tooltip_impl(mut caller: wasmi::Caller<ExtensionHostState>) {
-    caller.data_mut().active_tooltip = None;
-}
-
-fn host_insert_text_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    text_ptr: u32,
-    text_len: u32,
-) {
-    let text = read_string_from_caller(&caller, text_ptr, text_len);
-    caller
-        .data_mut()
-        .pending_edits
-        .push(PendingEdit::Insert(text));
-}
-
-fn host_replace_range_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    start: u32,
-    end: u32,
-    text_ptr: u32,
-    text_len: u32,
-) {
-    let text = read_string_from_caller(&caller, text_ptr, text_len);
-    caller.data_mut().pending_edits.push(PendingEdit::ReplaceRange {
-        start: start as usize,
-        end: end as usize,
-        text,
-    });
-}
-
-fn host_create_webview_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    url_ptr: u32,
-    url_len: u32,
-    allow_scripts: u32,
-    allow_devtools: u32,
-) -> u32 {
-    let url = read_string_from_caller(&caller, url_ptr, url_len);
-    let data = caller.data_mut();
-    let id = data.next_webview_id;
-    data.next_webview_id += 1;
-    data.pending_webview_requests.push(WebViewRequest {
-        webview_id: id.to_string(),
-        url,
-        method: "GET".into(),
-        headers: Vec::new(),
-    });
-    id
-}
-
-fn host_navigate_webview_impl(
-    _caller: wasmi::Caller<ExtensionHostState>,
-    _webview_id: u32,
-    _url_ptr: u32,
-    _url_len: u32,
-) {
-    // Navigation handled by the host UI layer
-}
-
-fn host_respond_webview_request_impl(
-    mut caller: wasmi::Caller<ExtensionHostState>,
-    webview_id: u32,
-    mime_ptr: u32,
-    mime_len: u32,
-    body_ptr: u32,
-    body_len: u32,
-) {
-    let mime_type = read_string_from_caller(&caller, mime_ptr, mime_len);
-    let body = {
-        let memory = match caller.get_export("memory") {
-            Some(wasmi::Extern::Memory(mem)) => mem,
-            _ => return,
-        };
-        let data = memory.data(&caller);
-        let start = body_ptr as usize;
-        let end = start + body_len as usize;
-        if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            return;
-        }
-    };
-    caller.data_mut().protocol_responses.insert(
-        webview_id,
-        ProtocolResponse { mime_type, body },
-    );
 }

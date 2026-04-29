@@ -59,13 +59,28 @@ fn walk_block_nodes(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHig
             "block_quote" => highlight_block_quote(cursor, text, spans),
             "list" => highlight_list(cursor, text, spans),
             "thematic_break" => {
-                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
+                push_span(
+                    spans,
+                    node.start_byte(),
+                    node.end_byte(),
+                    CodeTokenType::Keyword,
+                );
             }
             "html_block" => {
-                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Tag);
+                push_span(
+                    spans,
+                    node.start_byte(),
+                    node.end_byte(),
+                    CodeTokenType::Tag,
+                );
             }
             "minus_metadata" | "plus_metadata" => {
-                push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::Keyword);
+                push_span(
+                    spans,
+                    node.start_byte(),
+                    node.end_byte(),
+                    CodeTokenType::Keyword,
+                );
             }
             "link_reference_definition" => {
                 highlight_link_reference_definition(cursor, text, spans);
@@ -91,23 +106,20 @@ fn walk_block_nodes(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHig
     }
 }
 
-fn highlight_atx_heading(
-    cursor: &mut TreeCursor,
-    text: &str,
-    spans: &mut Vec<CodeHighlightSpan>,
-) {
+fn highlight_atx_heading(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<CodeHighlightSpan>) {
     let node = cursor.node();
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
             match child.kind() {
-                "atx_h1_marker"
-                | "atx_h2_marker"
-                | "atx_h3_marker"
-                | "atx_h4_marker"
-                | "atx_h5_marker"
-                | "atx_h6_marker" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                "atx_h1_marker" | "atx_h2_marker" | "atx_h3_marker" | "atx_h4_marker"
+                | "atx_h5_marker" | "atx_h6_marker" => {
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Keyword,
+                    );
                     highlight_trailing_spaces_after_marker(child, text, spans);
                 }
                 "inline" => {
@@ -136,7 +148,12 @@ fn highlight_setext_heading(
             let child = cursor.node();
             match child.kind() {
                 "setext_h1_underline" | "setext_h2_underline" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Keyword,
+                    );
                 }
                 "paragraph" => {
                     highlight_inline_content(cursor, text, spans);
@@ -168,14 +185,18 @@ fn highlight_fenced_code_block(
             let child = cursor.node();
             match child.kind() {
                 "fenced_code_block_delimiter" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Keyword,
+                    );
                 }
                 "info_string" => {
                     let lang_node = find_named_child(child, "language");
                     if let Some(lang_node) = lang_node {
-                        language = Some(
-                            text[lang_node.start_byte()..lang_node.end_byte()].to_string(),
-                        );
+                        language =
+                            Some(text[lang_node.start_byte()..lang_node.end_byte()].to_string());
                         push_span(
                             spans,
                             lang_node.start_byte(),
@@ -216,12 +237,7 @@ fn highlight_fenced_code_block(
             let highlighter = HIGHLIGHTER.get_or_init(CodeHighlighter::new);
             if let Some(result) = highlighter.highlight(lang, code_text) {
                 for span in &result.spans {
-                    push_span(
-                        spans,
-                        start + span.start,
-                        start + span.end,
-                        span.token_type,
-                    );
+                    push_span(spans, start + span.start, start + span.end, span.token_type);
                 }
             } else {
                 push_span(spans, start, start + code_only_end, CodeTokenType::String);
@@ -239,20 +255,10 @@ fn highlight_fenced_code_block(
                     CodeTokenType::Default,
                 );
             }
-            push_span(
-                spans,
-                start + delim_start,
-                end,
-                CodeTokenType::Keyword,
-            );
+            push_span(spans, start + delim_start, end, CodeTokenType::Keyword);
         } else {
             if code_only_end < content_text.len() {
-                push_span(
-                    spans,
-                    start + code_only_end,
-                    end,
-                    CodeTokenType::Default,
-                );
+                push_span(spans, start + code_only_end, end, CodeTokenType::Default);
             }
         }
     }
@@ -288,10 +294,20 @@ fn highlight_block_quote(cursor: &mut TreeCursor, text: &str, spans: &mut Vec<Co
             let child = cursor.node();
             match child.kind() {
                 "block_quote_marker" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Keyword,
+                    );
                 }
                 "block_continuation" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Keyword,
+                    );
                 }
                 _ => {
                     walk_block_nodes(cursor, text, spans);
@@ -340,16 +356,34 @@ fn highlight_single_list_item(
     loop {
         let child = cursor.node();
         match child.kind() {
-            "list_marker_dot" | "list_marker_minus" | "list_marker_plus"
-            | "list_marker_star" | "list_marker_parenthesis" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+            "list_marker_dot"
+            | "list_marker_minus"
+            | "list_marker_plus"
+            | "list_marker_star"
+            | "list_marker_parenthesis" => {
+                push_span(
+                    spans,
+                    child.start_byte(),
+                    child.end_byte(),
+                    CodeTokenType::Keyword,
+                );
                 highlight_trailing_spaces_after_marker(child, text, spans);
             }
             "task_list_marker_checked" | "task_list_marker_unchecked" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Attribute);
+                push_span(
+                    spans,
+                    child.start_byte(),
+                    child.end_byte(),
+                    CodeTokenType::Attribute,
+                );
             }
             "block_continuation" => {
-                push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Keyword);
+                push_span(
+                    spans,
+                    child.start_byte(),
+                    child.end_byte(),
+                    CodeTokenType::Keyword,
+                );
             }
             "paragraph" => {
                 highlight_inline_content(cursor, text, spans);
@@ -377,7 +411,12 @@ fn highlight_indented_code_block(
     spans: &mut Vec<CodeHighlightSpan>,
 ) {
     let node = cursor.node();
-    push_span(spans, node.start_byte(), node.end_byte(), CodeTokenType::String);
+    push_span(
+        spans,
+        node.start_byte(),
+        node.end_byte(),
+        CodeTokenType::String,
+    );
 }
 
 fn highlight_link_reference_definition(
@@ -391,16 +430,36 @@ fn highlight_link_reference_definition(
             let child = cursor.node();
             match child.kind() {
                 "[" | "]" | ":" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Operator);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Operator,
+                    );
                 }
                 "link_label" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::Function);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::Function,
+                    );
                 }
                 "link_destination" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::String,
+                    );
                 }
                 "link_title" => {
-                    push_span(spans, child.start_byte(), child.end_byte(), CodeTokenType::String);
+                    push_span(
+                        spans,
+                        child.start_byte(),
+                        child.end_byte(),
+                        CodeTokenType::String,
+                    );
                 }
                 _ => {}
             }
@@ -489,7 +548,12 @@ fn walk_inline_tree(
             }
             "code_span" => highlight_inline_code_span(cursor, inline_text, offset, spans),
             "emphasis_delimiter" | "strong_emphasis_delimiter" => {
-                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Operator);
+                push_span(
+                    spans,
+                    offset + node.start_byte(),
+                    offset + node.end_byte(),
+                    CodeTokenType::Operator,
+                );
             }
             "emphasis" | "strong_emphasis" => {
                 if cursor.goto_first_child() {
@@ -507,16 +571,38 @@ fn walk_inline_tree(
             }
             "image" => highlight_inline_image(cursor, inline_text, offset, spans),
             "strikethrough" => {
-                highlight_inline_delimited(cursor, inline_text, offset, spans, "~~", CodeTokenType::Operator);
+                highlight_inline_delimited(
+                    cursor,
+                    inline_text,
+                    offset,
+                    spans,
+                    "~~",
+                    CodeTokenType::Operator,
+                );
             }
             "email_autolink" | "autolink" => {
-                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + node.start_byte(),
+                    offset + node.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             "backslash_escape" => {
-                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Escape);
+                push_span(
+                    spans,
+                    offset + node.start_byte(),
+                    offset + node.end_byte(),
+                    CodeTokenType::Escape,
+                );
             }
             "[" | "]" | "(" | ")" | "!" => {
-                push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::Operator);
+                push_span(
+                    spans,
+                    offset + node.start_byte(),
+                    offset + node.end_byte(),
+                    CodeTokenType::Operator,
+                );
             }
             _ => {}
         }
@@ -538,9 +624,19 @@ fn highlight_inline_code_span(
         loop {
             let child = cursor.node();
             if child.kind() == "`" {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Punctuation);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::Punctuation,
+                );
             } else {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             if !cursor.goto_next_sibling() {
                 break;
@@ -548,7 +644,12 @@ fn highlight_inline_code_span(
         }
         cursor.goto_parent();
     } else {
-        push_span(spans, offset + node.start_byte(), offset + node.end_byte(), CodeTokenType::String);
+        push_span(
+            spans,
+            offset + node.start_byte(),
+            offset + node.end_byte(),
+            CodeTokenType::String,
+        );
     }
 }
 
@@ -565,16 +666,36 @@ fn highlight_inline_link(
         let child = cursor.node();
         match child.kind() {
             "[" | "]" | "(" | ")" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Operator);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::Operator,
+                );
             }
             "link_text" | "link_label" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Function);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::Function,
+                );
             }
             "link_destination" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             "link_title" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             _ => {}
         }
@@ -598,16 +719,36 @@ fn highlight_inline_image(
         let child = cursor.node();
         match child.kind() {
             "!" | "[" | "]" | "(" | ")" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Operator);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::Operator,
+                );
             }
             "image_description" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::Function);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::Function,
+                );
             }
             "link_destination" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             "link_title" => {
-                push_span(spans, offset + child.start_byte(), offset + child.end_byte(), CodeTokenType::String);
+                push_span(
+                    spans,
+                    offset + child.start_byte(),
+                    offset + child.end_byte(),
+                    CodeTokenType::String,
+                );
             }
             _ => {}
         }
@@ -680,7 +821,12 @@ fn find_named_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_
         .find(|child| child.kind() == kind)
 }
 
-fn push_span(spans: &mut Vec<CodeHighlightSpan>, start: usize, end: usize, token_type: CodeTokenType) {
+fn push_span(
+    spans: &mut Vec<CodeHighlightSpan>,
+    start: usize,
+    end: usize,
+    token_type: CodeTokenType,
+) {
     if start >= end {
         return;
     }
@@ -729,7 +875,10 @@ mod tests {
         eprintln!("--- SPANS ---");
         for s in &spans {
             let content = &text[s.start..s.end].replace('\n', "\\n");
-            eprintln!("  {:?} [{}..{}] {:?}", s.token_type, s.start, s.end, content);
+            eprintln!(
+                "  {:?} [{}..{}] {:?}",
+                s.token_type, s.start, s.end, content
+            );
         }
     }
 
@@ -760,8 +909,13 @@ mod tests {
     fn highlights_heading_marker() {
         debug_print_tree("# Title\n");
         let spans = highlight_markdown_source("# Title\n");
-        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
-        assert!(marker_span.is_some(), "should have a Keyword span for # marker");
+        let marker_span = spans
+            .iter()
+            .find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(
+            marker_span.is_some(),
+            "should have a Keyword span for # marker"
+        );
     }
 
     #[test]
@@ -772,7 +926,11 @@ mod tests {
             .iter()
             .filter(|s| s.token_type == CodeTokenType::Keyword)
             .collect();
-        assert!(keyword_spans.len() >= 2, "should have Keyword spans for fence delimiters, got: {:?}", keyword_spans);
+        assert!(
+            keyword_spans.len() >= 2,
+            "should have Keyword spans for fence delimiters, got: {:?}",
+            keyword_spans
+        );
     }
 
     #[test]
@@ -785,15 +943,25 @@ mod tests {
     #[test]
     fn highlights_block_quote_marker() {
         let spans = highlight_markdown_source("> quote");
-        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
-        assert!(marker_span.is_some(), "should have a Keyword span for > marker");
+        let marker_span = spans
+            .iter()
+            .find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(
+            marker_span.is_some(),
+            "should have a Keyword span for > marker"
+        );
     }
 
     #[test]
     fn highlights_list_marker() {
         let spans = highlight_markdown_source("- item");
-        let marker_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
-        assert!(marker_span.is_some(), "should have a Keyword span for list marker");
+        let marker_span = spans
+            .iter()
+            .find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(
+            marker_span.is_some(),
+            "should have a Keyword span for list marker"
+        );
     }
 
     #[test]
@@ -801,7 +969,11 @@ mod tests {
         debug_print_tree("`code`");
         let spans = highlight_markdown_source("`code`");
         let string_span = spans.iter().find(|s| s.token_type == CodeTokenType::String);
-        assert!(string_span.is_some(), "should have a String span for code content, got spans: {:?}", spans);
+        assert!(
+            string_span.is_some(),
+            "should have a String span for code content, got spans: {:?}",
+            spans
+        );
     }
 
     #[test]
@@ -821,14 +993,24 @@ mod tests {
     #[test]
     fn highlights_thematic_break() {
         let spans = highlight_markdown_source("---\n");
-        let keyword_span = spans.iter().find(|s| s.token_type == CodeTokenType::Keyword);
-        assert!(keyword_span.is_some(), "should have a Keyword span for thematic break");
+        let keyword_span = spans
+            .iter()
+            .find(|s| s.token_type == CodeTokenType::Keyword);
+        assert!(
+            keyword_span.is_some(),
+            "should have a Keyword span for thematic break"
+        );
     }
 
     #[test]
     fn highlights_task_marker() {
         let spans = highlight_markdown_source("- [ ] task\n");
-        let attr_span = spans.iter().find(|s| s.token_type == CodeTokenType::Attribute);
-        assert!(attr_span.is_some(), "should have an Attribute span for task marker");
+        let attr_span = spans
+            .iter()
+            .find(|s| s.token_type == CodeTokenType::Attribute);
+        assert!(
+            attr_span.is_some(),
+            "should have an Attribute span for task marker"
+        );
     }
 }

@@ -6,9 +6,9 @@ use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, GotoLine,
     InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection,
     PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
-    ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
-    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleTypewriterMode,
-    ToggleFocusHighlightMode, UndoEdit,
+    ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4,
+    ToggleHeading5, ToggleHeading6, ToggleOrderedList, ToggleParagraph, ToggleSourceMode,
+    ToggleTypewriterMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -99,9 +99,17 @@ pub fn bind_keys(cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-j", ToggleTypewriterMode, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-l", ToggleFocusHighlightMode, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-l",
+            ToggleFocusHighlightMode,
+            Some(EDITOR_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-l", ToggleFocusHighlightMode, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-l",
+            ToggleFocusHighlightMode,
+            Some(EDITOR_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-z", UndoEdit, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -161,21 +169,53 @@ pub fn bind_keys(cx: &mut App) {
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-0", ToggleParagraph, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-0",
+            ToggleParagraph,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-7", ToggleBlockquote, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-7",
+            ToggleBlockquote,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-7", ToggleBlockquote, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-7",
+            ToggleBlockquote,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-8", ToggleBulletList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-8",
+            ToggleBulletList,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-8", ToggleBulletList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-8",
+            ToggleBulletList,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-9",
+            ToggleOrderedList,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-9", ToggleOrderedList, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-9",
+            ToggleOrderedList,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-h", InsertHorizontalRule, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-h",
+            InsertHorizontalRule,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-shift-h",
@@ -183,7 +223,11 @@ pub fn bind_keys(cx: &mut App) {
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-k", InsertCodeFence, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-k",
+            InsertCodeFence,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-shift-k",
@@ -191,9 +235,17 @@ pub fn bind_keys(cx: &mut App) {
             Some(GPUI_COMPONENT_INPUT_CONTEXT),
         ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-t", InsertTable, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-t",
+            InsertTable,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-t", InsertTable, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-shift-t",
+            InsertTable,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-[", PromoteBlock, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]

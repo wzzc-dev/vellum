@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-wasmi = "0.40"
-postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+wasmtime = { version = "35", features = ["component-model"] }
+wasmtime-wasi = "35"

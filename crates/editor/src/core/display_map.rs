@@ -204,7 +204,8 @@ impl DisplayMap {
             let mut builder = BlockBuilder::new(block, document, selection, hidden_syntax_policy);
             builder.build();
             let mut render_block = builder.finish();
-            render_block.source_hash = hash_source_text(&document.text_for_range(block.byte_range.clone()));
+            render_block.source_hash =
+                hash_source_text(&document.text_for_range(block.byte_range.clone()));
 
             render_block.visible_range =
                 visible_text.len()..visible_text.len() + render_block.visible_text.len();
@@ -275,7 +276,8 @@ impl DisplayMap {
                 let mut spans = prev_block.spans.clone();
                 if source_offset_delta != 0 {
                     for span in &mut spans {
-                        span.source_range = (span.source_range.start as i64 + source_offset_delta) as usize
+                        span.source_range = (span.source_range.start as i64 + source_offset_delta)
+                            as usize
                             ..(span.source_range.end as i64 + source_offset_delta) as usize;
                     }
                 }
@@ -295,7 +297,8 @@ impl DisplayMap {
                     source_hash: prev_block.source_hash,
                 }
             } else {
-                let mut builder = BlockBuilder::new(block, document, selection, hidden_syntax_policy);
+                let mut builder =
+                    BlockBuilder::new(block, document, selection, hidden_syntax_policy);
                 builder.build();
                 let mut rb = builder.finish();
                 rb.source_hash = source_hash;
@@ -958,7 +961,8 @@ impl<'a> BlockBuilder<'a> {
         if lines.len() > 1 {
             let code_content: String = lines[1..lines.len().saturating_sub(1)].join("");
             let highlight_result = language.and_then(|lang| {
-                static HIGHLIGHTER: std::sync::OnceLock<CodeHighlighter> = std::sync::OnceLock::new();
+                static HIGHLIGHTER: std::sync::OnceLock<CodeHighlighter> =
+                    std::sync::OnceLock::new();
                 let highlighter = HIGHLIGHTER.get_or_init(CodeHighlighter::new);
                 highlighter.highlight(lang, &code_content)
             });
@@ -1037,8 +1041,9 @@ impl<'a> BlockBuilder<'a> {
                     continue;
                 };
                 let source_start = self.block.content_range.start + cell_range.start;
-                let visible_width =
-                    str_display_width(&self.visible_inline_text(source_start, &text[cell_range.clone()]));
+                let visible_width = str_display_width(
+                    &self.visible_inline_text(source_start, &text[cell_range.clone()]),
+                );
                 column_widths[column] = column_widths[column].max(visible_width);
             }
         }
@@ -1549,7 +1554,12 @@ fn parse_inline_tokens_into(
         let next_special = rest
             .char_indices()
             .skip(1)
-            .find(|(_, ch)| matches!(ch, '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '=' | ':'))
+            .find(|(_, ch)| {
+                matches!(
+                    ch,
+                    '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '=' | ':'
+                )
+            })
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
 
@@ -1557,7 +1567,9 @@ fn parse_inline_tokens_into(
             if let Some(end_pos) = rest[1..].find(':') {
                 let name = &rest[1..1 + end_pos];
                 if !name.is_empty()
-                    && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '+' || c == '-')
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '+' || c == '-')
                 {
                     if let Some(emoji) = emojis::get_by_shortcode(name) {
                         let full_len = 1 + end_pos + 1;

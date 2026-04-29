@@ -627,9 +627,14 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
             }
         }
 
-        if let Some((delimiter, advance)) = [("**", 2usize), ("__", 2usize), ("~~", 2usize), ("==", 2usize)]
-            .into_iter()
-            .find(|(delimiter, _)| rest.starts_with(*delimiter))
+        if let Some((delimiter, advance)) = [
+            ("**", 2usize),
+            ("__", 2usize),
+            ("~~", 2usize),
+            ("==", 2usize),
+        ]
+        .into_iter()
+        .find(|(delimiter, _)| rest.starts_with(*delimiter))
         {
             if let Some(end) = text[offset + advance..].find(delimiter) {
                 let mut nested = style.clone();
