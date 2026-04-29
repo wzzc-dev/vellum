@@ -597,8 +597,7 @@ impl ExtensionHost {
             };
             let result = loaded.bindings.call_handle_event(&mut loaded.store, &event);
             if let Err(err) = result.and_then(extension_call_result) {
-                self.registry
-                    .mark_failed(&extension_id, err.to_string());
+                self.registry.mark_failed(&extension_id, err.to_string());
                 eprintln!("extension timer tick failed for {extension_id}: {err}");
             }
             self.collect_extension_state(&extension_id);
@@ -915,10 +914,11 @@ timers = true
         };
         let mut state = ExtensionRuntimeState::new("test.no-timer".into(), manifest);
 
-        let err = <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::request_tick(
-            &mut state, 1000,
-        )
-        .unwrap_err();
+        let err =
+            <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::request_tick(
+                &mut state, 1000,
+            )
+            .unwrap_err();
         assert!(err.message.contains("timers"));
     }
 
@@ -979,8 +979,10 @@ timers = true
             &mut state, 1000,
         )
         .unwrap();
-        <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::cancel_tick(&mut state)
-            .unwrap();
+        <ExtensionRuntimeState as bindings::vellum::extension::timer::Host>::cancel_tick(
+            &mut state,
+        )
+        .unwrap();
 
         assert_eq!(state.tick_interval_ms, None);
         assert_eq!(state.tick_next_due_ms, None);

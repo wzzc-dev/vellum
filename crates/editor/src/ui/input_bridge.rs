@@ -45,8 +45,12 @@ fn detect_auto_pair_opportunity(
     closing_char_for_opener(inserted)
 }
 
-const MARKUP_WRAP_CHARS: &[(char, &str, &str)] =
-    &[('*', "**", "**"), ('`', "`", "`"), ('~', "~~", "~~")];
+const MARKUP_WRAP_CHARS: &[(char, &str, &str)] = &[
+    ('*', "**", "**"),
+    ('`', "`", "`"),
+    ('~', "~~", "~~"),
+    ('$', "$", "$"),
+];
 
 fn detect_wrap_selection_opportunity(
     old_visible: &str,

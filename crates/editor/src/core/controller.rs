@@ -1235,14 +1235,7 @@ impl EditorController {
                     effects
                 }
             }
-            AutoFormatAction::TaskList => {
-                let effects = self.toggle_list(false);
-                if effects.changed {
-                    self.insert_break(false)
-                } else {
-                    effects
-                }
-            }
+            AutoFormatAction::TaskList => self.insert_break(false),
             AutoFormatAction::HorizontalRule => {
                 let effects = self.insert_horizontal_rule();
                 if effects.changed {

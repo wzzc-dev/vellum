@@ -296,11 +296,21 @@ impl MarkdownEditor {
             self.apply_effects(window, cx, effects);
         }
 
-        let effects = self.controller.dispatch(action.to_edit_command());
-        if effects.changed {
-            self.schedule_autosave(window, cx);
+        if let Some(text) = action.insert_text() {
+            let effects = self.controller.dispatch(EditCommand::ReplaceSelection {
+                text: text.to_string(),
+            });
+            if effects.changed {
+                self.schedule_autosave(window, cx);
+            }
+            self.apply_effects(window, cx, effects);
+        } else {
+            let effects = self.controller.dispatch(action.to_edit_command());
+            if effects.changed {
+                self.schedule_autosave(window, cx);
+            }
+            self.apply_effects(window, cx, effects);
         }
-        self.apply_effects(window, cx, effects);
     }
 
     pub(crate) fn apply_markup(
@@ -900,6 +910,8 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_insert_horizontal_rule))
             .on_action(cx.listener(Self::on_insert_code_fence))
             .on_action(cx.listener(Self::on_insert_table))
+            .on_action(cx.listener(Self::on_toggle_inline_code))
+            .on_action(cx.listener(Self::on_toggle_strikethrough))
             .on_drop::<gpui::ExternalPaths>(cx.listener(Self::on_file_drop))
             .capture_action({
                 let enter_view = view.clone();

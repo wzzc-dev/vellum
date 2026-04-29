@@ -57,6 +57,7 @@ impl SlashCommandAction {
 
     pub fn insert_text(&self) -> Option<&'static str> {
         match self {
+            Self::TaskList => Some("- [ ] "),
             Self::MathBlock => Some("$$\n\n$$"),
             Self::Image => Some("![]()"),
             Self::Link => Some("[]()"),

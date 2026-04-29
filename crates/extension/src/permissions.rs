@@ -20,7 +20,7 @@ impl Capability {
             Self::Panels => "panels",
             Self::Commands => "commands",
             Self::Webview => "webview",
-        Self::Timers => "timers",
+            Self::Timers => "timers",
         }
     }
 }

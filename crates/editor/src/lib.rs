@@ -9,6 +9,8 @@ actions!(
         BoldSelection,
         ItalicSelection,
         LinkSelection,
+        ToggleInlineCode,
+        ToggleStrikethrough,
         PromoteBlock,
         DemoteBlock,
         ExitBlockEdit,

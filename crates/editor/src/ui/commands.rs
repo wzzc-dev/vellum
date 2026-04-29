@@ -7,8 +7,8 @@ use crate::{
     InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection,
     PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4,
-    ToggleHeading5, ToggleHeading6, ToggleOrderedList, ToggleParagraph, ToggleSourceMode,
-    ToggleTypewriterMode, UndoEdit,
+    ToggleHeading5, ToggleHeading6, ToggleInlineCode, ToggleOrderedList, ToggleParagraph,
+    ToggleSourceMode, ToggleStrikethrough, ToggleTypewriterMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -27,6 +27,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-k", LinkSelection, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-e", ToggleInlineCode, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-e", ToggleInlineCode, Some(EDITOR_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-x", ToggleStrikethrough, Some(EDITOR_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-x", ToggleStrikethrough, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-1", ToggleHeading1, Some(EDITOR_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -142,6 +150,30 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-k", LinkSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-e",
+            ToggleInlineCode,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-e",
+            ToggleInlineCode,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-x",
+            ToggleStrikethrough,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-x",
+            ToggleStrikethrough,
+            Some(GPUI_COMPONENT_INPUT_CONTEXT),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-1", ToggleHeading1, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
@@ -571,5 +603,23 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.insert_table(window, cx);
+    }
+
+    pub(crate) fn on_toggle_inline_code(
+        &mut self,
+        _: &ToggleInlineCode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_markup("`", "`", window, cx);
+    }
+
+    pub(crate) fn on_toggle_strikethrough(
+        &mut self,
+        _: &ToggleStrikethrough,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_markup("~~", "~~", window, cx);
     }
 }
