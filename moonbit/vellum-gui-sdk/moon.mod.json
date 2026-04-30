@@ -1,0 +1,10 @@
+{
+  "name": "vellum/gui",
+  "version": "0.1.0",
+  "description": "Vellum GUI Framework SDK for MoonBit",
+  "language": "moonbit",
+  "readme": "",
+  "repository": "",
+  "license": "MIT",
+  "preferred-target": "wasm"
+}

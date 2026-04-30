@@ -10,3 +10,11 @@ serde_json = "1"
 toml = "0.8"
 wasmtime = { version = "35", features = ["component-model"] }
 wasmtime-wasi = "35"
+
+[features]
+default = []
+gpui-adapter = ["dep:gpui-adapter"]
+
+[dependencies.gpui-adapter]
+path = "../gpui-adapter"
+optional = true

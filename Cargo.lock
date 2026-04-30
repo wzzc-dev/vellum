@@ -3024,6 +3024,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-adapter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui-component",
+ "once_cell",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "gpui-component"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8211,6 +8226,7 @@ name = "vellum-extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gpui-adapter",
  "serde",
  "serde_json",
  "toml 0.8.23",

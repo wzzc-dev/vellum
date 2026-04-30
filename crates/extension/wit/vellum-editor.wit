@@ -1,0 +1,382 @@
+package vellum:editor@0.1.0;
+
+interface types {
+  record position {
+    offset: u64,
+    line: u32,
+    column: u32,
+  }
+
+  record range {
+    start: position,
+    end: position,
+  }
+
+  enum anchor {
+    start,
+    end,
+  }
+
+  enum affinity {
+    upstream,
+    downstream,
+  }
+
+  record cursor {
+    position: position,
+    anchor: anchor,
+    affinity: affinity,
+  }
+
+  record selection {
+    anchor: position,
+    head: position,
+    affinity: affinity,
+  }
+
+  enum block-kind {
+    paragraph,
+    heading,
+    blockquote,
+    list,
+    list-item,
+    code-fence,
+    math-block,
+    table,
+    table-row,
+    table-cell,
+    thematic-break,
+    html-block,
+    yaml-front-matter,
+    footnote-definition,
+    footnote-reference,
+    source-code,
+    unknown,
+  }
+
+  record block {
+    id: u64,
+    kind: block-kind,
+    source-range: range,
+    rendered-range: range,
+    depth: u8,
+    attributes: list<string>,
+  }
+
+  record inline-span {
+    id: u64,
+    kind: inline-kind,
+    range: range,
+    attributes: list<string>,
+  }
+
+  enum inline-kind {
+    bold,
+    italic,
+    bold-italic,
+    strikethrough,
+    inline-code,
+    link,
+    image,
+    auto-link,
+    email-link,
+    html,
+    math,
+    footnote-reference,
+    replacement,
+    highlight,
+    subscript,
+    superscript,
+  }
+
+  enum view-mode {
+    source,
+    preview,
+    split,
+  }
+
+  enum editor-mode {
+    normal,
+    insert,
+    select,
+    visual,
+  }
+
+  record editor-stats {
+    character-count: u64,
+    word-count: u64,
+    line-count: u32,
+    paragraph-count: u32,
+    reading-time-minutes: f32,
+  }
+}
+
+interface document {
+  use types::*;
+
+  resource document {
+    path: option<string>,
+    text: string,
+    is-modified: bool,
+    is-read-only: bool,
+  }
+
+  create-document: func(path: option<string>) -> document;
+  open-document: func(path: string) -> result<document, editor-error>;
+  save-document: func(doc: document, path: option<string>) -> result<_, editor-error>;
+  close-document: func(doc: document);
+
+  get-document-text: func(doc: document) -> string;
+  set-document-text: func(doc: document, text: string);
+
+  get-document-path: func(doc: document) -> option<string>;
+  set-document-path: func(doc: document, path: string);
+
+  is-document-modified: func(doc: document) -> bool;
+  mark-document-clean: func(doc: document);
+  mark-document-modified: func(doc: document);
+
+  is-document-read-only: func(doc: document) -> bool;
+  set-document-read-only: func(doc: document, read-only: bool);
+
+  get-document-stats: func(doc: document) -> editor-stats;
+
+  get-document-blocks: func(doc: document) -> list<block>;
+  get-document-block-at: func(doc: document, offset: u64) -> option<block>;
+
+  get-document-spans: func(doc: document) -> list<inline-span>;
+  get-document-spans-in-range: func(doc: document, range: range) -> list<inline-span>;
+}
+
+interface editor {
+  use types::*;
+
+  resource editor {
+    id: string,
+    document: document,
+    view-mode: view-mode,
+    mode: editor-mode,
+    cursor: cursor,
+    selection: option<selection>,
+    scroll-offset: types::position,
+  }
+
+  create-editor: func(parent-widget-id: string) -> editor;
+  destroy-editor: func(editor: editor);
+
+  open-file: func(editor: editor, path: string) -> result<document, editor-error>;
+  close-file: func(editor: editor);
+
+  get-editor-document: func(editor: editor) -> document;
+
+  set-editor-text: func(editor: editor, text: string);
+  get-editor-text: func(editor: editor) -> string;
+
+  insert-text: func(editor: editor, position: u64, text: string);
+  delete-range: func(editor: editor, start: u64, end: u64);
+  replace-range: func(editor: editor, start: u64, end: u64, text: string);
+
+  get-cursor: func(editor: editor) -> cursor;
+  set-cursor: func(editor: editor, cursor: cursor);
+
+  get-selection: func(editor: editor) -> option<selection>;
+  set-selection: func(editor: editor, selection: selection);
+  clear-selection: func(editor: editor);
+  has-selection: func(editor: editor) -> bool;
+
+  get-selected-text: func(editor: editor) -> option<string>;
+
+  get-scroll-offset: func(editor: editor) -> types::position;
+  set-scroll-offset: func(editor: editor, offset: types::position);
+
+  scroll-to-cursor: func(editor: editor);
+  scroll-to-position: func(editor: editor, position: types::position);
+
+  set-read-only: func(editor: editor, read-only: bool);
+  is-read-only: func(editor: editor) -> bool;
+
+  set-view-mode: func(editor: editor, mode: view-mode);
+  get-view-mode: func(editor: editor) -> view-mode;
+
+  set-editor-mode: func(editor: editor, mode: editor-mode);
+  get-editor-mode: func(editor: editor) -> editor-mode;
+
+  undo: func(editor: editor);
+  redo: func(editor: editor);
+  can-undo: func(editor: editor) -> bool;
+  can-redo: func(editor: editor) -> bool;
+
+  format-document: func(editor: editor);
+  normalize-document: func(editor: editor);
+
+  get-stats: func(editor: editor) -> editor-stats;
+
+  get-outline: func(editor: editor) -> list<outline-item>;
+
+  find: func(editor: editor, query: string, options: find-options) -> list<find-result>;
+  replace: func(editor: editor, result: find-result, replacement: string);
+  replace-all: func(editor: editor, results: list<find-result>, replacement: string);
+
+  go-to-line: func(editor: editor, line: u32);
+  go-to-offset: func(editor: editor, offset: u64);
+
+  indent: func(editor: editor);
+  unindent: func(editor: editor);
+  indent-selection: func(editor: editor);
+  unindent-selection: func(editor: editor);
+
+  insert-newline: func(editor: editor);
+  delete-backward: func(editor: editor);
+  delete-forward: func(editor: editor);
+  delete-line: func(editor: editor);
+
+  transpose: func(editor: editor);
+  upcase: func(editor: editor);
+  downcase: func(editor: editor);
+  capitalize: func(editor: editor);
+
+  duplicate-line: func(editor: editor);
+  join-lines: func(editor: editor);
+  split-line: func(editor: editor);
+
+  toggle-comment: func(editor: editor);
+  toggle-block-comment: func(editor: editor);
+
+  execute-edit: func(editor: editor, command: string, args: list<string>) -> result<_, editor-error>;
+}
+
+record outline-item {
+  id: string,
+  label: string,
+  depth: u32,
+  collapsed: bool,
+  range: range,
+  icon: option<string>,
+  children: list<outline-item>,
+}
+
+record find-options {
+  case-sensitive: bool,
+  whole-word: bool,
+  regex: bool,
+  wrap: bool,
+  backward: bool,
+  selection-only: bool,
+}
+
+record find-result {
+  range: range,
+  matched-text: string,
+  line: u32,
+  column: u32,
+}
+
+record editor-error {
+  kind: editor-error-kind,
+  message: string,
+}
+
+variant editor-error-kind {
+  file-not-found(string),
+  permission-denied(string),
+  invalid-path(string),
+  encoding-error(string),
+  parse-error(string),
+  operation-failed(string),
+  unknown,
+}
+
+interface commands {
+  execute-command: func(command-id: string, args: list<string>) -> result<_, editor-error>;
+  register-command: func(command: command-definition) -> result<_, editor-error>;
+  unregister-command: func(command-id: string);
+  get-registered-commands: func() -> list<command-definition>;
+
+  execute-editor-command: func(editor: editor, command: editor-command) -> result<_, editor-error>;
+}
+
+record command-definition {
+  id: string,
+  label: string,
+  description: option<string>,
+  keybinding: option<string>,
+  category: option<string>,
+  icon: option<string>,
+  args: list<command-arg>,
+}
+
+record command-arg {
+  name: string,
+  label: string,
+  type: command-arg-type,
+  default: option<string>,
+  required: bool,
+}
+
+variant command-arg-type {
+  string,
+  number,
+  boolean,
+  choice(list<string>),
+  range,
+}
+
+variant editor-command {
+  toggle-bold,
+  toggle-italic,
+  toggle-strikethrough,
+  toggle-code,
+  toggle-link,
+  toggle-image,
+
+  insert-heading-1,
+  insert-heading-2,
+  insert-heading-3,
+  insert-heading-4,
+  insert-heading-5,
+  insert-heading-6,
+
+  insert-paragraph,
+  insert-blockquote,
+  insert-bullet-list,
+  insert-ordered-list,
+  insert-task-list,
+  insert-code-fence,
+  insert-math-block,
+  insert-table,
+  insert-horizontal-rule,
+
+  toggle-heading-1,
+  toggle-heading-2,
+  toggle-heading-3,
+  toggle-heading-4,
+  toggle-heading-5,
+  toggle-heading-6,
+
+  promote-heading,
+  demote-heading,
+  promote-list-item,
+  demote-list-item,
+
+  focus-previous-block,
+  focus-next-block,
+  exit-block-edit,
+
+  toggle-view-mode,
+  toggle-source-mode,
+  toggle-preview-mode,
+
+  wrap-selection(string),
+  unwrap-selection,
+}
+
+world vellum-editor {
+  import vellum:gui/window;
+  import vellum:gui/widget;
+  import vellum:gui/event;
+
+  export vellum:editor/types;
+  export vellum:editor/document;
+  export vellum:editor/editor;
+  export vellum:editor/commands;
+}
