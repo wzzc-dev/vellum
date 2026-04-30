@@ -38,7 +38,7 @@ interface types {
     paragraph,
     heading,
     blockquote,
-    list,
+    bullet-list,
     list-item,
     code-fence,
     math-block,
@@ -112,7 +112,7 @@ interface types {
 }
 
 interface document {
-  use types::*;
+  use types.{position, range, anchor, affinity, cursor, selection, block-kind, block, inline-kind, inline-span, view-mode, editor-mode, editor-stats, editor-error-kind, editor-error};
 
   resource document {
     path: option<string>,
@@ -149,7 +149,7 @@ interface document {
 }
 
 interface editor {
-  use types::*;
+  use types.{position, range, anchor, affinity, cursor, selection, block-kind, block, inline-kind, inline-span, view-mode, editor-mode, editor-stats, editor-error-kind, editor-error};
 
   resource editor {
     id: string,
