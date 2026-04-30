@@ -4,6 +4,7 @@ mod input_bridge;
 mod layout;
 mod slash_command;
 mod surface;
+pub mod theme;
 mod view;
 
 pub use commands::bind_keys;

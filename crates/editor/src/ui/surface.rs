@@ -121,6 +121,8 @@ struct RenderPalette {
     code_tag_color: Hsla,
     code_attribute_color: Hsla,
     code_escape_color: Hsla,
+    math_color: Hsla,
+    math_background: Hsla,
 }
 
 #[derive(Clone)]
@@ -645,6 +647,7 @@ pub(super) fn render_document_surface(
     let fg = cx.theme().foreground;
     let is_dark = fg.l > 0.5;
 
+    let syntax_theme = crate::ui::theme::get_syntax_theme();
     let (
         keyword_hue,
         string_hue,
@@ -656,15 +659,7 @@ pub(super) fn render_document_surface(
         tag_hue,
         attribute_hue,
         escape_hue,
-    ) = if is_dark {
-        (
-            210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0,
-        )
-    } else {
-        (
-            210.0, 140.0, 30.0, 100.0, 180.0, 10.0, 50.0, 330.0, 280.0, 60.0,
-        )
-    };
+    ) = syntax_theme.hue_set();
 
     let palette = RenderPalette {
         text_color: fg,
@@ -677,39 +672,11 @@ pub(super) fn render_document_surface(
         code_surface_background: fg.opacity(0.04),
         find_match_color: fg.opacity(0.12),
         find_active_match_color: fg.opacity(0.30),
-        link_color: if is_dark {
-            Hsla {
-                h: 210. / 360.,
-                s: 0.8,
-                l: 0.65,
-                a: 1.0,
-            }
-        } else {
-            Hsla {
-                h: 210. / 360.,
-                s: 0.75,
-                l: 0.45,
-                a: 1.0,
-            }
-        },
-        highlight_background: if is_dark {
-            Hsla {
-                h: 45. / 360.,
-                s: 0.8,
-                l: 0.5,
-                a: 0.25,
-            }
-        } else {
-            Hsla {
-                h: 45. / 360.,
-                s: 0.9,
-                l: 0.85,
-                a: 0.5,
-            }
-        },
+        link_color: syntax_theme.link_color(is_dark),
+        highlight_background: syntax_theme.highlight_color(is_dark),
         code_keyword_color: Hsla {
             h: keyword_hue,
-            s: 0.7,
+            s: syntax_theme.keyword_saturation(),
             l: if is_dark { 0.72 } else { 0.48 },
             a: 1.0,
         },
@@ -733,7 +700,7 @@ pub(super) fn render_document_surface(
         },
         code_comment_color: Hsla {
             h: comment_hue,
-            s: 0.3,
+            s: syntax_theme.comment_saturation(),
             l: if is_dark { 0.55 } else { 0.42 },
             a: 1.0,
         },
@@ -779,6 +746,13 @@ pub(super) fn render_document_surface(
             l: if is_dark { 0.72 } else { 0.42 },
             a: 1.0,
         },
+        math_color: Hsla {
+            h: 280.0,
+            s: 0.55,
+            l: if is_dark { 0.72 } else { 0.42 },
+            a: 1.0,
+        },
+        math_background: fg.opacity(0.06),
     };
 
     if snapshot.display_map.blocks.is_empty() {
@@ -974,6 +948,7 @@ fn render_display_block(
                 window,
             ),
             BlockKind::ThematicBreak => render_thematic_break(palette),
+            BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &visible_extension_ranges),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -2024,6 +1999,12 @@ fn apply_fragment_style(
         }
     }
 
+    if let Some(crate::RenderSpanMeta::Math { .. }) = meta {
+        style.color = palette.math_color;
+        style.font_style = FontStyle::Italic;
+        style.background_color = Some(palette.math_background);
+    }
+
     if inline_style.strong {
         style.font_weight = FontWeight::BOLD;
     }
@@ -2497,6 +2478,54 @@ fn render_thematic_break(palette: RenderPalette) -> AnyElement {
                 .h(px(2.))
                 .bg(palette.border_color.opacity(0.6)),
         )
+        .into_any_element()
+}
+
+fn render_math_block(
+    block: &RenderBlock,
+    palette: RenderPalette,
+    window: &Window,
+    _visible_extension_ranges: &[Range<usize>],
+) -> AnyElement {
+    let source = block
+        .spans
+        .iter()
+        .find_map(|span| match &span.meta {
+            Some(crate::RenderSpanMeta::Math { source, .. }) => Some(source.trim()),
+            _ => None,
+        })
+        .unwrap_or("");
+
+    let display_text = if source.is_empty() {
+        "Empty math formula".to_string()
+    } else {
+        source.to_string()
+    };
+
+    let text_size = px(BODY_FONT_SIZE);
+    let line_height = px(BODY_LINE_HEIGHT);
+    let run_len = display_text.len().max(1);
+
+    let styled = StyledText::new(display_text).with_runs(vec![TextStyle {
+        color: palette.math_color,
+        font_size: text_size.into(),
+        line_height: line_height.into(),
+        font_style: FontStyle::Italic,
+        ..window.text_style().clone()
+    }
+    .to_run(run_len)]);
+
+    div()
+        .w_full()
+        .flex()
+        .justify_center()
+        .py(px(6.))
+        .px(px(16.))
+        .rounded(px(6.))
+        .bg(palette.math_background)
+        .text_size(text_size)
+        .line_height(line_height)
+        .child(styled)
         .into_any_element()
 }
 

@@ -1288,6 +1288,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_manage_plugins))
             .on_action(cx.listener(Self::on_install_dev_extension))
+            .on_action(cx.listener(Self::on_open_command_palette))
             .child(
                 TitleBar::new()
                     .bg(cx.theme().background)
@@ -1384,7 +1385,121 @@ impl Render for VellumApp {
                     ),
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))
+            .child(self.render_command_palette(window, cx))
             .when_some(status_bar, |this, status_bar| this.child(status_bar))
+    }
+}
+
+impl VellumApp {
+    fn render_command_palette(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !self.command_palette.is_visible() {
+            return div().into_any_element();
+        }
+
+        let theme = cx.theme();
+        let selected = self.command_palette.selected_index;
+        let commands = &crate::app::command_palette::ALL_COMMANDS;
+        let filtered = &self.command_palette.filtered_indices;
+
+        let command_items: Vec<_> = filtered
+            .iter()
+            .enumerate()
+            .map(|(i, &idx)| {
+                let item = &commands[idx];
+                let is_selected = i == selected;
+                div()
+                    .id(ElementId::Name(format!("cmd-item-{}", idx).into()))
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .rounded(px(4.))
+                    .when(is_selected, |this| this.bg(theme.list_active))
+                    .when(!is_selected, |this| {
+                        this.hover(|this| this.bg(theme.list_hover))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .child(item.label),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(item.description),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.command_palette.hide();
+                    window.focus(&this.focus_handle);
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .pt(px(80.0))
+                    .w_full()
+                    .child(
+                        div()
+                            .w(px(500.0))
+                            .max_h(px(420.0))
+                            .bg(theme.popover)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .shadow_xl()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_action(cx.listener(Self::on_palette_enter))
+                            .on_action(cx.listener(Self::on_palette_move_up))
+                            .on_action(cx.listener(Self::on_palette_move_down))
+                            .child(
+                                div()
+                                    .p_3()
+                                    .border_b_1()
+                                    .border_color(theme.border)
+                                    .child(Input::new(&self.command_palette.input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_y_scrollbar()
+                                    .p_2()
+                                    .children(command_items),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 }
 

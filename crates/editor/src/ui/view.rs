@@ -452,6 +452,14 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    pub(crate) fn insert_math_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertMathBlock);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
     pub(crate) fn exit_edit_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::SetSelection {
             selection: SelectionState::collapsed(self.snapshot.selection.cursor()),
@@ -910,6 +918,7 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_insert_horizontal_rule))
             .on_action(cx.listener(Self::on_insert_code_fence))
             .on_action(cx.listener(Self::on_insert_table))
+            .on_action(cx.listener(Self::on_insert_math_block))
             .on_action(cx.listener(Self::on_toggle_inline_code))
             .on_action(cx.listener(Self::on_toggle_strikethrough))
             .on_drop::<gpui::ExternalPaths>(cx.listener(Self::on_file_drop))

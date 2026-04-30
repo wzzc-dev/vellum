@@ -214,6 +214,7 @@ pub enum EditCommand {
     InsertCodeFence,
     /// Insert a minimal 2-column pipe table template and place the cursor in the first body cell.
     InsertTable,
+    InsertMathBlock,
     Undo,
     Redo,
     ReloadConflict,
@@ -927,6 +928,7 @@ impl EditorController {
             EditCommand::InsertHorizontalRule => self.insert_horizontal_rule(),
             EditCommand::InsertCodeFence => self.insert_code_fence(),
             EditCommand::InsertTable => self.insert_table(),
+            EditCommand::InsertMathBlock => self.insert_math_block(),
             EditCommand::MoveCaret {
                 direction,
                 preferred_column,
@@ -1431,6 +1433,34 @@ impl EditorController {
                 insertion,
                 SelectionState::collapsed(cursor),
                 "Inserted code fence",
+            )
+        }
+    }
+
+    fn insert_math_block(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let template = "$$\n$$";
+        if is_empty {
+            let cursor = block.content_range.start + 3;
+            self.apply_edit(
+                block.content_range,
+                template.to_string(),
+                SelectionState::collapsed(cursor),
+                "Inserted math block",
+            )
+        } else {
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            let cursor = insert_pos + 2 + 3;
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState::collapsed(cursor),
+                "Inserted math block",
             )
         }
     }

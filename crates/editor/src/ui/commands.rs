@@ -4,8 +4,8 @@ use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
 use crate::{
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, GotoLine,
-    InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection, LinkSelection,
-    PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
+    InsertCodeFence, InsertHorizontalRule, InsertMathBlock, InsertTable, ItalicSelection,
+    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4,
     ToggleHeading5, ToggleHeading6, ToggleInlineCode, ToggleOrderedList, ToggleParagraph,
     ToggleSourceMode, ToggleStrikethrough, ToggleTypewriterMode, UndoEdit,
@@ -603,6 +603,15 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.insert_table(window, cx);
+    }
+
+    pub(crate) fn on_insert_math_block(
+        &mut self,
+        _: &InsertMathBlock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_math_block(window, cx);
     }
 
     pub(crate) fn on_toggle_inline_code(

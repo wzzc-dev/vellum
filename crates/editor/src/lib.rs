@@ -33,6 +33,7 @@ actions!(
         InsertHorizontalRule,
         InsertCodeFence,
         InsertTable,
+        InsertMathBlock,
         ToggleTypewriterMode,
         ToggleFocusHighlightMode,
         GotoLine,
@@ -48,3 +49,4 @@ pub use core::{
     SyncPolicy, SyncState, Transaction,
 };
 pub use ui::{EditorDecoration, EditorEvent, MarkdownEditor, bind_keys};
+pub use ui::theme::{SyntaxTheme, get_syntax_theme, set_syntax_theme};

@@ -36,6 +36,7 @@ use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 
 use webview::WebViewManager;
 
+mod command_palette;
 mod commands;
 mod document_io;
 mod frame;
@@ -68,6 +69,7 @@ actions!(
         NextTab,
         ManagePlugins,
         InstallDevExtension,
+        OpenCommandPalette,
     ]
 );
 
@@ -154,6 +156,7 @@ struct VellumApp {
     disclosure_state: HashMap<String, bool>,
     webview_manager: WebViewManager,
     focus_mode: bool,
+    command_palette: command_palette::CommandPaletteState,
 }
 
 pub fn run() -> Result<()> {
@@ -203,6 +206,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-\\", ToggleRightPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -218,6 +222,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
 }
 
@@ -452,6 +457,10 @@ impl VellumApp {
             },
         );
 
+        let palette_state = command_palette::CommandPaletteState::new(
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search commands...")),
+        );
+
         let mut this = Self {
             app_state: AppState::default(),
             workspace: WorkspaceState::new(),
@@ -491,6 +500,16 @@ impl VellumApp {
                 find_input_subscription,
                 replace_input_subscription,
                 outline_input_subscription,
+                cx.subscribe(
+                    &palette_state.input,
+                    |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {
+                        if let InputEvent::Change = event {
+                            let value = this.command_palette.input.read(cx).value();
+                            this.command_palette.update_filter(&value);
+                            cx.notify();
+                        }
+                    },
+                ),
             ],
             renaming_path: None,
             rename_input: None,
@@ -503,6 +522,7 @@ impl VellumApp {
             disclosure_state: HashMap::new(),
             webview_manager: WebViewManager::new(),
             focus_mode: false,
+            command_palette: palette_state,
         };
         window.focus(&this.focus_handle);
 

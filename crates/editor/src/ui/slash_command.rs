@@ -43,7 +43,7 @@ impl SlashCommandAction {
             Self::Table => EditCommand::InsertTable,
             Self::HorizontalRule => EditCommand::InsertHorizontalRule,
             Self::TaskList => EditCommand::ToggleBulletList,
-            Self::MathBlock => EditCommand::InsertCodeFence,
+            Self::MathBlock => EditCommand::InsertMathBlock,
             Self::Image | Self::Link => EditCommand::ToggleInlineMarkup {
                 before: if *self == SlashCommandAction::Image {
                     "![](".to_string()
