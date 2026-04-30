@@ -1,9 +1,0 @@
-{
-  "name": "vellum/hello-world",
-  "version": "0.1.0",
-  "description": "Hello World example for Vellum Framework",
-  "target": "wasm",
-  "deps": {
-    "vellum/sdk": { "path": "../../crates/vellum-sdk" }
-  }
-}

@@ -1,6 +1,0 @@
-{
-  "name": "vellum/sdk",
-  "version": "0.1.0",
-  "description": "Vellum GUI Framework - MoonBit SDK",
-  "target": "wasm"
-}
