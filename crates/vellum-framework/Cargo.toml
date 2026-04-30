@@ -1,0 +1,10 @@
+[package]
+name = "vellum-framework"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+gpui = "0.2.2"
+wasmtime = { version = "35", features = ["component-model"] }
+wasmtime-wasi = "35"

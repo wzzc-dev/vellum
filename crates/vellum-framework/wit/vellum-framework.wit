@@ -1,0 +1,416 @@
+package vellum:framework@0.1.0;
+
+// ============================================
+// 基础类型定义
+// ============================================
+interface types {
+    // 颜色
+    record color {
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    }
+
+    // 尺寸
+    record size {
+        width: f32,
+        height: f32,
+    }
+
+    // 点
+    record point {
+        x: f32,
+        y: f32,
+    }
+
+    // 矩形
+    record rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    }
+
+    // 边距
+    record insets {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+    }
+
+    // 字体样式
+    enum font-weight {
+        thin,
+        extra-light,
+        light,
+        normal,
+        medium,
+        semi-bold,
+        bold,
+        extra-bold,
+        black,
+    }
+
+    record text-style {
+        font-size: f32,
+        font-weight: font-weight,
+        color: color,
+    }
+
+    // 对齐方式
+    enum alignment {
+        top-left,
+        top-center,
+        top-right,
+        center-left,
+        center,
+        center-right,
+        bottom-left,
+        bottom-center,
+        bottom-right,
+    }
+
+    // 边框样式
+    enum border-style {
+        solid,
+        dashed,
+        dotted,
+    }
+
+    record border {
+        color: color,
+        width: f32,
+        style: border-style,
+    }
+
+    // 阴影
+    record shadow {
+        offset-x: f32,
+        offset-y: f32,
+        blur: f32,
+        color: color,
+    }
+
+    // ============================================
+    // 事件类型
+    // ============================================
+    enum mouse-button {
+        left,
+        right,
+        middle,
+        other,
+    }
+
+    enum key-code {
+        backspace,
+        tab,
+        enter,
+        escape,
+        space,
+        key0,
+        key1,
+        key2,
+        key3,
+        key4,
+        key5,
+        key6,
+        key7,
+        key8,
+        key9,
+        keyA,
+        keyB,
+        keyC,
+        keyD,
+        keyE,
+        keyF,
+        keyG,
+        keyH,
+        keyI,
+        keyJ,
+        keyK,
+        keyL,
+        keyM,
+        keyN,
+        keyO,
+        keyP,
+        keyQ,
+        keyR,
+        keyS,
+        keyT,
+        keyU,
+        keyV,
+        keyW,
+        keyX,
+        keyY,
+        keyZ,
+        arrow-up,
+        arrow-down,
+        arrow-left,
+        arrow-right,
+        unknown,
+    }
+
+    record key-event {
+        code: key-code,
+        pressed: bool,
+        repeat: bool,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+        meta: bool,
+    }
+
+    record mouse-event {
+        x: f32,
+        y: f32,
+        button: option<mouse-button>,
+        pressed: bool,
+    }
+
+    record scroll-event {
+        x: f32,
+        y: f32,
+        delta-x: f32,
+        delta-y: f32,
+    }
+
+    // ============================================
+    // 错误类型
+    // ============================================
+    record host-error {
+        message: string,
+    }
+
+    record app-error {
+        message: string,
+    }
+}
+
+// ============================================
+// UI 节点描述 (声明式 UI 结构)
+// ============================================
+interface ui-tree {
+    use types.{color, size, point, rect, insets, text-style, alignment, border, border-style, shadow};
+
+    // 组件唯一标识符
+    type widget-id = u64;
+
+    // 子组件列表
+    type children = list<widget-node>;
+
+    // Widget 节点类型
+    variant widget-node {
+        container(widget-id, container-props, children),
+        text(widget-id, text-props),
+        button(widget-id, button-props, children),
+        text-input(widget-id, text-input-props),
+        column(widget-id, flex-props, children),
+        row(widget-id, flex-props, children),
+        stack(widget-id, stack-props, children),
+        sized-box(widget-id, sized-box-props, children),
+        padding(widget-id, insets, children),
+        decorated-box(widget-id, decoration, children),
+        flex(widget-id, flex-direction, flex-props, children),
+        // 占位
+        placeholder(widget-id),
+    }
+
+    // ============================================
+    // 组件属性
+    // ============================================
+    
+    // Container 容器属性
+    record container-props {
+        width: option<f32>,
+        height: option<f32>,
+        padding: option<insets>,
+        margin: option<insets>,
+        color: option<color>,
+        border: option<border>,
+        border-radius: option<f32>,
+        shadow: option<shadow>,
+        alignment: option<alignment>,
+    }
+
+    // Text 文本属性
+    record text-props {
+        content: string,
+        style: option<text-style>,
+        max-lines: option<u32>,
+    }
+
+    // Button 按钮属性
+    record button-props {
+        on-click: option<widget-id>,
+        enabled: bool,
+        padding: option<insets>,
+        bg-color: option<color>,
+    }
+
+    // TextInput 文本输入属性
+    record text-input-props {
+        value: string,
+        placeholder: option<string>,
+        on-change: option<widget-id>,
+        on-submit: option<widget-id>,
+        multiline: bool,
+    }
+
+    // Flex 属性 (Row/Column)
+    record flex-props {
+        main-axis-alignment: main-axis-alignment,
+        cross-axis-alignment: cross-axis-alignment,
+        spacing: option<f32>,
+    }
+
+    enum main-axis-alignment {
+        start,
+        center,
+        end,
+        space-around,
+        space-between,
+        space-evenly,
+    }
+
+    enum cross-axis-alignment {
+        start,
+        center,
+        end,
+        stretch,
+    }
+
+    enum flex-direction {
+        row,
+        column,
+    }
+
+    // Stack 属性
+    record stack-props {
+        alignment: option<alignment>,
+        fit: stack-fit,
+    }
+
+    enum stack-fit {
+        loose,
+        expand,
+    }
+
+    // SizedBox 属性
+    record sized-box-props {
+        width: option<f32>,
+        height: option<f32>,
+    }
+
+    // Decoration 属性
+    record decoration {
+        color: option<color>,
+        border: option<border>,
+        border-radius: option<f32>,
+        shadow: option<shadow>,
+        image: option<string>,
+    }
+}
+
+// ============================================
+// 事件系统
+// ============================================
+interface events {
+    use types.{key-event, mouse-event, scroll-event};
+    use ui-tree.{widget-id};
+
+    // 事件回调 ID 到事件的映射
+    record event-callback {
+        widget-id: widget-id,
+        callback-type: callback-type,
+    }
+
+    enum callback-type {
+        click,
+        change(string),
+        submit(string),
+        hover(bool),
+        focus(bool),
+        key-down(key-event),
+        key-up(key-event),
+        scroll(scroll-event),
+    }
+}
+
+// ============================================
+// 渲染命令 (宿主调用)
+// ============================================
+interface renderer {
+    use types.{host-error, size};
+    use ui-tree.{widget-node};
+
+    // 提交 UI 树到宿主进行渲染
+    submit-tree: func(root: widget-node) -> result<_, host-error>;
+
+    // 请求重绘下一帧
+    request-frame: func() -> result<_, host-error>;
+
+    // 获取窗口大小
+    window-size: func() -> result<size, host-error>;
+}
+
+// ============================================
+// 宿主提供的工具函数
+// ============================================
+interface host-utils {
+    use types.{host-error, color};
+
+    // 日志
+    log-debug: func(message: string) -> result<_, host-error>;
+    log-info: func(message: string) -> result<_, host-error>;
+    log-warn: func(message: string) -> result<_, host-error>;
+    log-error: func(message: string) -> result<_, host-error>;
+
+    // 颜色辅助
+    rgba: func(r: u8, g: u8, b: u8, a: u8) -> result<color, host-error>;
+    hex: func(hex: string) -> result<color, host-error>;
+}
+
+// ============================================
+// 应用生命周期 (Guest 导出)
+// ============================================
+interface app {
+    use types.{app-error, size};
+    use ui-tree.{widget-node};
+    use events.{event-callback};
+
+    // 初始化应用
+    init: func() -> result<_, app-error>;
+
+    // 构建 UI 树
+    build-ui: func() -> result<widget-node, app-error>;
+
+    // 处理事件回调
+    handle-event: func(event: event-callback) -> result<bool, app-error>;
+
+    // 窗口尺寸改变
+    on-resize: func(size: size) -> result<_, app-error>;
+
+    // 每帧更新 (动画)
+    on-tick: func(delta-ms: u64) -> result<bool, app-error>;
+
+    // 应用退出
+    shutdown: func() -> result<_, app-error>;
+}
+
+// ============================================
+// 完整的世界定义
+// ============================================
+world framework-world {
+    use types.{host-error, app-error, size, color, point, rect, insets};
+    use ui-tree.{widget-node, widget-id};
+    use events.{event-callback, callback-type};
+
+    // 导入宿主接口
+    import renderer;
+    import host-utils;
+
+    // 导出应用接口
+    export app;
+}
