@@ -18,12 +18,16 @@ use gpui_component::{
 
 use crate::{
     EditCommand, SelectionAffinity, SelectionState,
-    core::controller::{DocumentSource, EditorController, EditorSnapshot, SyncPolicy},
+    core::{
+        controller::{DocumentSource, EditorController, EditorSnapshot, SyncPolicy},
+        math_render::MathRenderCache,
+    },
 };
 
 use super::{
     BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
     input_bridge::build_document_input,
+    math_completion_panel::MathCompletionPanel,
     slash_command::{SlashCommandAction, SlashCommandPanel},
     surface::{render_document_surface, rendered_visible_end},
 };
@@ -65,9 +69,11 @@ pub struct MarkdownEditor {
     pub(super) typewriter_mode: bool,
     pub(super) focus_highlight_mode: bool,
     pub(super) slash_command_panel: SlashCommandPanel,
+    pub(super) math_completion_panel: MathCompletionPanel,
     scroll_target: Option<gpui::Point<gpui::Pixels>>,
     scroll_animation_generation: u64,
     pub(super) extension_decorations: Vec<EditorDecoration>,
+    pub(super) math_render_cache: Rc<RefCell<MathRenderCache>>,
 }
 
 impl EventEmitter<EditorEvent> for MarkdownEditor {}
@@ -118,9 +124,11 @@ impl MarkdownEditor {
             typewriter_mode: false,
             focus_highlight_mode: false,
             slash_command_panel: SlashCommandPanel::new(),
+            math_completion_panel: MathCompletionPanel::new(),
             scroll_target: None,
             scroll_animation_generation: 0,
             extension_decorations: Vec::new(),
+            math_render_cache: Rc::new(RefCell::new(MathRenderCache::new())),
         }
     }
 
@@ -265,6 +273,86 @@ impl MarkdownEditor {
             .show(slash_visible_offset, slash_source_offset);
     }
 
+    pub(super) fn check_math_completion(&mut self) {
+        if !self.input_focused {
+            return;
+        }
+        if self.slash_command_panel.is_visible() {
+            return;
+        }
+
+        let visible_selection = &self.snapshot.visible_selection;
+        if !visible_selection.is_collapsed() {
+            if self.math_completion_panel.is_visible() {
+                self.math_completion_panel.hide();
+            }
+            return;
+        }
+
+        let selection_source = &self.snapshot.selection;
+        let cursor_source = selection_source.head_byte;
+
+        if !self.is_cursor_in_math_context(cursor_source) {
+            if self.math_completion_panel.is_visible() {
+                self.math_completion_panel.hide();
+            }
+            return;
+        }
+
+        let source_text = &self.snapshot.document_text;
+        if cursor_source == 0 || cursor_source > source_text.len() {
+            return;
+        }
+
+        let before = &source_text[..cursor_source];
+        let backslash_pos = before.rfind('\\');
+        let Some(bs_pos) = backslash_pos else {
+            if self.math_completion_panel.is_visible() {
+                self.math_completion_panel.hide();
+            }
+            return;
+        };
+
+        let cmd_fragment = &source_text[bs_pos + 1..cursor_source];
+        if !cmd_fragment.chars().all(|c| c.is_ascii_alphabetic()) {
+            if self.math_completion_panel.is_visible() {
+                self.math_completion_panel.hide();
+            }
+            return;
+        }
+
+        if self.math_completion_panel.is_visible() {
+            self.math_completion_panel.update_query(cmd_fragment);
+        } else {
+            self.math_completion_panel.show(bs_pos, cursor_source);
+            self.math_completion_panel.update_query(cmd_fragment);
+        }
+    }
+
+    fn is_cursor_in_math_context(&self, cursor_source: usize) -> bool {
+        // Check if cursor is in a render block with MathBlock embedded node
+        for block in &self.snapshot.display_map.blocks {
+            if block.embedded == Some(crate::EmbeddedNodeKind::MathBlock) {
+                if cursor_source >= block.source_range.start
+                    && cursor_source <= block.source_range.end
+                {
+                    return true;
+                }
+            }
+            // Check spans within this render block for inline math
+            for span in &block.spans {
+                if let Some(crate::RenderSpanMeta::Math { .. }) = &span.meta {
+                    if cursor_source >= span.source_range.start
+                        && cursor_source <= span.source_range.end
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn execute_slash_command(
         &mut self,
         action: SlashCommandAction,
@@ -311,6 +399,35 @@ impl MarkdownEditor {
             }
             self.apply_effects(window, cx, effects);
         }
+    }
+
+    fn execute_math_completion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let item = self.math_completion_panel.selected_completion().cloned();
+        let (replace_start, replace_end) = self.math_completion_panel.replace_range();
+        if let Some(item) = item {
+            let effects = self.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: replace_start,
+                    head_byte: replace_end,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Upstream,
+                },
+            });
+            self.apply_effects(window, cx, effects);
+
+            let effects = self.controller.dispatch(EditCommand::ReplaceSelection {
+                text: item.snippet.to_string(),
+            });
+            if effects.changed {
+                self.schedule_autosave(window, cx);
+            }
+            self.apply_effects(window, cx, effects);
+        }
+        self.math_completion_panel.hide();
+    }
+
+    pub(crate) fn dismiss_math_completion(&mut self) {
+        self.math_completion_panel.hide();
     }
 
     pub(crate) fn apply_markup(
@@ -507,6 +624,11 @@ impl MarkdownEditor {
                 return true;
             }
             self.slash_command_panel.hide();
+        }
+
+        if self.math_completion_panel.is_visible() {
+            self.execute_math_completion(window, cx);
+            return true;
         }
 
         let effects = self
@@ -960,6 +1082,9 @@ impl Render for MarkdownEditor {
                         if this.slash_command_panel.is_visible() {
                             this.slash_command_panel.select_prev();
                             true
+                        } else if this.math_completion_panel.is_visible() {
+                            this.math_completion_panel.select_prev();
+                            true
                         } else {
                             false
                         }
@@ -975,6 +1100,9 @@ impl Render for MarkdownEditor {
                     let handled = view.update(app, |this, _cx| {
                         if this.slash_command_panel.is_visible() {
                             this.slash_command_panel.select_next();
+                            true
+                        } else if this.math_completion_panel.is_visible() {
+                            this.math_completion_panel.select_next();
                             true
                         } else {
                             false
@@ -998,7 +1126,13 @@ impl Render for MarkdownEditor {
             .capture_action({
                 let view = cx.entity();
                 move |_: &IndentInline, window, app: &mut App| {
-                    let handled = view.update(app, |this, cx| this.handle_indent(true, window, cx));
+                    let handled = view.update(app, |this, cx| {
+                        if this.math_completion_panel.is_visible() {
+                            this.execute_math_completion(window, cx);
+                            return true;
+                        }
+                        this.handle_indent(true, window, cx)
+                    });
                     if handled {
                         app.stop_propagation();
                     }
@@ -1062,15 +1196,26 @@ impl Render for MarkdownEditor {
                                                 self.scroll_handle.clone(),
                                                 if self.slash_command_panel.is_visible() {
                                                     self.cursor_block_id()
+                                                } else if self.math_completion_panel.is_visible() {
+                                                    self.cursor_block_id()
                                                 } else {
                                                     None
                                                 },
-                                                self.slash_command_panel.render_panel(
-                                                    window,
-                                                    cx,
-                                                    self.cursor_panel_y_in_block(),
-                                                ),
+                                                {
+                                                    let slash_panel = self.slash_command_panel.render_panel(
+                                                        window,
+                                                        cx,
+                                                        self.cursor_panel_y_in_block(),
+                                                    );
+                                                    let math_panel = self.math_completion_panel.render_panel(
+                                                        window,
+                                                        cx,
+                                                        self.cursor_panel_y_in_block(),
+                                                    );
+                                                    slash_panel.or(math_panel)
+                                                },
                                                 self.extension_decorations.clone(),
+                                                self.math_render_cache.clone(),
                                                 window,
                                                 cx,
                                             )),

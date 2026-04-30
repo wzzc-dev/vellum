@@ -1250,6 +1250,10 @@ impl EditorController {
                 let effects = self.insert_code_fence();
                 effects
             }
+            AutoFormatAction::MathBlock => {
+                let effects = self.insert_math_block();
+                effects
+            }
         }
     }
 
@@ -1454,8 +1458,8 @@ impl EditorController {
             )
         } else {
             let insert_pos = block.byte_range.end;
-            let insertion = format!("\n\n{template}");
-            let cursor = insert_pos + 2 + 3;
+            let insertion = format!("\n{template}");
+            let cursor = insert_pos + 1 + 3;
             self.apply_edit(
                 insert_pos..insert_pos,
                 insertion,
@@ -3534,5 +3538,59 @@ mod tests {
         );
 
         assert!(controller.snapshot().has_conflict);
+    }
+
+    #[test]
+    fn insert_math_block_on_empty_line_places_cursor_in_content_area() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::InsertMathBlock);
+
+        let snapshot = controller.snapshot();
+        let doc_text = &snapshot.document_text;
+        assert_eq!(doc_text, "$$\n$$");
+        let cursor = snapshot.selection.cursor();
+        assert_eq!(cursor, 3, "source cursor should be at byte 3 (start of closing $$)");
+
+        let visible_cursor = snapshot.visible_selection.cursor();
+        let blocks = &snapshot.display_map.blocks;
+        let math_block = blocks
+            .iter()
+            .find(|b| matches!(b.kind, BlockKind::MathBlock))
+            .expect("should have a math block");
+        assert!(
+            visible_cursor >= math_block.visible_range.start,
+            "visible cursor {} should be at or after math block start {}",
+            visible_cursor,
+            math_block.visible_range.start,
+        );
+    }
+
+    #[test]
+    fn insert_math_block_after_text_places_cursor_in_content_area() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::InsertMathBlock);
+
+        let snapshot = controller.snapshot();
+        let doc_text = &snapshot.document_text;
+        assert!(doc_text.contains("$$\n$$"), "doc should contain math block template: {doc_text}");
+        let cursor = snapshot.selection.cursor();
+        let math_start = doc_text.find("$$\n$$").expect("math block in doc");
+        assert_eq!(cursor, math_start + 3, "source cursor should be inside math block");
     }
 }

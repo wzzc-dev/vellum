@@ -2,6 +2,7 @@ mod commands;
 mod file_ops;
 mod input_bridge;
 mod layout;
+mod math_completion_panel;
 mod slash_command;
 mod surface;
 pub mod theme;

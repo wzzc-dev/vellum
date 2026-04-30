@@ -640,6 +640,7 @@ pub(super) fn render_document_surface(
     floating_panel_block_id: Option<u64>,
     mut floating_panel: Option<AnyElement>,
     extension_decorations: Vec<EditorDecoration>,
+    math_render_cache: Rc<RefCell<crate::core::math_render::MathRenderCache>>,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
 ) -> AnyElement {
@@ -850,6 +851,7 @@ pub(super) fn render_document_surface(
                     None
                 },
                 &extension_decorations,
+                math_render_cache.clone(),
                 window,
             ));
         } else {
@@ -874,6 +876,7 @@ fn render_display_block(
     block_opacity: f32,
     floating_panel: Option<AnyElement>,
     extension_decorations: &[EditorDecoration],
+    math_render_cache: Rc<RefCell<crate::core::math_render::MathRenderCache>>,
     window: &mut Window,
 ) -> AnyElement {
     let presentation = block_presentation(&block.kind);
@@ -948,7 +951,7 @@ fn render_display_block(
                 window,
             ),
             BlockKind::ThematicBreak => render_thematic_break(palette),
-            BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &visible_extension_ranges),
+            BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &visible_extension_ranges, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -2486,20 +2489,29 @@ fn render_math_block(
     palette: RenderPalette,
     window: &Window,
     _visible_extension_ranges: &[Range<usize>],
+    math_render_cache: &Rc<RefCell<crate::core::math_render::MathRenderCache>>,
 ) -> AnyElement {
     let source = block
         .spans
         .iter()
         .find_map(|span| match &span.meta {
-            Some(crate::RenderSpanMeta::Math { source, .. }) => Some(source.trim()),
+            Some(crate::RenderSpanMeta::Math { source, .. }) => Some(source.trim().to_string()),
             _ => None,
         })
-        .unwrap_or("");
+        .unwrap_or_default();
 
     let display_text = if source.is_empty() {
         "Empty math formula".to_string()
     } else {
-        source.to_string()
+        let tree = math_render_cache
+            .borrow_mut()
+            .get_or_parse(&source, crate::core::math_render::MathRenderMode::Display, BODY_FONT_SIZE);
+        let rendered = crate::core::math_render::math_tree_to_display_text(&tree);
+        if rendered.is_empty() {
+            source.clone()
+        } else {
+            rendered
+        }
     };
 
     let text_size = px(BODY_FONT_SIZE);

@@ -62,6 +62,7 @@ pub enum RenderSpanMeta {
     Math {
         source: String,
         display: bool,
+        token_type: Option<super::math_render::MathTokenType>,
     },
     Html {
         source: String,
@@ -810,6 +811,7 @@ impl<'a> BlockBuilder<'a> {
                 self.push_code_fence(&text, language.as_deref());
             }
             BlockKind::ThematicBreak => self.push_thematic_break(&text),
+            BlockKind::MathBlock => self.push_math_block(&text),
             _ => self.push_inline_text(
                 self.block.content_range.start,
                 &text,
@@ -1009,6 +1011,140 @@ impl<'a> BlockBuilder<'a> {
                     source_offset += middle.len();
                 }
             }
+
+            if let Some(last) = lines.last() {
+                self.push_hidden_or_visible(
+                    RenderSpanKind::HiddenSyntax,
+                    source_offset..source_offset + last.len(),
+                    last,
+                );
+            }
+        }
+    }
+
+    fn push_math_block(&mut self, text: &str) {
+        let lines = split_inclusive_lines(text);
+        if lines.is_empty() {
+            return;
+        }
+
+        let mut source_offset = self.block.content_range.start;
+
+        if lines.len() == 1 {
+            let line = lines[0];
+            let trimmed = line.trim();
+            if trimmed.starts_with("$$") && trimmed.ends_with("$$") && trimmed.len() > 4 {
+                let opening_len = 2;
+                let closing_start = line.len() - 2;
+                self.push_hidden_or_visible(
+                    RenderSpanKind::HiddenSyntax,
+                    source_offset..source_offset + opening_len,
+                    &line[..opening_len],
+                );
+                let _content = &line[opening_len..closing_start].trim_start();
+                let mut content_source_start = source_offset + opening_len;
+                while content_source_start < source_offset + line.len() - 2
+                    && self.document.text_for_range(
+                        content_source_start..content_source_start + 1,
+                    ) == " "
+                {
+                    content_source_start += 1;
+                }
+                let visible_len = line[opening_len..closing_start]
+                    .trim()
+                    .len();
+                if visible_len > 0 {
+                    let math_source = line[opening_len..closing_start].trim();
+                    let math_tree = crate::core::math_render::parse_math(math_source);
+                    let math_display = crate::core::math_render::math_tree_to_display_text(&math_tree);
+                    let visible_text = if math_display.is_empty() {
+                        math_source.to_string()
+                    } else {
+                        math_display
+                    };
+                    self.push_span(
+                        RenderSpanKind::Text,
+                        content_source_start..source_offset + closing_start,
+                        math_source.to_string(),
+                        visible_text,
+                        false,
+                        RenderInlineStyle::default(),
+                        Some(RenderSpanMeta::Math {
+                            source: math_source.to_string(),
+                            display: true,
+                            token_type: None,
+                        }),
+                    );
+                }
+                self.push_hidden_or_visible(
+                    RenderSpanKind::HiddenSyntax,
+                    source_offset + closing_start..source_offset + line.len(),
+                    &line[closing_start..],
+                );
+            } else {
+                self.push_inline_text(source_offset, line, RenderInlineStyle::default());
+            }
+            return;
+        }
+
+        if let Some(first) = lines.first() {
+            self.push_hidden_or_visible(
+                RenderSpanKind::HiddenSyntax,
+                source_offset..source_offset + first.len(),
+                first,
+            );
+            source_offset += first.len();
+        }
+
+        if lines.len() > 1 {
+            let content_lines: Vec<&str> = if lines.len() > 2 {
+                lines[1..lines.len().saturating_sub(1)].to_vec()
+            } else {
+                vec![]
+            };
+            let math_source: String = content_lines
+                .iter()
+                .map(|l| l.trim_end_matches(['\r', '\n']))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let content_source_start = source_offset;
+            let content_source_end = source_offset + content_lines.iter().map(|l| l.len()).sum::<usize>();
+
+            if !math_source.trim().is_empty() {
+                let math_tree = crate::core::math_render::parse_math(math_source.trim());
+                let math_display = crate::core::math_render::math_tree_to_display_text(&math_tree);
+                let visible_text = if math_display.is_empty() {
+                    math_source.trim().to_string()
+                } else {
+                    math_display
+                };
+
+                self.push_span(
+                    RenderSpanKind::Text,
+                    content_source_start..content_source_end,
+                    math_source.trim().to_string(),
+                    visible_text,
+                    false,
+                    RenderInlineStyle::default(),
+                    Some(RenderSpanMeta::Math {
+                        source: math_source.trim().to_string(),
+                        display: true,
+                        token_type: None,
+                    }),
+                );
+            } else {
+                self.push_span(
+                    RenderSpanKind::Text,
+                    content_source_start..content_source_end,
+                    String::new(),
+                    String::new(),
+                    false,
+                    RenderInlineStyle::default(),
+                    None,
+                );
+            }
+            source_offset = content_source_end;
 
             if let Some(last) = lines.last() {
                 self.push_hidden_or_visible(
@@ -1483,20 +1619,33 @@ fn parse_inline_tokens_into(
         if rest.starts_with('$')
             && let Some((source, inner, display)) = parse_math_span(rest)
         {
+            let math_rendered = super::math_render::math_tree_to_display_text(
+                &super::math_render::parse_math(inner.trim()),
+            );
+            let visible_text = if display {
+                if math_rendered.is_empty() {
+                    format!("[math: {}]", inner.trim())
+                } else {
+                    math_rendered
+                }
+            } else {
+                if math_rendered.is_empty() {
+                    inner.to_string()
+                } else {
+                    math_rendered
+                }
+            };
             tokens.push(InlineToken {
                 local_range: base_offset + offset..base_offset + offset + source.len(),
                 reveal_range: Some(offset..offset + source.len()),
                 source_text: source.to_string(),
-                visible_text: if display {
-                    format!("[math: {}]", inner.trim())
-                } else {
-                    inner.to_string()
-                },
+                visible_text,
                 hidden: false,
                 style,
                 meta: Some(RenderSpanMeta::Math {
                     source: inner.to_string(),
                     display,
+                    token_type: None,
                 }),
             });
             offset += source.len();

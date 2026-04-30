@@ -306,6 +306,7 @@ pub(crate) enum AutoFormatAction {
     TaskList,
     HorizontalRule,
     CodeFence,
+    MathBlock,
 }
 
 pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFormatAction> {
@@ -317,6 +318,10 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
 
     if trimmed.is_empty() {
         return None;
+    }
+
+    if trimmed == "$$" {
+        return Some(AutoFormatAction::MathBlock);
     }
 
     if let Some(rest) = trimmed.strip_prefix("```") {

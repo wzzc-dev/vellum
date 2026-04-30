@@ -823,6 +823,9 @@ fn block_uses_compressed_surface_cursor(blocks: &[crate::RenderBlock], block_ind
     let Some(block) = blocks.get(block_index) else {
         return false;
     };
+    if block.embedded.is_some() {
+        return false;
+    }
 
     surface_empty_block_line_count(blocks, block_index).is_some()
         || rendered_visible_len(block) == 0
@@ -1067,6 +1070,9 @@ fn block_has_compressed_vertical_gap(blocks: &[crate::RenderBlock], block_index:
     let Some(block) = blocks.get(block_index) else {
         return false;
     };
+    if block.embedded.is_some() {
+        return false;
+    }
     if rendered_visible_len(block) == 0 {
         return true;
     }
