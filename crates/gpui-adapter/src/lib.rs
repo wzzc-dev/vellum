@@ -7,6 +7,9 @@ pub mod types;
 pub mod widget;
 pub mod window;
 
+#[cfg(feature = "wit")]
+pub mod wit_host;
+
 pub use bridge::GpuiBridge;
 pub use error::{AdapterError, Result};
 pub use event::{EventDispatcher, EventType, GpuiEvent, MouseButton, MouseEventKind};
@@ -18,5 +21,8 @@ pub use types::{
 };
 pub use widget::{Widget, WidgetId, WidgetManager};
 pub use window::{Window, WindowId, WindowManager, WindowOptions};
+
+#[cfg(feature = "wit")]
+pub use wit_host::{GuiHost, GuiRuntimeState};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

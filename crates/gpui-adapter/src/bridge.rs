@@ -5,7 +5,7 @@ use crate::paint::PaintState;
 use crate::types::AppTheme;
 use crate::widget::{WidgetManager, WidgetId};
 use crate::window::{WindowId, WindowManager, WindowOptions};
-use gpui::{Div, Window, Context};
+use gpui::{Div, Window};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -176,7 +176,7 @@ impl GpuiBridge {
     }
 
     pub fn subscribe_event(&self, widget_id: &WidgetId, event_types: Vec<String>) {
-        for event_type in event_types {
+        for _event_type in event_types {
             let widget_id = widget_id.clone();
             let event_dispatcher = self.event_dispatcher.clone();
 
@@ -222,7 +222,7 @@ impl GpuiBridge {
         &self,
         root_id: &WidgetId,
         window: &mut Window,
-        cx: &mut Context,
+        cx: &mut gpui::Context<()>,
     ) -> Div {
         render_widget_tree(&self.widget_manager, root_id, window, cx)
     }

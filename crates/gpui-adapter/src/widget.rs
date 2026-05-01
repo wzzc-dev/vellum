@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables)]
 use crate::error::{AdapterError, Result};
 use crate::types::{
     Alignment, BoxShadow, Color, CrossAlignment, EdgeInsets, FlexDirection, FlexParams, FontStyle,
@@ -24,6 +25,7 @@ pub struct Widget {
     pub padding: EdgeInsets,
     pub margin: EdgeInsets,
     pub background: Color,
+    pub foreground: Color,
     pub opacity: f32,
     pub visibility: Visibility,
     pub z_index: i32,
@@ -33,6 +35,10 @@ pub struct Widget {
     pub clip_bounds: Rect,
     pub border_radius: f32,
     pub shadow: Option<BoxShadow>,
+    pub properties: HashMap<String, String>,
+    pub alignment: Option<Alignment>,
+    pub gap: Option<f32>,
+    pub font_size: Option<f32>,
 }
 
 impl Widget {
@@ -49,6 +55,7 @@ impl Widget {
             padding: EdgeInsets::default(),
             margin: EdgeInsets::default(),
             background: Color::transparent(),
+            foreground: Color::black(),
             opacity: 1.0,
             visibility: Visibility::Visible,
             z_index: 0,
@@ -58,6 +65,10 @@ impl Widget {
             clip_bounds: Rect::default(),
             border_radius: 0.0,
             shadow: None,
+            properties: HashMap::new(),
+            alignment: None,
+            gap: None,
+            font_size: Some(14.0),
         }
     }
 
@@ -387,6 +398,61 @@ impl WidgetManager {
             .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
 
         widget.shadow = shadow;
+        widget.mark_needs_paint();
+        Ok(())
+    }
+
+    pub fn set_widget_property(&mut self, id: &WidgetId, key: &str, value: String) -> Result<()> {
+        let widget = self
+            .widgets
+            .get_mut(id)
+            .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
+
+        widget.properties.insert(key.to_string(), value);
+        widget.mark_needs_paint();
+        Ok(())
+    }
+
+    pub fn set_foreground(&mut self, id: &WidgetId, color: Color) -> Result<()> {
+        let widget = self
+            .widgets
+            .get_mut(id)
+            .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
+
+        widget.foreground = color;
+        widget.mark_needs_paint();
+        Ok(())
+    }
+
+    pub fn set_alignment(&mut self, id: &WidgetId, alignment: Alignment) -> Result<()> {
+        let widget = self
+            .widgets
+            .get_mut(id)
+            .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
+
+        widget.alignment = Some(alignment);
+        widget.mark_needs_layout();
+        Ok(())
+    }
+
+    pub fn set_gap(&mut self, id: &WidgetId, gap: f32) -> Result<()> {
+        let widget = self
+            .widgets
+            .get_mut(id)
+            .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
+
+        widget.gap = Some(gap);
+        widget.mark_needs_layout();
+        Ok(())
+    }
+
+    pub fn set_font_size(&mut self, id: &WidgetId, size: f32) -> Result<()> {
+        let widget = self
+            .widgets
+            .get_mut(id)
+            .ok_or_else(|| AdapterError::WidgetNotFound(id.clone()))?;
+
+        widget.font_size = Some(size);
         widget.mark_needs_paint();
         Ok(())
     }
