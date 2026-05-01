@@ -6,6 +6,7 @@ pub struct Text {
   font_size : Double
   font_weight : Double
   color : String
+  strikethrough : Bool
 }
 
 ///|
@@ -17,6 +18,7 @@ pub fn Text::new(content : String) -> Text {
     font_size: 14.0,
     font_weight: 400.0,
     color: "#000000",
+    strikethrough: false,
   }
 }
 
@@ -37,6 +39,7 @@ pub fn Text::heading(content : String, level : Int) -> Text {
     font_size: size,
     font_weight: 700.0,
     color: "#000000",
+    strikethrough: false,
   }
 }
 
@@ -56,6 +59,24 @@ pub fn Text::with_font_weight(self : Text, weight : Double) -> Text {
 /// Set the text color.
 pub fn Text::with_color(self : Text, color : String) -> Text {
   { ..self, color: color }
+}
+
+///|
+/// Set strikethrough decoration.
+pub fn Text::strikethrough(self : Text, enabled : Bool) -> Text {
+  { ..self, strikethrough: enabled }
+}
+
+///|
+/// Subscribe to double click events.
+pub fn Text::on_double_click(self : Text, handler : () -> Unit) -> Text {
+  { ..self, base: self.base.on_double_click(handler) }
+}
+
+///|
+/// Emit a double click event.
+pub fn Text::emit_double_click(self : Text) -> Unit {
+  self.base.emit_double_click()
 }
 
 ///|
@@ -86,4 +107,10 @@ pub fn Text::get_font_weight(self : Text) -> Double {
 /// Get the text color.
 pub fn Text::get_color(self : Text) -> String {
   self.color
+}
+
+///|
+/// Get strikethrough state.
+pub fn Text::get_strikethrough(self : Text) -> Bool {
+  self.strikethrough
 }

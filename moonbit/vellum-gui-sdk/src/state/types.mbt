@@ -29,14 +29,14 @@ pub struct Computed[T] {
 ///|
 /// AutorunHandle: A handle to an autorun effect that can be disposed.
 pub struct AutorunHandle {
-  mut dispose_fn : () -> Unit
+  dispose_fn : () -> Unit
   mut is_disposed : Bool
 }
 
 ///|
 /// WatchHandle: A handle to a watcher that can be disposed.
 pub struct WatchHandle[T] {
-  mut dispose_fn : () -> Unit
+  dispose_fn : () -> Unit
   mut is_disposed : Bool
-  mut last_value : T
+  last_value : T
 }

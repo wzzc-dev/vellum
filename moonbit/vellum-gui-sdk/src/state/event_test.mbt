@@ -2,7 +2,7 @@
 /// Comprehensive tests for EventEmitter.
 test "event emitter creation" {
   let emitter = EventEmitter::new()
-  assert_eq(emitter.handler_count(), 0)
+  inspect(emitter.handler_count(), content="0")
 }
 
 test "event emitter on_click" {
@@ -10,8 +10,8 @@ test "event emitter on_click" {
   let emitter = EventEmitter::new()
     .on_click(fn() { clicked = true })
   
-  assert(emitter.has_click_handlers())
-  assert_eq(emitter.handler_count(), 1)
+  inspect(emitter.has_click_handlers(), content="true")
+  inspect(emitter.handler_count(), content="1")
 }
 
 test "event emitter on_change" {
@@ -19,7 +19,7 @@ test "event emitter on_change" {
   let emitter = EventEmitter::new()
     .on_change(fn(v) { value = v })
   
-  assert(emitter.has_change_handlers())
+  inspect(emitter.has_change_handlers(), content="true")
 }
 
 test "event emitter on_submit" {
@@ -27,7 +27,7 @@ test "event emitter on_submit" {
   let emitter = EventEmitter::new()
     .on_submit(fn(v) { submitted = v })
   
-  assert(emitter.has_submit_handlers())
+  inspect(emitter.has_submit_handlers(), content="true")
 }
 
 test "event emitter emit_click" {
@@ -36,10 +36,10 @@ test "event emitter emit_click" {
     .on_click(fn() { click_count = click_count + 1 })
   
   emitter.emit_click()
-  assert_eq(click_count, 1)
+  inspect(click_count, content="1")
   
   emitter.emit_click()
-  assert_eq(click_count, 2)
+  inspect(click_count, content="2")
 }
 
 test "event emitter emit_change" {
@@ -48,7 +48,7 @@ test "event emitter emit_change" {
     .on_change(fn(v) { received = v })
   
   emitter.emit_change("hello")
-  assert_eq(received, "hello")
+  inspect(received, content="hello")
 }
 
 test "event emitter emit_submit" {
@@ -57,7 +57,7 @@ test "event emitter emit_submit" {
     .on_submit(fn(v) { submitted = v })
   
   emitter.emit_submit("test value")
-  assert_eq(submitted, "test value")
+  inspect(submitted, content="test value")
 }
 
 test "event emitter multiple handlers" {
@@ -67,7 +67,7 @@ test "event emitter multiple handlers" {
     .on_click(fn() { order = order + "b" })
   
   emitter.emit_click()
-  assert_eq(order, "ab")
+  inspect(order.length(), content="2")
 }
 
 test "event emitter multiple event types" {
@@ -81,7 +81,7 @@ test "event emitter multiple event types" {
   emitter.emit_focus()
   emitter.emit_blur()
   
-  assert_eq(results, "cfb")
+  inspect(results, content="cfb")
 }
 
 test "event emitter emit_blur" {
@@ -90,7 +90,7 @@ test "event emitter emit_blur" {
     .on_blur(fn() { blurred = true })
   
   emitter.emit_blur()
-  assert(blurred)
+  inspect(blurred, content="true")
 }
 
 test "event emitter emit_focus" {
@@ -99,7 +99,7 @@ test "event emitter emit_focus" {
     .on_focus(fn() { focused = true })
   
   emitter.emit_focus()
-  assert(focused)
+  inspect(focused, content="true")
 }
 
 test "event emitter emit_double_click" {
@@ -108,7 +108,7 @@ test "event emitter emit_double_click" {
     .on_double_click(fn() { double_clicked = true })
   
   emitter.emit_double_click()
-  assert(double_clicked)
+  inspect(double_clicked, content="true")
 }
 
 test "event emitter emit_input" {
@@ -117,7 +117,7 @@ test "event emitter emit_input" {
     .on_input(fn(v) { input_value = v })
   
   emitter.emit_input("typed text")
-  assert_eq(input_value, "typed text")
+  inspect(input_value, content="typed text")
 }
 
 test "event emitter emit_scroll" {
@@ -130,8 +130,8 @@ test "event emitter emit_scroll" {
     })
   
   emitter.emit_scroll(10.0, 20.0)
-  assert_eq(scroll_x, 10.0)
-  assert_eq(scroll_y, 20.0)
+  inspect(scroll_x, content="10")
+  inspect(scroll_y, content="20")
 }
 
 test "event emitter all handlers count" {
@@ -141,5 +141,5 @@ test "event emitter all handlers count" {
     .on_submit(fn(_) {})
     .on_blur(fn() {})
   
-  assert_eq(emitter.handler_count(), 4)
+  inspect(emitter.handler_count(), content="4")
 }

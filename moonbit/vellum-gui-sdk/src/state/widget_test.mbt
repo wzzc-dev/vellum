@@ -2,22 +2,22 @@
 /// Comprehensive tests for Widget.
 test "widget creation" {
   let widget = Widget::new("button", "btn-1")
-  assert_eq(widget.get_id(), "btn-1")
-  assert_eq(widget.get_type(), "button")
-  assert_eq(widget.child_count(), 0)
+  inspect(widget.get_id(), content="btn-1")
+  inspect(widget.get_type(), content="button")
+  inspect(widget.child_count(), content="0")
 }
 
 test "widget add child" {
   let child = Widget::new("text", "txt-1")
   let parent = Widget::new("column", "col-1").add_child(child)
-  assert_eq(parent.child_count(), 1)
+  inspect(parent.child_count(), content="1")
 }
 
 test "widget set property" {
   let widget = Widget::new("button", "btn-1")
     .set_property("disabled", "true")
     .set_property("color", "red")
-  assert_eq(widget.child_count(), 0)
+  inspect(widget.child_count(), content="0")
 }
 
 test "widget multiple children" {
@@ -28,7 +28,7 @@ test "widget multiple children" {
     .add_child(child1)
     .add_child(child2)
     .add_child(child3)
-  assert_eq(parent.child_count(), 3)
+  inspect(parent.child_count(), content="3")
 }
 
 test "widget on_click" {
@@ -37,7 +37,7 @@ test "widget on_click" {
     .on_click(fn() { clicked = true })
   
   widget.emit_click()
-  assert(clicked)
+  inspect(clicked, content="true")
 }
 
 test "widget on_change" {
@@ -46,7 +46,7 @@ test "widget on_change" {
     .on_change(fn(v) { value = v })
   
   widget.emit_change("new value")
-  assert_eq(value, "new value")
+  inspect(value, content="new value")
 }
 
 test "widget on_submit" {
@@ -55,7 +55,7 @@ test "widget on_submit" {
     .on_submit(fn(v) { submitted = v })
   
   widget.emit_submit("submitted text")
-  assert_eq(submitted, "submitted text")
+  inspect(submitted, content="submitted text")
 }
 
 test "widget on_blur" {
@@ -64,7 +64,7 @@ test "widget on_blur" {
     .on_blur(fn() { blurred = true })
   
   widget.emit_blur()
-  assert(blurred)
+  inspect(blurred, content="true")
 }
 
 test "widget on_focus" {
@@ -73,7 +73,7 @@ test "widget on_focus" {
     .on_focus(fn() { focused = true })
   
   widget.emit_focus()
-  assert(focused)
+  inspect(focused, content="true")
 }
 
 test "widget on_double_click" {
@@ -82,7 +82,7 @@ test "widget on_double_click" {
     .on_double_click(fn() { double_clicked = true })
   
   widget.emit_double_click()
-  assert(double_clicked)
+  inspect(double_clicked, content="true")
 }
 
 test "widget multiple events" {
@@ -96,14 +96,14 @@ test "widget multiple events" {
   widget.emit_focus()
   widget.emit_blur()
   
-  assert_eq(results, "cfb")
+  inspect(results, content="cfb")
 }
 
 test "widget get_events" {
   let widget = Widget::new("button", "btn-1")
   let events = widget.get_events()
   
-  assert_eq(events.handler_count(), 0)
+  inspect(events.handler_count(), content="0")
 }
 
 test "widget chained events and properties" {
@@ -114,5 +114,5 @@ test "widget chained events and properties" {
     .set_property("disabled", "false")
   
   widget.emit_click()
-  assert(clicked)
+  inspect(clicked, content="true")
 }

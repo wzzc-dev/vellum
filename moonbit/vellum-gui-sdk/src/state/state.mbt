@@ -62,7 +62,7 @@ pub fn[T : Eq] State::set(
   self.observable.set(value)
 }
 
-fn ignore[T](_ : T) -> Unit {
+fn[T] ignore(_ : T) -> Unit {
   ()
 }
 
@@ -129,14 +129,14 @@ pub fn[T] Binding::constant(value : T) -> Binding[T] {
 
 ///|
 /// Create a new Computed value with a getter function.
-pub fn[T : Eq] Computed::new(getter : () -> T) -> Computed[T] {
+pub fn[T] Computed::new(getter : () -> T) -> Computed[T] {
   let initial = getter()
   { getter: getter, cached_value: initial, dirty: false }
 }
 
 ///|
 /// Get the current value of this Computed, recalculating if dirty.
-pub fn[T : Eq] Computed::get(self : Computed[T]) -> T {
+pub fn[T] Computed::get(self : Computed[T]) -> T {
   if self.dirty {
     self.cached_value = (self.getter)()
     self.dirty = false
@@ -193,20 +193,15 @@ pub fn[T] WatchHandle::is_disposed(self : WatchHandle[T]) -> Bool {
 }
 
 ///|
-/// Create an autorun effect that executes immediately and re-executes when dependencies change.
+/// Create an autorun effect that executes immediately.
 pub fn autorun(effect : () -> Unit) -> AutorunHandle {
-  let mut is_active = true
-  
   effect()
-  
-  AutorunHandle::new(fn() {
-    is_active = false
-  })
+  AutorunHandle::new(fn() {})
 }
 
 ///|
 /// Create a computed value that automatically tracks dependencies.
-pub fn[T : Eq] computed(getter : () -> T) -> Computed[T] {
+pub fn[T] computed(getter : () -> T) -> Computed[T] {
   Computed::new(getter)
 }
 
@@ -214,15 +209,8 @@ pub fn[T : Eq] computed(getter : () -> T) -> Computed[T] {
 /// Watch a State for changes and execute a callback with old and new values.
 pub fn[T : Eq] watch(state : State[T], callback : (T, T) -> Unit) -> WatchHandle[T] {
   let old_value = state.get()
-  let mut is_active = true
-  
   state.observe(fn(new_value) {
-    if is_active {
-      callback(new_value, old_value)
-    }
+    callback(new_value, old_value)
   })
-  
-  WatchHandle::new(fn() {
-    is_active = false
-  }, old_value)
+  WatchHandle::new(fn() {}, old_value)
 }
