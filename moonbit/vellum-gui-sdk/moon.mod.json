@@ -2,6 +2,9 @@
   "name": "vellum/gui",
   "version": "0.1.0",
   "description": "Vellum GUI Framework SDK for MoonBit",
-  "language": "moonbit",
-  "preferred-target": "wasm"
+  "readme": "README.md",
+  "repository": "https://github.com/vellum-editor/vellum",
+  "license": "MIT",
+  "keywords": ["gui", "ui", "framework", "moonbit"],
+  "source": "src"
 }

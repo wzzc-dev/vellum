@@ -1,0 +1,5 @@
+import {
+  "moonbitlang/core/list",
+}
+
+warnings = "+unnecessary_annotation+missing_doc"
