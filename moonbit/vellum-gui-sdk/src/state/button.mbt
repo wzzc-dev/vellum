@@ -77,3 +77,21 @@ pub fn Button::get_type(self : Button) -> ButtonType {
 pub fn Button::is_disabled(self : Button) -> Bool {
   self.disabled
 }
+
+///|
+/// Subscribe to click events.
+pub fn Button::on_click(self : Button, handler : () -> Unit) -> Button {
+  { ..self, base: self.base.on_click(handler) }
+}
+
+///|
+/// Emit a click event.
+pub fn Button::emit_click(self : Button) -> Unit {
+  self.base.emit_click()
+}
+
+///|
+/// Set the button label.
+pub fn Button::with_label(self : Button, label : String) -> Button {
+  { ..self, label: label }
+}
