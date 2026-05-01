@@ -32,12 +32,6 @@ interface types {
     left: f32,
   }
 
-  record flex-params {
-    grow: f32,
-    shrink: f32,
-    basis: f32,
-  }
-
   enum alignment {
     start,
     center,
@@ -53,54 +47,6 @@ interface types {
     center,
     end,
     stretch,
-  }
-
-  enum text-align {
-    left,
-    center,
-    right,
-    justify,
-  }
-
-  enum vertical-align {
-    top,
-    center,
-    bottom,
-  }
-
-  enum font-style {
-    normal,
-    italic,
-  }
-
-  enum font-weight {
-    thin,
-    extra-light,
-    light,
-    normal,
-    medium,
-    semi-bold,
-    bold,
-    extra-bold,
-    black,
-  }
-
-  enum text-decoration {
-    none,
-    underline,
-    overline,
-    line-through,
-  }
-
-  record text-style {
-    font-size: f32,
-    font-family: string,
-    font-weight: font-weight,
-    font-style: font-style,
-    color: color,
-    decoration: text-decoration,
-    letter-spacing: f32,
-    line-height: f32,
   }
 
   enum cursor-shape {
@@ -125,6 +71,12 @@ interface types {
     auto,
   }
 
+  record border {
+    width: f32,
+    style: border-style,
+    color: color,
+  }
+
   enum border-style {
     none,
     solid,
@@ -133,23 +85,12 @@ interface types {
     double,
   }
 
-  record border {
-    width: f32,
-    style: border-style,
-    color: color,
-  }
-
   record box-shadow {
     offset-x: f32,
     offset-y: f32,
     blur-radius: f32,
     spread-radius: f32,
     color: color,
-  }
-
-  variant alignment-direction {
-    horizontal,
-    vertical,
   }
 
   enum wrap {
@@ -172,40 +113,20 @@ interface types {
     rotation: f32,
   }
 
-  record opacity {
-    value: f32,
-  }
-
   variant pointer-events {
     none,
     all,
     auto,
   }
 
-  record z-index {
-    value: i32,
-  }
-
-  enum image-fit {
-    fill,
-    contain,
-    cover,
-    none,
-    scale-down,
-  }
-
-  enum image-repeat {
-    no-repeat,
-    repeat,
-    repeat-x,
-    repeat-y,
-    round,
-    space,
+  record widget {
+    id: string,
+    widget-type: string,
   }
 }
 
 interface window {
-  use types.*;
+  use types.{color, cursor-shape, size, point};
 
   record window-options {
     title: string,
@@ -236,26 +157,65 @@ interface window {
   is-visible: func(id: u32) -> bool;
   set-size: func(id: u32, width: u32, height: u32);
   get-size: func(id: u32) -> size;
-  set-position: func(id: u32, x: i32, y: i32);
+  set-position: func(id: u32, position: point);
   get-position: func(id: u32) -> point;
   set-fullscreen: func(id: u32, fullscreen: bool);
   is-fullscreen: func(id: u32) -> bool;
   set-always-on-top: func(id: u32, always-on-top: bool);
-  set-cursor: func(id: u32, shape: types::cursor-shape);
+  set-cursor: func(id: u32, shape: cursor-shape);
   set-cursor-position: func(id: u32, position: point);
   request-user-attention: func(id: u32);
   start-dragging: func(id: u32);
 }
 
 interface widget {
-  use types::*;
+  use types.{color, cursor-shape, visibility, box-shadow, pointer-events, transform, size, point, rect, edge-insets, alignment, cross-alignment, wrap, border, overflow, widget};
 
-  resource widget {
-    id: string,
-    widget-type: string,
+  record widget-layout {
+    display: widget-display,
+    flex-direction: flex-direction,
+    flex-wrap: wrap,
+    justify-content: alignment,
+    align-items: cross-alignment,
+    align-content: alignment,
+    gap: f32,
+    row-gap: f32,
+    column-gap: f32,
+    position: widget-position,
+    min-width: option<f32>,
+    max-width: option<f32>,
+    min-height: option<f32>,
+    max-height: option<f32>,
+    overflow-x: overflow,
+    overflow-y: overflow,
   }
 
-  create-widget: func(type: string) -> widget;
+  enum widget-display {
+    none,
+    flex,
+    block,
+    inline,
+    inline-block,
+    inline-flex,
+    grid,
+  }
+
+  enum flex-direction {
+    row,
+    row-reverse,
+    column,
+    column-reverse,
+  }
+
+  enum widget-position {
+    static-position,
+    relative,
+    absolute,
+    fixed,
+    sticky,
+  }
+
+  create-widget: func(widget-type: string) -> widget;
   destroy-widget: func(id: string);
   mount-widget: func(id: string, parent-id: string);
   unmount-widget: func(id: string);
@@ -271,19 +231,19 @@ interface widget {
 
   set-widget-padding: func(id: string, insets: edge-insets);
   set-widget-margin: func(id: string, insets: edge-insets);
-  set-widget-border: func(id: string, border: types::border);
+  set-widget-border: func(id: string, border: border);
   set-widget-border-radius: func(id: string, radius: f32);
   set-widget-background: func(id: string, color: color);
   set-widget-opacity: func(id: string, opacity: f32);
-  set-widget-visibility: func(id: string, visibility: types::visibility);
-  set-widget-z-index: func(id: string, z-index: i32);
-  set-widget-cursor: func(id: string, cursor: types::cursor-shape);
+  set-widget-visibility: func(id: string, visibility: visibility);
+  set-widget-z-index: func(id: string, z-index: s32);
+  set-widget-cursor: func(id: string, cursor: cursor-shape);
 
-  set-widget-transform: func(id: string, transform: types::transform);
+  set-widget-transform: func(id: string, transform: transform);
 
-  set-widget-shadow: func(id: string, shadow: option<types::box-shadow>);
+  set-widget-shadow: func(id: string, shadow: option<box-shadow>);
 
-  set-widget-pointer-events: func(id: string, events: types::pointer-events);
+  set-widget-pointer-events: func(id: string, events: pointer-events);
 
   mark-needs-layout: func(id: string);
   mark-needs-paint: func(id: string);
@@ -298,466 +258,8 @@ interface widget {
   has-focus: func(id: string) -> bool;
 }
 
-record widget-layout {
-  display: widget-display,
-  flex-direction: flex-direction,
-  flex-wrap: types::wrap,
-  justify-content: alignment,
-  align-items: cross-alignment,
-  align-content: alignment,
-  gap: f32,
-  row-gap: f32,
-  column-gap: f32,
-  position: widget-position,
-  min-width: option<f32>,
-  max-width: option<f32>,
-  min-height: option<f32>,
-  max-height: option<f32>,
-  overflow-x: types::overflow,
-  overflow-y: types::overflow,
-}
-
-enum widget-display {
-  none,
-  flex,
-  block,
-  inline,
-  inline-block,
-  inline-flex,
-  grid,
-}
-
-enum flex-direction {
-  row,
-  row-reverse,
-  column,
-  column-reverse,
-}
-
-enum widget-position {
-  static,
-  relative,
-  absolute,
-  fixed,
-  sticky,
-}
-
-interface event {
-  use types::*;
-
-  enum mouse-button {
-    none,
-    left,
-    right,
-    middle,
-    back,
-    forward,
-  }
-
-  enum key-code {
-    backspace,
-    tab,
-    enter,
-    shift,
-    control,
-    alt,
-    caps-lock,
-    escape,
-    space,
-    page-up,
-    page-down,
-    end,
-    home,
-    arrow-left,
-    arrow-up,
-    arrow-right,
-    arrow-down,
-    print-screen,
-    insert,
-    delete,
-    digit-0, digit-1, digit-2, digit-3, digit-4,
-    digit-5, digit-6, digit-7, digit-8, digit-9,
-    key-a, key-b, key-c, key-d, key-e, key-f,
-    key-g, key-h, key-i, key-j, key-k, key-l,
-    key-m, key-n, key-o, key-p, key-q, key-r,
-    key-s, key-t, key-u, key-v, key-w, key-x,
-    key-y, key-z,
-    numpad-0, numpad-1, numpad-2, numpad-3, numpad-4,
-    numpad-5, numpad-6, numpad-7, numpad-8, numpad-9,
-    numpad-add,
-    numpad-subtract,
-    numpad-multiply,
-    numpad-divide,
-    numpad-enter,
-    numpad-decimal,
-    numpad-equal,
-    f1, f2, f3, f4, f5, f6,
-    f7, f8, f9, f10, f11, f12,
-  }
-
-  enum key-modifiers {
-    none,
-    shift,
-    control,
-    alt,
-    meta,
-    caps-lock,
-    num-lock,
-  }
-
-  record mouse-event {
-    kind: mouse-event-kind,
-    button: mouse-button,
-    position: point,
-    global-position: point,
-    delta: point,
-    click-count: u32,
-    modifiers: key-modifiers,
-  }
-
-  variant mouse-event-kind {
-    move,
-    down,
-    up,
-    enter,
-    leave,
-    wheel,
-    double-click,
-  }
-
-  record key-event {
-    kind: key-event-kind,
-    code: key-code,
-    key: string,
-    modifiers: key-modifiers,
-  }
-
-  variant key-event-kind {
-    down,
-    up,
-    pressed,
-  }
-
-  record focus-event {
-    kind: focus-event-kind,
-    related-target: option<string>,
-  }
-
-  variant focus-event-kind {
-    focus-in,
-    focus-out,
-  }
-
-  record touch-event {
-    id: u64,
-    position: point,
-    global-position: point,
-    force: f32,
-    radius-x: f32,
-    radius-y: f32,
-    rotation: f32,
-    kind: touch-event-kind,
-    modifiers: key-modifiers,
-  }
-
-  variant touch-event-kind {
-    start,
-    move,
-    end,
-    cancel,
-  }
-
-  record scroll-event {
-    position: point,
-    delta: point,
-    kind: scroll-event-kind,
-    modifiers: key-modifiers,
-  }
-
-  variant scroll-event-kind {
-    normal,
-    page,
-    begin,
-    end,
-  }
-
-  record drag-event {
-    position: point,
-    global-position: point,
-    kind: drag-event-kind,
-    data: list<string>,
-  }
-
-  variant drag-event-kind {
-    enter,
-    over,
-    leave,
-    drop,
-  }
-
-  record composition-event {
-    kind: composition-event-kind,
-    data: string,
-    cursor: u32,
-  }
-
-  variant composition-event-kind {
-    start,
-    update,
-    end,
-  }
-
-  record window-event {
-    kind: window-event-kind,
-  }
-
-  variant window-event-kind {
-    close-request,
-    close,
-    resize,
-    move,
-    focus,
-    blur,
-    maximize,
-    minimize,
-    restore,
-    enter-fullscreen,
-    exit-fullscreen,
-    theme-changed,
-  }
-
-  variant event-type {
-    mouse(mouse-event),
-    key(key-event),
-    focus(focus-event),
-    touch(touch-event),
-    scroll(scroll-event),
-    drag(drag-event),
-    composition(composition-event),
-    window(window-event),
-  }
-
-  subscribe: func(widget-id: string, event-types: list<string>);
-  unsubscribe: func(widget-id: string);
-  unsubscribe-all: func(widget-id: string);
-
-  propagate-to-parent: func(widget-id: string, propagate: bool);
-  stop-propagation: func(event-id: string);
-}
-
-interface paint {
-  use types::*;
-
-  resource canvas {
-    width: f32,
-    height: f32,
-  }
-
-  create-canvas: func(width: f32, height: f32) -> canvas;
-  destroy-canvas: func(canvas: canvas);
-
-  begin-paint: func(canvas: canvas);
-  end-paint: func(canvas: canvas);
-
-  clear: func(canvas: canvas, color: color);
-
-  save: func(canvas: canvas);
-  restore: func(canvas: canvas);
-
-  translate: func(canvas: canvas, x: f32, y: f32);
-  scale: func(canvas: canvas, x: f32, y: f32);
-  rotate: func(canvas: canvas, angle: f32);
-  skew: func(canvas: canvas, x: f32, y: f32);
-  transform: func(canvas: canvas, matrix: list<f32>);
-
-  clip-rect: func(canvas: canvas, rect: rect);
-  clip-path: func(canvas: canvas, path: path);
-  reset-clip: func(canvas: canvas);
-
-  draw-rect: func(canvas: canvas, rect: rect, paint: paint-style);
-  draw-rounded-rect: func(canvas: canvas, rect: rect, radius: f32, paint: paint-style);
-  draw-circle: func(canvas: canvas, center: point, radius: f32, paint: paint-style);
-  draw-ellipse: func(canvas: canvas, center: point, radius-x: f32, radius-y: f32, paint: paint-style);
-  draw-line: func(canvas: canvas, p1: point, p2: point, stroke: stroke-style);
-  draw-arc: func(canvas: canvas, center: point, radius: f32, start-angle: f32, end-angle: f32, stroke: stroke-style);
-  draw-path: func(canvas: canvas, path: path, paint: paint-style);
-  draw-text: func(canvas: canvas, text: string, position: point, style: text-style);
-
-  measure-text: func(canvas: canvas, text: string, style: text-style) -> size;
-  measure-text-width: func(canvas: canvas, text: string, style: text-style) -> f32;
-
-  draw-image: func(canvas: canvas, image: image, dest: rect, source: option<rect>);
-  draw-image-resized: func(canvas: canvas, image: image, x: f32, y: f32, width: f32, height: f32);
-
-  flush: func(canvas: canvas);
-
-  to-image: func(canvas: canvas) -> image;
-}
-
-resource image {
-  width: u32,
-  height: u32,
-}
-
-resource path {
-}
-
-create-path: func() -> path;
-destroy-path: func(path: path);
-path-move-to: func(path: path, x: f32, y: f32);
-path-line-to: func(path: path, x: f32, y: f32);
-path-quadratic-to: func(path: path, cpx: f32, cpy: f32, x: f32, y: f32);
-path-cubic-to: func(path: path, cp1x: f32, cp1y: f32, cp2x: f32, cp2y: f32, x: f32, y: f32);
-path-arc-to: func(path: path, center: point, radius: f32, start-angle: f32, end-angle: f32);
-path-close: func(path: path);
-path-add-rect: func(path: path, rect: rect);
-path-add-rounded-rect: func(path: path, rect: rect, radius: f32);
-path-add-circle: func(path: path, center: point, radius: f32);
-path-add-oval: func(path: path, rect: rect);
-path-add-path: func(path: path, other: path, offset-x: f32, offset-y: f32);
-path-add-text: func(path: path, text: string, position: point, style: text-style);
-path-is-empty: func(path: path) -> bool;
-path-get-bounds: func(path: path) -> rect;
-
-record paint-style {
-  kind: paint-kind,
-  color: color,
-  stroke-width: f32,
-  stroke-cap: stroke-cap,
-  stroke-join: stroke-join,
-  stroke-miter-limit: f32,
-  blend-mode: blend-mode,
-  filter: option<filter>,
-}
-
-variant paint-kind {
-  fill,
-  stroke,
-}
-
-enum stroke-cap {
-  butt,
-  round,
-  square,
-}
-
-enum stroke-join {
-  miter,
-  round,
-  bevel,
-}
-
-enum blend-mode {
-  normal,
-  multiply,
-  screen,
-  overlay,
-  darken,
-  lighten,
-  color-dodge,
-  color-burn,
-  hard-light,
-  soft-light,
-  difference,
-  exclusion,
-  hue,
-  saturation,
-  color,
-  luminosity,
-}
-
-variant filter {
-  blur(radius: f32),
-  brightness(value: f32),
-  contrast(value: f32),
-  grayscale(value: f32),
-  hue-rotate(angle: f32),
-  invert(value: f32),
-  opacity(value: f32),
-  saturate(value: f32),
-  sepia(value: f32),
-  drop-shadow(offset-x: f32, offset-y: f32, blur: f32, color: color),
-  composite(filter: filter, blend-mode: blend-mode, background: canvas),
-}
-
-record stroke-style {
-  width: f32,
-  cap: stroke-cap,
-  join: stroke-join,
-  miter-limit: f32,
-  dash-pattern: list<f32>,
-  dash-offset: f32,
-}
-
-load-image-from-bytes: func(bytes: list<u8>) -> result<image, paint-error>;
-load-image-from-path: func(path: string) -> result<image, paint-error>;
-create-image-from-canvas: func(canvas: canvas) -> image;
-destroy-image: func(image: image);
-
-variant paint-error {
-  invalid-data(string),
-  unsupported-format(string),
-  io-error(string),
-}
-
-interface app {
-  use types::*;
-  use window::*;
-  use widget::*;
-  use event::*;
-
-  record app-options {
-    name: string,
-    version: string,
-    window-options: window-options,
-  }
-
-  create-app: func(options: app-options) -> app-instance;
-  destroy-app: func(app: app-instance);
-  run: func(app: app-instance);
-  quit: func(app: app-instance);
-
-  set-active-window: func(app: app-instance, window-id: u32);
-  get-active-window: func(app: app-instance) -> option<u32>;
-
-  get-all-windows: func(app: app-instance) -> list<u32>;
-  get-window-count: func(app: app-instance) -> u32;
-
-  get-primary-monitor: func(app: app-instance) -> monitor-info;
-  get-all-monitors: func(app: app-instance) -> list<monitor-info>;
-
-  set-app-theme: func(app: app-instance, theme: app-theme);
-  get-app-theme: func(app: app-instance) -> app-theme;
-
-  get-system-font: func(app: app-instance) -> string;
-  get-system-font-size: func(app: app-instance) -> f32;
-}
-
-resource app-instance {
-}
-
-enum app-theme {
-  light,
-  dark,
-  system,
-}
-
-record monitor-info {
-  id: u32,
-  name: string,
-  is-primary: bool,
-  position: point,
-  size: size,
-  work-area: rect,
-  scale-factor: f32,
-}
-
 world vellum-gui {
-  import vellum:gui/types;
-  import vellum:gui/window;
-  import vellum:gui/widget;
-  import vellum:gui/event;
-  import vellum:gui/paint;
-
-  export vellum:gui/app;
+  import types;
+  import window;
+  import widget;
 }
