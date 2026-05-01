@@ -395,7 +395,33 @@ fn moonbit_test_driver_internal_catch_error(
 let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMap[
   () -> Unit raise,
 ] = {
+  "widget_test.mbt": {
+    0: (__test_7769646765745f746573742e6d6274_0, ["widget creation"]),
+    1: (__test_7769646765745f746573742e6d6274_1, ["widget add child"]),
+    2: (__test_7769646765745f746573742e6d6274_2, ["widget set property"]),
+    3: (__test_7769646765745f746573742e6d6274_3, ["widget multiple children"]),
+  },
+  "widget.mbt": {
+  },
   "types.mbt": {
+  },
+  "text_test.mbt": {
+    0: (__test_746578745f746573742e6d6274_0, ["text creation"]),
+    1: (__test_746578745f746573742e6d6274_1, ["text with custom font size"]),
+    2: (__test_746578745f746573742e6d6274_2, ["text with custom font weight"]),
+    3: (__test_746578745f746573742e6d6274_3, ["text with custom color"]),
+    4: (__test_746578745f746573742e6d6274_4, ["text chaining properties"]),
+    5: (__test_746578745f746573742e6d6274_5, ["heading level 1"]),
+    6: (__test_746578745f746573742e6d6274_6, ["heading level 2"]),
+    7: (__test_746578745f746573742e6d6274_7, ["heading level 3"]),
+    8: (__test_746578745f746573742e6d6274_8, ["heading level 4"]),
+    9: (__test_746578745f746573742e6d6274_9, ["heading level 5"]),
+    10: (__test_746578745f746573742e6d6274_10, ["heading level 6"]),
+    11: (__test_746578745f746573742e6d6274_11, ["heading default size for invalid level"]),
+    12: (__test_746578745f746573742e6d6274_12, ["text base widget"]),
+    13: (__test_746578745f746573742e6d6274_13, ["heading base widget"]),
+  },
+  "text.mbt": {
   },
   "state_test.mbt": {
     0: (__test_73746174655f746573742e6d6274_0, ["observable new"]),
@@ -407,6 +433,54 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
     6: (__test_73746174655f746573742e6d6274_6, ["binding constant"]),
   },
   "state.mbt": {
+  },
+  "event_types.mbt": {
+  },
+  "event_test.mbt": {
+    0: (__test_6576656e745f746573742e6d6274_0, ["event emitter creation"]),
+    1: (__test_6576656e745f746573742e6d6274_1, ["event emitter on subscribe"]),
+    2: (__test_6576656e745f746573742e6d6274_2, ["event emitter multiple subscriptions"]),
+    3: (__test_6576656e745f746573742e6d6274_3, ["event emitter has listeners"]),
+    4: (__test_6576656e745f746573742e6d6274_4, ["event emitter off unsubscribe"]),
+    5: (__test_6576656e745f746573742e6d6274_5, ["event emitter preserve other listeners on unsubscribe"]),
+    6: (__test_6576656e745f746573742e6d6274_6, ["event emitter emit does not crash"]),
+    7: (__test_6576656e745f746573742e6d6274_7, ["event emitter empty emit"]),
+    8: (__test_6576656e745f746573742e6d6274_8, ["event emitter multiple listeners same type"]),
+    9: (__test_6576656e745f746573742e6d6274_9, ["event emitter unsubscribing non-existent listener"]),
+  },
+  "event_names.mbt": {
+  },
+  "event.mbt": {
+  },
+  "container_test.mbt": {
+    0: (__test_636f6e7461696e65725f746573742e6d6274_0, ["column creation"]),
+    1: (__test_636f6e7461696e65725f746573742e6d6274_1, ["row creation"]),
+    2: (__test_636f6e7461696e65725f746573742e6d6274_2, ["stack creation"]),
+    3: (__test_636f6e7461696e65725f746573742e6d6274_3, ["flex creation"]),
+    4: (__test_636f6e7461696e65725f746573742e6d6274_4, ["column with children"]),
+    5: (__test_636f6e7461696e65725f746573742e6d6274_5, ["column with spacing"]),
+    6: (__test_636f6e7461696e65725f746573742e6d6274_6, ["column with padding"]),
+    7: (__test_636f6e7461696e65725f746573742e6d6274_7, ["column chain spacing and padding"]),
+    8: (__test_636f6e7461696e65725f746573742e6d6274_8, ["row with children and properties"]),
+    9: (__test_636f6e7461696e65725f746573742e6d6274_9, ["stack with multiple children"]),
+  },
+  "container.mbt": {
+  },
+  "button_test.mbt": {
+    0: (__test_627574746f6e5f746573742e6d6274_0, ["button creation"]),
+    1: (__test_627574746f6e5f746573742e6d6274_1, ["icon button creation"]),
+    2: (__test_627574746f6e5f746573742e6d6274_2, ["text button creation"]),
+    3: (__test_627574746f6e5f746573742e6d6274_3, ["button with disabled"]),
+    4: (__test_627574746f6e5f746573742e6d6274_4, ["button chaining disabled"]),
+    5: (__test_627574746f6e5f746573742e6d6274_5, ["button base widget"]),
+    6: (__test_627574746f6e5f746573742e6d6274_6, ["icon button base widget"]),
+    7: (__test_627574746f6e5f746573742e6d6274_7, ["text button base widget"]),
+    8: (__test_627574746f6e5f746573742e6d6274_8, ["normal button type"]),
+    9: (__test_627574746f6e5f746573742e6d6274_9, ["enabled button"]),
+    10: (__test_627574746f6e5f746573742e6d6274_10, ["button label preservation"]),
+    11: (__test_627574746f6e5f746573742e6d6274_11, ["icon button label from name"]),
+  },
+  "button.mbt": {
   },
 }
 
