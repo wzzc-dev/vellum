@@ -1,13 +1,7 @@
 {
   "name": "vellum/gui",
   "version": "0.1.0",
-  "description": "Vellum GUI Framework SDK for MoonBit - A SwiftUI-inspired declarative UI framework",
+  "description": "Vellum GUI Framework SDK for MoonBit",
   "language": "moonbit",
-  "readme": "README.md",
-  "repository": "https://github.com/vellum-editor/vellum",
-  "license": "MIT",
-  "preferred-target": "wasm",
-  "test": ["tests/state_test.mbt"],
-  "dependencies": {},
-  "dev-dependencies": {}
+  "preferred-target": "wasm"
 }
