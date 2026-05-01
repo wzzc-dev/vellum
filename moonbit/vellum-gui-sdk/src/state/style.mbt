@@ -25,10 +25,42 @@ pub fn Color::from_hex(hex : String) -> Color {
   { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
 }
 
+fn _unused() -> Unit {
+  let _ = hex_char_to_int('0')
+}
+
+fn hex_char_to_int(c : Char) -> Double {
+  match c {
+    '0' => 0.0
+    '1' => 1.0
+    '2' => 2.0
+    '3' => 3.0
+    '4' => 4.0
+    '5' => 5.0
+    '6' => 6.0
+    '7' => 7.0
+    '8' => 8.0
+    '9' => 9.0
+    'A' | 'a' => 10.0
+    'B' | 'b' => 11.0
+    'C' | 'c' => 12.0
+    'D' | 'd' => 13.0
+    'E' | 'e' => 14.0
+    'F' | 'f' => 15.0
+    _ => 0.0
+  }
+}
+
 ///|
 /// Create a transparent color.
 pub fn Color::transparent() -> Color {
   { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+}
+
+///|
+/// Quick helper to create a color with RGBA values.
+pub fn color(r : Double, g : Double, b : Double, a : Double) -> Color {
+  Color::new(r, g, b, a)
 }
 
 ///|

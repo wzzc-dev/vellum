@@ -440,6 +440,10 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
     11: (__test_746578745f746573742e6d6274_11, ["heading default size for invalid level"]),
     12: (__test_746578745f746573742e6d6274_12, ["text base widget"]),
     13: (__test_746578745f746573742e6d6274_13, ["heading base widget"]),
+    14: (__test_746578745f746573742e6d6274_14, ["text strikethrough default"]),
+    15: (__test_746578745f746573742e6d6274_15, ["text strikethrough enabled"]),
+    16: (__test_746578745f746573742e6d6274_16, ["text on_double_click"]),
+    17: (__test_746578745f746573742e6d6274_17, ["text strikethrough chainable"]),
   },
   "text_input_test.mbt": {
     0: (__test_746578745f696e7075745f746573742e6d6274_0, ["text input new"]),
@@ -565,6 +569,15 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   },
   "progress_bar.mbt": {
   },
+  "list_view_test.mbt": {
+    0: (__test_6c6973745f766965775f746573742e6d6274_0, ["ListView::new creates list view"]),
+    1: (__test_6c6973745f766965775f746573742e6d6274_1, ["ListView::get_items returns items"]),
+    2: (__test_6c6973745f766965775f746573742e6d6274_2, ["ListView::is_empty for empty list"]),
+    3: (__test_6c6973745f766965775f746573742e6d6274_3, ["ListView::base returns widget"]),
+    4: (__test_6c6973745f766965775f746573742e6d6274_4, ["ListView::with_items preserves structure"]),
+  },
+  "list_view.mbt": {
+  },
   "layout_test.mbt": {
     0: (__test_6c61796f75745f746573742e6d6274_0, ["edge insets new"]),
     1: (__test_6c61796f75745f746573742e6d6274_1, ["edge insets all"]),
@@ -586,6 +599,18 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
     17: (__test_6c61796f75745f746573742e6d6274_17, ["layout chaining"]),
   },
   "layout.mbt": {
+  },
+  "image_test.mbt": {
+    0: (__test_696d6167655f746573742e6d6274_0, ["Image::new creates image"]),
+    1: (__test_696d6167655f746573742e6d6274_1, ["Image::with_alt sets alt text"]),
+    2: (__test_696d6167655f746573742e6d6274_2, ["Image::with_size sets dimensions"]),
+    3: (__test_696d6167655f746573742e6d6274_3, ["Image::base returns widget"]),
+    4: (__test_696d6167655f746573742e6d6274_4, ["Image::get_source returns source"]),
+    5: (__test_696d6167655f746573742e6d6274_5, ["Image::with_size chainable"]),
+    6: (__test_696d6167655f746573742e6d6274_6, ["Image default dimensions are zero"]),
+    7: (__test_696d6167655f746573742e6d6274_7, ["Image::with_fit returns new image"]),
+  },
+  "image.mbt": {
   },
   "event_types.mbt": {
   },
@@ -609,6 +634,21 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   "event_names.mbt": {
   },
   "event.mbt": {
+  },
+  "dialog_test.mbt": {
+    0: (__test_6469616c6f675f746573742e6d6274_0, ["Dialog::alert creates dialog"]),
+    1: (__test_6469616c6f675f746573742e6d6274_1, ["Dialog::confirm creates dialog"]),
+    2: (__test_6469616c6f675f746573742e6d6274_2, ["Dialog::prompt creates dialog"]),
+    3: (__test_6469616c6f675f746573742e6d6274_3, ["Dialog::close closes dialog"]),
+    4: (__test_6469616c6f675f746573742e6d6274_4, ["Dialog::open opens dialog"]),
+    5: (__test_6469616c6f675f746573742e6d6274_5, ["Dialog::with_title changes title"]),
+    6: (__test_6469616c6f675f746573742e6d6274_6, ["Dialog::with_confirm_text changes button text"]),
+    7: (__test_6469616c6f675f746573742e6d6274_7, ["Dialog::with_cancel_text changes cancel text"]),
+    8: (__test_6469616c6f675f746573742e6d6274_8, ["Dialog::base returns widget"]),
+    9: (__test_6469616c6f675f746573742e6d6274_9, ["Dialog::get_message returns message"]),
+    10: (__test_6469616c6f675f746573742e6d6274_10, ["Dialog is_open starts true"]),
+  },
+  "dialog.mbt": {
   },
   "container_test.mbt": {
     0: (__test_636f6e7461696e65725f746573742e6d6274_0, ["column creation"]),

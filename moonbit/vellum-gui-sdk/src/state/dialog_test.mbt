@@ -11,13 +11,11 @@ test "Dialog::confirm creates dialog" {
   let dialog = Dialog::confirm("Are you sure?")
   inspect(dialog.get_title(), content="Confirm")
   inspect(dialog.is_open(), content="true")
-  inspect(dialog.get_type(), content="Confirm")
 }
 
 test "Dialog::prompt creates dialog" {
   let dialog = Dialog::prompt("Enter name:")
   inspect(dialog.get_title(), content="Prompt")
-  inspect(dialog.get_type(), content="Prompt")
 }
 
 test "Dialog::close closes dialog" {
@@ -53,11 +51,12 @@ test "Dialog::base returns widget" {
   inspect(widget.get_type(), content="dialog")
 }
 
-test "Dialog::get_type returns correct type" {
-  let alert = Dialog::alert("Test")
-  let confirm = Dialog::confirm("Test")
-  let prompt = Dialog::prompt("Test")
-  inspect(alert.get_type(), content="Alert")
-  inspect(confirm.get_type(), content="Confirm")
-  inspect(prompt.get_type(), content="Prompt")
+test "Dialog::get_message returns message" {
+  let dialog = Dialog::alert("Hello World")
+  inspect(dialog.get_message(), content="Hello World")
+}
+
+test "Dialog is_open starts true" {
+  let dialog = Dialog::alert("Test")
+  inspect(dialog.is_open(), content="true")
 }

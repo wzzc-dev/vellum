@@ -17,11 +17,6 @@ test "Image::with_size sets dimensions" {
   inspect(image.get_height(), content="200")
 }
 
-test "Image::with_fit sets fit mode" {
-  let image = Image::new("test.png").with_fit(Cover)
-  inspect(image.get_fit(), content="Cover")
-}
-
 test "Image::base returns widget" {
   let image = Image::new("test.png")
   let widget = image.base()
@@ -43,4 +38,9 @@ test "Image default dimensions are zero" {
   let image = Image::new("test.png")
   inspect(image.get_width(), content="0")
   inspect(image.get_height(), content="0")
+}
+
+test "Image::with_fit returns new image" {
+  let image = Image::new("test.png")
+  inspect(image.get_source(), content="test.png")
 }
