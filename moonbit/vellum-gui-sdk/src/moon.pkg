@@ -1,6 +1,4 @@
 import {
-  "moonbitlang/core/list",
-  "moonbitlang/core/bool",
   "vellum/gui/state",
 }
 
