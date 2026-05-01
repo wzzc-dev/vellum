@@ -21,32 +21,36 @@ pub fn Color::from_rgb(r : Double, g : Double, b : Double) -> Color {
 
 ///|
 /// Create a Color from hex string (e.g., "#FF0000" or "#FF0000FF").
+/// Returns Color::black() as fallback for invalid input.
 pub fn Color::from_hex(hex : String) -> Color {
-  { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+  let h_start = if hex.get(0) == Some(35) { 1 } else { 0 } // 35 = '#'
+  let r = _hex_char_value(hex.get(0 + h_start)) * 16.0 + _hex_char_value(hex.get(1 + h_start))
+  let g = _hex_char_value(hex.get(2 + h_start)) * 16.0 + _hex_char_value(hex.get(3 + h_start))
+  let b = _hex_char_value(hex.get(4 + h_start)) * 16.0 + _hex_char_value(hex.get(5 + h_start))
+  let a = if hex.length() >= 8 {
+    _hex_char_value(hex.get(6 + h_start)) * 16.0 + _hex_char_value(hex.get(7 + h_start))
+  } else { 255.0 }
+  { r: r / 255.0, g: g / 255.0, b: b / 255.0, a: a / 255.0 }
 }
 
-fn _unused() -> Unit {
-  let _ = hex_char_to_int('0')
-}
-
-fn hex_char_to_int(c : Char) -> Double {
+fn _hex_char_value(c : Int?) -> Double {
   match c {
-    '0' => 0.0
-    '1' => 1.0
-    '2' => 2.0
-    '3' => 3.0
-    '4' => 4.0
-    '5' => 5.0
-    '6' => 6.0
-    '7' => 7.0
-    '8' => 8.0
-    '9' => 9.0
-    'A' | 'a' => 10.0
-    'B' | 'b' => 11.0
-    'C' | 'c' => 12.0
-    'D' | 'd' => 13.0
-    'E' | 'e' => 14.0
-    'F' | 'f' => 15.0
+    Some(48) => 0.0  // '0'
+    Some(49) => 1.0  // '1'
+    Some(50) => 2.0  // '2'
+    Some(51) => 3.0  // '3'
+    Some(52) => 4.0  // '4'
+    Some(53) => 5.0  // '5'
+    Some(54) => 6.0  // '6'
+    Some(55) => 7.0  // '7'
+    Some(56) => 8.0  // '8'
+    Some(57) => 9.0  // '9'
+    Some(65) | Some(97) => 10.0  // 'A' or 'a'
+    Some(66) | Some(98) => 11.0  // 'B' or 'b'
+    Some(67) | Some(99) => 12.0  // 'C' or 'c'
+    Some(68) | Some(100) => 13.0 // 'D' or 'd'
+    Some(69) | Some(101) => 14.0 // 'E' or 'e'
+    Some(70) | Some(102) => 15.0 // 'F' or 'f'
     _ => 0.0
   }
 }

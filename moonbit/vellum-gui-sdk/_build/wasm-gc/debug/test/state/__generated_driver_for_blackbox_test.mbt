@@ -454,6 +454,12 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
     5: (__test_746578745f696e7075745f746573742e6d6274_5, ["text input chaining"]),
     6: (__test_746578745f696e7075745f746573742e6d6274_6, ["text input base widget"]),
     7: (__test_746578745f696e7075745f746573742e6d6274_7, ["text input default max length"]),
+    8: (__test_746578745f696e7075745f746573742e6d6274_8, ["text input auto_focus"]),
+    9: (__test_746578745f696e7075745f746573742e6d6274_9, ["text input on_input event"]),
+    10: (__test_746578745f696e7075745f746573742e6d6274_10, ["text input on_submit event"]),
+    11: (__test_746578745f696e7075745f746573742e6d6274_11, ["text input on_blur event"]),
+    12: (__test_746578745f696e7075745f746573742e6d6274_12, ["text input on_focus event"]),
+    13: (__test_746578745f696e7075745f746573742e6d6274_13, ["text input multiple event handlers"]),
   },
   "text_input.mbt": {
   },

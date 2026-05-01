@@ -7,6 +7,7 @@ pub struct TextInput {
   is_password : Bool
   is_disabled : Bool
   max_length : Int
+  auto_focus : Bool
 }
 
 ///|
@@ -19,6 +20,7 @@ pub fn TextInput::new(id : String, placeholder : String) -> TextInput {
     is_password: false,
     is_disabled: false,
     max_length: 0,
+    auto_focus: false,
   }
 }
 
@@ -74,6 +76,42 @@ pub fn TextInput::is_input_disabled(self : TextInput) -> Bool {
 /// Get the max length (0 means unlimited).
 pub fn TextInput::get_max_length(self : TextInput) -> Int {
   self.max_length
+}
+
+///|
+/// Set auto focus behavior.
+pub fn TextInput::auto_focus(self : TextInput, focus : Bool) -> TextInput {
+  { ..self, auto_focus: focus }
+}
+
+///|
+/// Check if auto focus is enabled.
+pub fn TextInput::is_auto_focus(self : TextInput) -> Bool {
+  self.auto_focus
+}
+
+///|
+/// Subscribe to input events.
+pub fn TextInput::on_input(self : TextInput, handler : (String) -> Unit) -> TextInput {
+  { ..self, base: self.base.on_input(handler) }
+}
+
+///|
+/// Subscribe to submit events.
+pub fn TextInput::on_submit(self : TextInput, handler : (String) -> Unit) -> TextInput {
+  { ..self, base: self.base.on_submit(handler) }
+}
+
+///|
+/// Subscribe to blur events.
+pub fn TextInput::on_blur(self : TextInput, handler : () -> Unit) -> TextInput {
+  { ..self, base: self.base.on_blur(handler) }
+}
+
+///|
+/// Subscribe to focus events.
+pub fn TextInput::on_focus(self : TextInput, handler : () -> Unit) -> TextInput {
+  { ..self, base: self.base.on_focus(handler) }
 }
 
 ///|

@@ -1,5 +1,6 @@
 import {
   "moonbitlang/core/list" @list,
+  "moonbitlang/core/string" @string,
 }
 
 warnings = "+unnecessary_annotation+missing_doc"
