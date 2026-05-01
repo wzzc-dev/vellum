@@ -7,22 +7,7 @@
   "repository": "https://github.com/vellum-editor/vellum",
   "license": "MIT",
   "preferred-target": "wasm",
-  "source": [
-    "src/lib.mbt",
-    "src/types.mbt",
-    "src/state/observable.mbt",
-    "src/state/state.mbt",
-    "src/state/binding.mbt",
-    "src/state/reactive.mbt",
-    "src/container.mbt",
-    "src/button.mbt",
-    "src/text.mbt",
-    "src/input.mbt",
-    "src/event.mbt"
-  ],
-  "test": [
-    "tests/state_test.mbt"
-  ],
+  "test": ["tests/state_test.mbt"],
   "dependencies": {},
   "dev-dependencies": {}
 }
