@@ -5,7 +5,7 @@ edition = "2024"
 description = "GPUI adapter for Vellum GUI Framework - bridges WASM components with GPUI rendering"
 
 [features]
-default = []
+default = ["dep:gpui"]
 mock-gpui = ["dep:gpui", "dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]

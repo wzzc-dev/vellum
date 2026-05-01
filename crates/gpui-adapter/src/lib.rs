@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod error;
 pub mod event;
+pub mod gpui_render;
 pub mod paint;
 pub mod types;
 pub mod widget;

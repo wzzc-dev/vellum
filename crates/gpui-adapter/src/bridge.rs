@@ -1,9 +1,11 @@
 use crate::error::Result;
 use crate::event::{EventDispatcher, GpuiEvent};
+use crate::gpui_render::render_widget_tree;
 use crate::paint::PaintState;
 use crate::types::AppTheme;
 use crate::widget::{WidgetManager, WidgetId};
 use crate::window::{WindowId, WindowManager, WindowOptions};
+use gpui::{Div, Window, Context};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -213,6 +215,36 @@ impl GpuiBridge {
 
     pub fn get_theme(&self) -> AppTheme {
         self.theme
+    }
+
+    /// 渲染 Widget 树为 GPUI 元素
+    pub fn render_widget_tree(
+        &self,
+        root_id: &WidgetId,
+        window: &mut Window,
+        cx: &mut Context,
+    ) -> Div {
+        render_widget_tree(&self.widget_manager, root_id, window, cx)
+    }
+
+    /// 创建示例计数器 Widget 树（用于测试）
+    pub fn create_example_counter(&self) -> WidgetId {
+        let column_id = self.create_widget("column");
+        
+        let text_id = self.create_widget("text");
+        self.widget_manager
+            .write()
+            .set_widget_property(&text_id, "content", "Count: 0".to_string());
+        
+        let button_id = self.create_widget("button");
+        self.widget_manager
+            .write()
+            .set_widget_property(&button_id, "label", "Increment".to_string());
+        
+        self.mount_widget(&text_id, &column_id).unwrap();
+        self.mount_widget(&button_id, &column_id).unwrap();
+        
+        column_id
     }
 
     #[cfg(feature = "mock-gpui")]
