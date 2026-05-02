@@ -523,6 +523,308 @@ impl SwipeGestureRecognizer {
     }
 }
 
+/// Pinch gesture recognizer for scaling
+pub struct PinchGestureRecognizer {
+    pub base: GestureRecognizer,
+    initial_distance: f32,
+    current_distance: f32,
+    start_points: HashMap<u64, Point>,
+}
+
+impl PinchGestureRecognizer {
+    pub fn new() -> Self {
+        Self {
+            base: GestureRecognizer::new(),
+            initial_distance: 0.0,
+            current_distance: 0.0,
+            start_points: HashMap::new(),
+        }
+    }
+
+    fn calculate_distance(&self) -> f32 {
+        let points: Vec<_> = self.start_points.values().collect();
+        if points.len() >= 2 {
+            points[0].distance(points[1])
+        } else {
+            0.0
+        }
+    }
+
+    pub fn get_scale(&self) -> f32 {
+        if self.initial_distance > 0.0 {
+            self.current_distance / self.initial_distance
+        } else {
+            1.0
+        }
+    }
+
+    pub fn handle_touch(&mut self, event: &TouchEvent) {
+        self.base.handle_touch(event);
+
+        if !self.base.enabled {
+            return;
+        }
+
+        match event.event_type {
+            TouchEventType::Began => {
+                for touch in &event.touches {
+                    self.start_points.insert(touch.id, touch.position);
+                }
+                if self.start_points.len() >= 2 {
+                    self.initial_distance = self.calculate_distance();
+                    self.current_distance = self.initial_distance;
+                }
+            }
+            TouchEventType::Moved => {
+                for touch in &event.touches {
+                    self.start_points.insert(touch.id, touch.position);
+                }
+                if self.start_points.len() >= 2 {
+                    let new_distance = self.calculate_distance();
+                    self.current_distance = new_distance;
+                    
+                    let scale = self.get_scale();
+                    if self.base.state == GestureState::Possible {
+                        if scale > 1.1 || scale < 0.9 {
+                            self.base.state = GestureState::Began;
+                        }
+                    } else {
+                        self.base.state = GestureState::Changed;
+                    }
+                }
+            }
+            TouchEventType::Ended | TouchEventType::Cancelled => {
+                if self.base.state == GestureState::Began || self.base.state == GestureState::Changed {
+                    self.base.state = GestureState::Ended;
+                } else {
+                    self.base.state = GestureState::Failed;
+                }
+            }
+        }
+    }
+
+    pub fn get_result(&self) -> Option<GestureResult> {
+        if self.base.state == GestureState::Possible || self.base.state == GestureState::Failed {
+            return None;
+        }
+
+        Some(GestureResult {
+            gesture_type: GestureType::Pinch,
+            state: self.base.state,
+            touches: self.base.active_touches.values().cloned().collect(),
+            velocity: Point::zero(),
+            translation: Point::zero(),
+            scale: Some(self.get_scale()),
+            rotation: None,
+        })
+    }
+}
+
+/// Rotation gesture recognizer
+pub struct RotationGestureRecognizer {
+    pub base: GestureRecognizer,
+    initial_angle: f32,
+    current_angle: f32,
+    start_points: HashMap<u64, Point>,
+}
+
+impl RotationGestureRecognizer {
+    pub fn new() -> Self {
+        Self {
+            base: GestureRecognizer::new(),
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            start_points: HashMap::new(),
+        }
+    }
+
+    fn calculate_angle(&self) -> f32 {
+        let points: Vec<_> = self.start_points.values().collect();
+        if points.len() >= 2 {
+            let dx = points[1].x - points[0].x;
+            let dy = points[1].y - points[0].y;
+            dy.atan2(dx)
+        } else {
+            0.0
+        }
+    }
+
+    pub fn get_rotation(&self) -> f32 {
+        self.current_angle - self.initial_angle
+    }
+
+    pub fn handle_touch(&mut self, event: &TouchEvent) {
+        self.base.handle_touch(event);
+
+        if !self.base.enabled {
+            return;
+        }
+
+        match event.event_type {
+            TouchEventType::Began => {
+                for touch in &event.touches {
+                    self.start_points.insert(touch.id, touch.position);
+                }
+                if self.start_points.len() >= 2 {
+                    self.initial_angle = self.calculate_angle();
+                    self.current_angle = self.initial_angle;
+                }
+            }
+            TouchEventType::Moved => {
+                for touch in &event.touches {
+                    self.start_points.insert(touch.id, touch.position);
+                }
+                if self.start_points.len() >= 2 {
+                    self.current_angle = self.calculate_angle();
+                    
+                    let rotation = self.get_rotation().abs();
+                    if self.base.state == GestureState::Possible {
+                        if rotation > 0.2 {
+                            self.base.state = GestureState::Began;
+                        }
+                    } else {
+                        self.base.state = GestureState::Changed;
+                    }
+                }
+            }
+            TouchEventType::Ended | TouchEventType::Cancelled => {
+                if self.base.state == GestureState::Began || self.base.state == GestureState::Changed {
+                    self.base.state = GestureState::Ended;
+                } else {
+                    self.base.state = GestureState::Failed;
+                }
+            }
+        }
+    }
+
+    pub fn get_result(&self) -> Option<GestureResult> {
+        if self.base.state == GestureState::Possible || self.base.state == GestureState::Failed {
+            return None;
+        }
+
+        Some(GestureResult {
+            gesture_type: GestureType::Rotation,
+            state: self.base.state,
+            touches: self.base.active_touches.values().cloned().collect(),
+            velocity: Point::zero(),
+            translation: Point::zero(),
+            scale: None,
+            rotation: Some(self.get_rotation()),
+        })
+    }
+}
+
+/// Screen edge pan gesture recognizer
+pub struct ScreenEdgePanGestureRecognizer {
+    pub base: GestureRecognizer,
+    pub edge: Edge,
+    pub edge_margin: f32,
+    start_point: Option<Point>,
+    pub translation: Point,
+    pub screen_size: Option<(f32, f32)>,
+}
+
+impl ScreenEdgePanGestureRecognizer {
+    pub fn new(edge: Edge, edge_margin: f32) -> Self {
+        Self {
+            base: GestureRecognizer::new(),
+            edge,
+            edge_margin,
+            start_point: None,
+            translation: Point::zero(),
+            screen_size: None,
+        }
+    }
+
+    pub fn set_screen_size(&mut self, width: f32, height: f32) {
+        self.screen_size = Some((width, height));
+    }
+
+    fn is_at_edge(&self, point: Point) -> bool {
+        if let Some((w, h)) = self.screen_size {
+            match self.edge {
+                Edge::Left => point.x <= self.edge_margin,
+                Edge::Right => point.x >= w - self.edge_margin,
+                Edge::Top => point.y <= self.edge_margin,
+                Edge::Bottom => point.y >= h - self.edge_margin,
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn handle_touch(&mut self, event: &TouchEvent) {
+        self.base.handle_touch(event);
+
+        if !self.base.enabled {
+            return;
+        }
+
+        // Get primary touch
+        let touch = event.touches.first();
+        if touch.is_none() {
+            return;
+        }
+        let touch = touch.unwrap();
+
+        match event.event_type {
+            TouchEventType::Began => {
+                if self.is_at_edge(touch.position) {
+                    self.start_point = Some(touch.position);
+                    self.translation = Point::zero();
+                    self.base.state = GestureState::Possible;
+                } else {
+                    self.base.state = GestureState::Failed;
+                }
+            }
+            TouchEventType::Moved => {
+                if self.base.state != GestureState::Failed {
+                    if let Some(start) = self.start_point {
+                        self.translation = Point::new(
+                            touch.position.x - start.x,
+                            touch.position.y - start.y,
+                        );
+                        
+                        if self.base.state == GestureState::Possible {
+                            let distance = start.distance(&touch.position);
+                            if distance >= 5.0 {
+                                self.base.state = GestureState::Began;
+                            }
+                        } else {
+                            self.base.state = GestureState::Changed;
+                        }
+                    }
+                }
+            }
+            TouchEventType::Ended | TouchEventType::Cancelled => {
+                if self.base.state == GestureState::Began || self.base.state == GestureState::Changed {
+                    self.base.state = GestureState::Ended;
+                } else {
+                    self.base.state = GestureState::Failed;
+                }
+            }
+        }
+    }
+
+    pub fn get_result(&self) -> Option<GestureResult> {
+        if self.base.state == GestureState::Possible || self.base.state == GestureState::Failed {
+            return None;
+        }
+
+        Some(GestureResult {
+            gesture_type: GestureType::ScreenEdgePan {
+                edges: vec![self.edge],
+            },
+            state: self.base.state,
+            touches: self.base.active_touches.values().cloned().collect(),
+            velocity: Point::zero(),
+            translation: self.translation,
+            scale: None,
+            rotation: None,
+        })
+    }
+}
+
 /// Gesture registry for managing multiple recognizers
 pub struct GestureRegistry {
     pub recognizers: Vec<Arc<Mutex<GestureRecognizer>>>,

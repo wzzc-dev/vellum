@@ -121,3 +121,18 @@ pub fn pinch_gesture() -> GestureType {
 pub fn rotation_gesture() -> GestureType {
     GestureType::Rotation
 }
+
+pub fn screen_edge_pan_gesture(edge: Edge) -> GestureType {
+    GestureType::ScreenEdgePan { edges: List::new(edge) }
+}
+
+pub fn left_edge_pan() -> GestureType {
+    screen_edge_pan_gesture(Edge::Left)
+}
+
+pub fn right_edge_pan() -> GestureType {
+    screen_edge_pan_gesture(Edge::Right)
+}
+
+// Gesture event callback type
+pub type GestureHandler = (GestureType, GestureState, GestureResult) -> Unit;

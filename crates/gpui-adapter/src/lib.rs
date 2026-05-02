@@ -82,7 +82,8 @@ pub use gesture_recognizer::{
     GestureRecognizer, GestureState, GestureType, GestureResult, TouchEvent, 
     TouchEventType, TouchPoint, TapGestureRecognizer, PanGestureRecognizer, 
     LongPressGestureRecognizer, SwipeGestureRecognizer, SwipeDirection, Edge,
-    GestureRegistry, Point,
+    GestureRegistry, Point, PinchGestureRecognizer, RotationGestureRecognizer,
+    ScreenEdgePanGestureRecognizer,
 };
 
 // Re-export transition types
