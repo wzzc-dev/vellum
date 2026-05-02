@@ -1,10 +1,10 @@
 {
   "warn-list": "-44",
   "import": [
-    { "path" : "vellum/pomodoro/interface/vellum/extension/types", "alias" : "types" },
-    { "path" : "vellum/pomodoro/interface/vellum/extension/host", "alias" : "host" },
-    { "path" : "vellum/pomodoro/interface/vellum/extension/timer", "alias" : "timer" },
-    { "path" : "vellum/pomodoro/interface/vellum/extension/ui", "alias" : "ui" },
+    { "path" : "vellum/moonbit-gui/interface/vellum/extension/types", "alias" : "types" },
+    { "path" : "vellum/moonbit-gui/interface/vellum/extension/host", "alias" : "host" },
+    { "path" : "vellum/moonbit-gui/interface/vellum/extension/timer", "alias" : "timer" },
+    { "path" : "vellum/moonbit-gui/interface/vellum/extension/ui", "alias" : "ui" },
     { "path" : "moonbitlang/core/encoding/utf8", "alias" : "encoding/utf8" }
   ]
 }

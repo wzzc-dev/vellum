@@ -15,7 +15,7 @@ if [ ! -d "gen" ]; then
         --ignore-stub
 
     # Fix paths - use Linux style sed
-    find . -name "moon.pkg.json" -not -path "./_build/*" -exec sed -i.bak 's|vellum/extension/interface/vellum/extension/|vellum/pomodoro/interface/vellum/extension/|g' {} +
+    find . -name "moon.pkg.json" -not -path "./_build/*" -exec sed -i.bak 's|vellum/extension/interface/vellum/extension/|vellum/moonbit-gui/interface/vellum/extension/|g' {} +
     find . -name "*.bak" -delete
 fi
 
@@ -66,6 +66,6 @@ wasm-tools component embed "$WIT_DIR" "$WASM_INPUT" \
     -o target/component.embed.wasm
 
 wasm-tools component new target/component.embed.wasm \
-    -o target/wasm32-wasip2/release/vellum_pomodoro.wasm
+    -o target/wasm32-wasip2/release/vellum_moonbit_gui.wasm
 
-echo "Built: target/wasm32-wasip2/release/vellum_pomodoro.wasm"
+echo "Built: target/wasm32-wasip2/release/vellum_moonbit_gui.wasm"
