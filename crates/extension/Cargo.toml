@@ -5,8 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+notify = "6.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 wasmtime = { version = "35", features = ["component-model"] }
 wasmtime-wasi = "35"
@@ -14,6 +16,7 @@ wasmtime-wasi = "35"
 [features]
 default = []
 gpui-adapter = ["dep:gpui-adapter"]
+hot-reload = []
 
 [dependencies.gpui-adapter]
 path = "../gpui-adapter"

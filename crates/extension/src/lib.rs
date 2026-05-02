@@ -6,6 +6,9 @@ pub mod permissions;
 pub mod registry;
 pub mod ui;
 
+#[cfg(feature = "hot-reload")]
+pub mod hot_reload;
+
 pub use host::ExtensionHost;
 
 pub use contributions::{

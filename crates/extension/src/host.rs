@@ -256,6 +256,8 @@ pub struct ExtensionHost {
     document_text: String,
     document_path: Option<String>,
     dev_extensions_file: PathBuf,
+    #[cfg(feature = "hot-reload")]
+    hot_reload_controller: Option<crate::hot_reload::HotReloadController>,
 }
 
 impl ExtensionHost {
@@ -282,6 +284,8 @@ impl ExtensionHost {
             document_text: String::new(),
             document_path: None,
             dev_extensions_file: default_dev_extensions_file(),
+            #[cfg(feature = "hot-reload")]
+            hot_reload_controller: None,
         })
     }
 
@@ -707,6 +711,33 @@ impl ExtensionHost {
             self.panel_uis.extend(outputs.panel_uis.clone());
         }
         self.outputs.merge(outputs);
+    }
+
+    pub fn is_extension_loaded(&self, extension_id: &str) -> bool {
+        self.loaded_extensions.contains_key(extension_id)
+    }
+
+    pub fn panel_uis(&self) -> &HashMap<PanelId, UiNode> {
+        &self.panel_uis
+    }
+
+    pub fn set_panel_view(&mut self, panel_id: PanelId, ui_node: UiNode) {
+        self.panel_uis.insert(panel_id, ui_node);
+    }
+
+    #[cfg(feature = "hot-reload")]
+    pub fn init_hot_reload(&mut self) {
+        self.hot_reload_controller = Some(crate::hot_reload::HotReloadController::new());
+    }
+
+    #[cfg(feature = "hot-reload")]
+    pub fn hot_reload_controller(&self) -> Option<&crate::hot_reload::HotReloadController> {
+        self.hot_reload_controller.as_ref()
+    }
+
+    #[cfg(feature = "hot-reload")]
+    pub fn hot_reload_controller_mut(&mut self) -> Option<&mut crate::hot_reload::HotReloadController> {
+        self.hot_reload_controller.as_mut()
     }
 }
 
