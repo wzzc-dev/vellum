@@ -1,7 +1,7 @@
 //! GPUI 渲染集成 - 将 Widget 树转换为 GPUI 元素
 
 use crate::types::Color;
-use crate::widget::{Widget, WidgetId, WidgetManager};
+use crate::widget::{WidgetId, WidgetManager};
 use gpui::{px, prelude::*, Div, Window, Hsla};
 use std::sync::Arc;
 use parking_lot::RwLock;

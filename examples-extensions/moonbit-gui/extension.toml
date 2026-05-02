@@ -1,0 +1,26 @@
+id = "vellum.moonbit-gui"
+name = "MoonBit GUI"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "A MoonBit GUI extension for creating declarative UIs"
+
+[wasm]
+component = "../../target/wasm32-wasip2/release/vellum_moonbit_gui.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "moonbit-gui.demo"
+title = "MoonBit: Demo"
+
+[[contributes.panels]]
+id = "moonbit-gui"
+title = "MoonBit GUI"
+icon = "layout"
+location = "right"
