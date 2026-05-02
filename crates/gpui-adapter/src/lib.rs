@@ -22,6 +22,18 @@ pub mod grid_render;
 // Environment rendering module
 pub mod environment_render;
 
+// Gesture recognition module
+#[cfg(feature = "gestures")]
+pub mod gesture_recognizer;
+
+// Transition rendering module
+#[cfg(feature = "transitions")]
+pub mod transition_render;
+
+// Shared element transition module
+#[cfg(feature = "transitions")]
+pub mod shared_element_render;
+
 pub use bridge::GpuiBridge;
 pub use error::{AdapterError, Result};
 pub use event::{EventDispatcher, EventType, GpuiEvent, MouseButton, MouseEventKind};
@@ -62,6 +74,31 @@ pub use grid_render::{
 pub use environment_render::{
     ColorScheme, EnvChangeEvent, EnvModifier, EnvReader, EnvSnapshot, EnvValue,
     EnvironmentProvider, TextDirection,
+};
+
+// Re-export gesture types
+#[cfg(feature = "gestures")]
+pub use gesture_recognizer::{
+    GestureRecognizer, GestureState, GestureType, GestureResult, TouchEvent, 
+    TouchEventType, TouchPoint, TapGestureRecognizer, PanGestureRecognizer, 
+    LongPressGestureRecognizer, SwipeGestureRecognizer, SwipeDirection, Edge,
+    GestureRegistry, Point,
+};
+
+// Re-export transition types
+#[cfg(feature = "transitions")]
+pub use transition_render::{
+    TransitionCoordinator, TransitionConfig, TransitionStyle, TransitionRenderState,
+    ActiveTransition, SharedElement, ViewId, VisibilityTransition, SlideEdge,
+    Transform, AnimatedContainer, AnimatedContainerConfig, RunningAnimation,
+    Rect,
+};
+
+// Re-export shared element types
+#[cfg(feature = "transitions")]
+pub use shared_element_render::{
+    SharedElementManager, SharedElementState, SharedElementConfig, SharedElementOptions,
+    InterpolatedElement, SharedElementInterpolator, lerp,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

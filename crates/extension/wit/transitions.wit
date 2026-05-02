@@ -1,0 +1,124 @@
+package vellum:gui/transitions@0.1.0;
+
+use vellum:gui/types.{ point, rect, color };
+use vellum:gui/animation.{ animation-spec, spring-config, animation-curve };
+
+/// Transition configuration
+record transition-config {
+    /// Duration in milliseconds
+    duration-ms: u32,
+    /// Whether this transition should be interactive
+    interactive: bool,
+    /// Animation curve
+    curve: animation-curve,
+}
+
+/// Default transition configurations
+func default-push-config() -> transition-config {
+    transition-config {
+        duration-ms: 300,
+        interactive: true,
+        curve: ease-in-out,
+    }
+}
+
+func default-modal-config() -> transition-config {
+    transition-config {
+        duration-ms: 350,
+        interactive: true,
+        curve: ease-out,
+    }
+}
+
+/// Transition animation style
+enum transition-style {
+    /// Push from right
+    push,
+    /// Modal presentation
+    modal,
+    /// Full screen
+    full-screen,
+    /// Page curl (iOS style)
+    page-curl,
+    /// Flip
+    flip,
+    /// Custom
+    custom,
+}
+
+/// View visibility animation
+enum visibility-transition {
+    /// Fade in/out
+    fade,
+    /// Slide in from edge
+    slide { edge: slide-edge },
+    /// Scale in/out
+    scale { factor: f32 },
+    /// Move from offset
+    offset { x: f32, y: f32 },
+}
+
+enum slide-edge {
+    top, bottom, left, right
+}
+
+/// Container operation
+enum container-operation {
+    /// Insert child
+    insert { index: u32 },
+    /// Remove child
+    remove { index: u32 },
+    /// Replace child
+    replace { index: u32 },
+    /// Move child
+    move { from: u32, to: u32 },
+}
+
+/// Animated container widget
+record animated-container-config {
+    /// Transition for insertion
+    insert-transition: visibility-transition,
+    /// Transition for removal
+    remove-transition: visibility-transition,
+    /// Animation spec
+    animation: animation-spec,
+}
+
+/// Shared element configuration
+record shared-element-config {
+    /// Identifier for matching
+    share-id: string,
+    /// Geometry to share
+    bounds: rect,
+    /// Transition options
+    options: shared-element-options,
+}
+
+record shared-element-options {
+    /// Duration
+    duration-ms: u32,
+    /// Curve
+    curve: animation-curve,
+    /// Whether to use spring
+    use-spring: bool,
+    /// Spring config if enabled
+    spring: spring-config,
+}
+
+/// Transition coordinator resource
+resource transition-coordinator {
+    /// Begin a transition
+    begin-transition: func(operation: container-operation);
+    
+    /// Add animated element
+    add-element: func(share-id: string, config: shared-element-config);
+    
+    /// Complete the transition
+    complete-transition: func();
+    
+    /// Cancel the transition (for interactive)
+    cancel-transition: func();
+    
+    /// Update interactive transition progress
+    update-progress: func(progress: f32);
+}

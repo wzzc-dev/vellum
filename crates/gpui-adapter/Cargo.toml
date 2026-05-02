@@ -8,6 +8,8 @@ description = "GPUI adapter for Vellum GUI Framework - bridges WASM components w
 default = ["dep:gpui"]
 mock-gpui = ["dep:gpui", "dep:wasmtime", "dep:wasmtime-wasi"]
 wit = ["dep:wasmtime", "dep:wasmtime-wasi"]
+gestures = []
+transitions = []
 
 [dependencies]
 gpui = { version = "0.2.2", optional = true }

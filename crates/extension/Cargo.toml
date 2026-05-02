@@ -17,6 +17,8 @@ wasmtime-wasi = "35"
 default = []
 gpui-adapter = ["dep:gpui-adapter"]
 hot-reload = []
+gestures = ["gpui-adapter", "gpui-adapter/gestures"]
+transitions = ["gpui-adapter", "gpui-adapter/transitions"]
 
 [dependencies.gpui-adapter]
 path = "../gpui-adapter"
