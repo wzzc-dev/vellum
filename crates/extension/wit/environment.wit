@@ -1,0 +1,251 @@
+package vellum:gui/environment@0.1.0;
+
+/// Environment value types
+variant env-value {
+    /// String value
+    string {
+        value: string,
+    },
+    /// Integer value
+    int {
+        value: s32,
+    },
+    /// Float value
+    float {
+        value: f32,
+    },
+    /// Boolean value
+    bool {
+        value: bool,
+    },
+}
+
+/// Environment change event
+record env-change-event {
+    /// Key that changed
+    key: string,
+    /// New value
+    value: env-value,
+    /// Previous value (for tracking)
+    previous-value: option<env-value>,
+    /// Timestamp of change
+    timestamp: u64,
+}
+
+/// Environment provider resource
+resource environment-provider {
+    /// Create a new environment provider
+    constructor();
+
+    // ─────────────────────────────────────────────────────────
+    // String operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Set a string value
+    set-string: func(key: string, value: string);
+
+    /// Get a string value
+    get-string: func(key: string) -> option<string>;
+
+    /// Check if a key exists
+    has-string: func(key: string) -> bool;
+
+    // ─────────────────────────────────────────────────────────
+    // Integer operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Set an integer value
+    set-int: func(key: string, value: s32);
+
+    /// Get an integer value
+    get-int: func(key: string) -> option<s32>;
+
+    // ─────────────────────────────────────────────────────────
+    // Float operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Set a float value
+    set-float: func(key: string, value: f32);
+
+    /// Get a float value
+    get-float: func(key: string) -> option<f32>;
+
+    // ─────────────────────────────────────────────────────────
+    // Boolean operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Set a boolean value
+    set-bool: func(key: string, value: bool);
+
+    /// Get a boolean value
+    get-bool: func(key: string) -> option<bool>;
+
+    // ─────────────────────────────────────────────────────────
+    // Generic operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Set a value (type-safe wrapper)
+    set: func(key: string, value: env-value);
+
+    /// Get a value
+    get: func(key: string) -> option<env-value>;
+
+    /// Remove a value
+    remove: func(key: string) -> bool;
+
+    /// Clear all values
+    clear: func();
+
+    /// Get all keys
+    keys: func() -> list<string>;
+
+    /// Check if a key exists
+    has: func(key: string) -> bool;
+
+    // ─────────────────────────────────────────────────────────
+    // Subscription operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Subscribe to changes for a key
+    subscribe: func(key: string);
+
+    /// Unsubscribe from a key
+    unsubscribe: func(key: string);
+
+    /// Unsubscribe from all keys
+    unsubscribe-all: func();
+
+    /// Check if subscribed to a key
+    is-subscribed: func(key: string) -> bool;
+
+    // ─────────────────────────────────────────────────────────
+    // Snapshot operations
+    // ─────────────────────────────────────────────────────────
+
+    /// Create a snapshot of current state
+    snapshot: func() -> env-snapshot;
+
+    /// Restore from a snapshot
+    restore: func(snapshot: env-snapshot);
+}
+
+/// Environment snapshot for state preservation
+record env-snapshot {
+    /// Snapshot identifier
+    id: string,
+    /// All values at snapshot time
+    values: list<tuple<string, env-value>>,
+    /// Creation timestamp
+    created-at: u64,
+}
+
+/// Predefined environment keys
+record env-keys {
+    // ─────────────────────────────────────────────────────────
+    // Theme keys
+    // ─────────────────────────────────────────────────────────
+
+    /// Color scheme (light/dark/system)
+    color-scheme: string,
+    /// Primary color hex
+    primary-color: string,
+    /// Accent color hex
+    accent-color: string,
+    /// Background color hex
+    background-color: string,
+    /// Text color hex
+    text-color: string,
+    /// Font family name
+    font-family: string,
+    /// Font size base
+    font-size-base: f32,
+
+    // ─────────────────────────────────────────────────────────
+    // Layout keys
+    // ─────────────────────────────────────────────────────────
+
+    /// Text direction (ltr/rtl)
+    text-direction: string,
+    /// Layout direction
+    layout-direction: string,
+    /// Screen width
+    screen-width: string,
+    /// Screen height
+    screen-height: string,
+    /// Platform type
+    platform: string,
+
+    // ─────────────────────────────────────────────────────────
+    // Locale keys
+    // ─────────────────────────────────────────────────────────
+
+    /// Current locale (e.g., "en-US")
+    locale: string,
+    /// Language code
+    language: string,
+    /// Region code
+    region: string,
+    /// Time zone
+    timezone: string,
+
+    // ─────────────────────────────────────────────────────────
+    // Accessibility keys
+    // ─────────────────────────────────────────────────────────
+
+    /// Reduce motion preference
+    reduce-motion: string,
+    /// High contrast mode
+    high-contrast: string,
+    /// Bold text enabled
+    bold-text: string,
+
+    // ─────────────────────────────────────────────────────────
+    // App state keys
+    // ─────────────────────────────────────────────────────────
+
+    /// Current route/path
+    current-route: string,
+    /// Is keyboard visible
+    keyboard-visible: string,
+    /// Safe area insets
+    safe-area: string,
+}
+
+/// Environment reader resource (read-only access)
+resource env-reader {
+    /// Create from a provider
+    constructor(provider: environment-provider);
+
+    /// Read a string with default
+    get-string: func(key: string, default: string) -> string;
+
+    /// Read an int with default
+    get-int: func(key: string, default: s32) -> s32;
+
+    /// Read a float with default
+    get-float: func(key: string, default: f32) -> f32;
+
+    /// Read a bool with default
+    get-bool: func(key: string, default: bool) -> bool;
+
+    /// Read a value or return default
+    get: func(key: string) -> option<env-value>;
+}
+
+/// Environment modifier resource
+resource env-modifier {
+    /// Create from a provider
+    constructor(provider: environment-provider);
+
+    /// Set string if not already set
+    set-string-if-absent: func(key: string, value: string) -> bool;
+
+    /// Set int if not already set
+    set-int-if-absent: func(key: string, value: s32) -> bool;
+
+    /// Increment an integer value
+    increment: func(key: string, delta: s32) -> s32;
+
+    /// Decrement an integer value
+    decrement: func(key: string, delta: s32) -> s32;
+}

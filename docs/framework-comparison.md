@@ -1,21 +1,21 @@
 # MoonBit GUI 框架对比分析
 
-本文档将 MoonBit GUI Framework 与主流声明式 UI 框架进行对比分析，找出需要完善的地方。
+本文档将 MoonBit GUI Framework 与主流声明式 UI 框架进行对比分析，展示已实现的功能和未来计划。
 
 ---
 
 ## 目录
 
 1. [框架概述对比](#框架概述对比)
-2. [声明式 UI 语法对比](#声明式-ui-语法对比)
-3. [状态管理对比](#状态管理对比)
-4. [布局系统对比](#布局系统对比)
-5. [组件系统对比](#组件系统对比)
-6. [动画系统对比](#动画系统对比)
-7. [导航系统对比](#导航系统对比)
-8. [平台支持对比](#平台支持对比)
-9. [需要完善的功能](#需要完善的功能)
-10. [改进建议](#改进建议)
+2. [已实现功能总览](#已实现功能总览)
+3. [声明式 UI 语法对比](#声明式-ui-语法对比)
+4. [状态管理对比](#状态管理对比)
+5. [布局系统对比](#布局系统对比)
+6. [组件系统对比](#组件系统对比)
+7. [动画系统对比](#动画系统对比)
+8. [导航系统对比](#导航系统对比)
+9. [环境注入对比](#环境注入对比)
+10. [后续开发计划](#后续开发计划)
 
 ---
 
@@ -32,6 +32,72 @@
 | **成熟度** | 早期开发 | 成熟 | 成熟 | 非常成熟 |
 
 *注：MoonBit GUI 目前主要支持桌面平台，移动端支持计划中。
+
+---
+
+## 已实现功能总览
+
+### ✅ 核心功能
+
+| 功能 | 状态 | 实现文件 |
+|------|------|----------|
+| 基础组件 (Text, Button, Image) | ✅ 已完成 | [widget.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/widget.mbt) |
+| 输入组件 (TextInput, Checkbox, Toggle, Slider) | ✅ 已完成 | [text_input.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/text_input.mbt), [checkbox.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/checkbox.mbt) |
+| 容器组件 (Column, Row, Stack) | ✅ 已完成 | [container.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/container.mbt) |
+| 布局系统 (EdgeInsets, Alignment, Constraints) | ✅ 已完成 | [layout.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/layout.mbt) |
+| 样式系统 (Color, Border, Shadow) | ✅ 已完成 | [style.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/style.mbt) |
+| 状态管理 (Observable, State, Binding) | ✅ 已完成 | [state.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/state.mbt) |
+| 事件系统 | ✅ 已完成 | [event.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/event.mbt) |
+
+### ✅ 导航系统
+
+| 功能 | 状态 | 实现文件 |
+|------|------|----------|
+| 声明式路由 | ✅ 已完成 | [navigation.wit](file:///workspace/crates/extension/wit/navigation.wit), [navigation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/navigation.mbt) |
+| 栈导航 (push/pop) | ✅ 已完成 | [navigation_render.rs](file:///workspace/crates/gpui-adapter/src/navigation_render.rs) |
+| Tab 导航 | ✅ 已完成 | TabBarItem, TabBar |
+| 深层链接 | ✅ 已完成 | handle_deep_link |
+| 转换动画 | ✅ 已完成 | TransitionType |
+
+### ✅ 动画系统
+
+| 功能 | 状态 | 实现文件 |
+|------|------|----------|
+| 基础 Tween 动画 | ✅ 已完成 | [animation.wit](file:///workspace/crates/extension/wit/animation.wit), [animation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/animation.mbt) |
+| Spring 动画 | ✅ 已完成 | [animation_render.rs](file:///workspace/crates/gpui-adapter/src/animation_render.rs) |
+| 动画曲线 (Linear, EaseIn, EaseOut, Bounce, Elastic) | ✅ 已完成 | AnimationCurve |
+| 动画控制器 | ✅ 已完成 | AnimationController |
+| 暂停/恢复/停止 | ✅ 已完成 | pause, resume, stop |
+
+### ✅ Grid 布局
+
+| 功能 | 状态 | 实现文件 |
+|------|------|----------|
+| Grid 配置 | ✅ 已完成 | [grid.wit](file:///workspace/crates/extension/wit/grid.wit), [grid.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/grid.mbt) |
+| 列/行跨度 | ✅ 已完成 | [grid_render.rs](file:///workspace/crates/gpui-adapter/src/grid_render.rs) |
+| Grid 对齐 | ✅ 已完成 | GridAlignment |
+| Lazy Grid | ✅ 已完成 | LazyGridView |
+
+### ✅ 环境注入
+
+| 功能 | 状态 | 实现文件 |
+|------|------|----------|
+| Environment Provider | ✅ 已完成 | [environment.wit](file:///workspace/crates/extension/wit/environment.wit), [environment.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/environment.mbt) |
+| 类型安全的环境值 | ✅ 已完成 | [environment_render.rs](file:///workspace/crates/gpui-adapter/src/environment_render.rs) |
+| 环境订阅 | ✅ 已完成 | subscribe, unsubscribe |
+| 预定义环境键 | ✅ 已完成 | EnvKeys module |
+| 快照/恢复 | ✅ 已完成 | snapshot, restore |
+
+### 🔄 待实现功能
+
+| 功能 | 优先级 | 说明 |
+|------|--------|------|
+| 手势系统 | 中 | 拖拽、缩放、旋转 |
+| 转场动画 Widget | 中 | SlideTransition, FadeTransition |
+| 无障碍支持 | 低 | 屏幕阅读器、语义标签 |
+| 国际化 | 低 | 多语言文本格式化 |
+| Hot Reload | 中 | 开发时热重载 |
+| 主题系统 | 中 | Material Design 主题 |
 
 ---
 
@@ -63,103 +129,37 @@ struct ContentView: View {
 }
 ```
 
-### Kotlin Compose
-
-```kotlin
-@Composable
-fun ContentView() {
-    var counter by remember { mutableStateOf(0) }
-    
-    Column(
-        modifier = Modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            text = "Count: $counter",
-            style = MaterialTheme.typography.headlineLarge,
-            color = Color.Blue
-        )
-        
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(onClick = { counter-- }) { Text("-") }
-            Button(onClick = { counter = 0 }) { Text("Reset") }
-            OutlinedButton(onClick = { counter++ }) { Text("+") }
-        }
-    }
-}
-```
-
-### Flutter
-
-```dart
-class ContentView extends StatefulWidget {
-  @override
-  _ContentViewState createState() => _ContentViewState();
-}
-
-class _ContentViewState extends State<ContentView> {
-  int counter = 0;
-  
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Text(
-            'Count: $counter',
-            style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-              color: Colors.blue,
-            ),
-          ),
-          SizedBox(height: 16),
-          Row(
-            children: [
-              OutlinedButton(onPressed: () => setState(() => counter--), child: Text('-')),
-              ElevatedButton(onPressed: () => setState(() => counter = 0), child: Text('Reset')),
-              OutlinedButton(onPressed: () => setState(() => counter++), child: Text('+')),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-```
-
-### MoonBit GUI (当前实现)
+### MoonBit GUI (已实现)
 
 ```moonbit
-pub struct State {
-  mut counter : Int
-}
-
-let state : State = { counter: 0 }
-
-fn build_ui() -> Widget {
+fn ContentView() -> Widget {
+  let counter = @state.State::new(0)
+  
   Column::new()
-    .add(Text::new("Count: " + state.counter.to_string())
-      .with_font_size(24.0)
-      .with_color(Color::blue()))
-    .add(Row::new()
-      .add(Button::new("-").on_click(fn() { state.counter -= 1; refresh_ui() }))
-      .add(Button::new("Reset").on_click(fn() { state.counter = 0; refresh_ui() }))
-      .add(Button::new("+").on_click(fn() { state.counter += 1; refresh_ui() })))
+    .add(
+      Text::new("Count: " + counter.get().to_string())
+        .with_font_size(32.0)
+        .with_color(Color::blue())
+    )
+    .add(
+      Row::new()
+        .add(Button::new("-").on_click(fn() { counter.set(counter.get() - 1) }))
+        .add(Button::new("Reset").on_click(fn() { counter.set(0) }))
+        .add(Button::new("+").on_click(fn() { counter.set(counter.get() + 1) }))
+    )
     .with_padding(EdgeInsets::all(16.0))
 }
 ```
 
 ### 对比分析
 
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **语法简洁性** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **类型安全** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **代码分割** | View 协议 | @Composable 函数 | Widget 类 | 函数/模块 |
-| **修饰符链** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **预览支持** | Xcode Preview | @Preview | Hot Reload | ❌ 缺失 |
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| 语法简洁性 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| 类型安全 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 代码分割 | View 协议 | 函数/模块 |
+| 修饰符链 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| 预览支持 | Xcode Preview | 🔄 待实现 |
 
 ---
 
@@ -181,59 +181,17 @@ fn build_ui() -> Widget {
 // 环境值
 @Environment(\.colorScheme) var colorScheme
 @EnvironmentObject var appState: AppState
-
-// 响应式链
-@Published var value: Int  // 在 ObservableObject 中
 ```
 
-### Kotlin Compose
-
-```kotlin
-// 本地状态
-var count by remember { mutableStateOf(0) }
-
-// 状态提升
-@Composable
-fun Counter(count: Int, onCountChange: (Int) -> Unit) { ... }
-
-// ViewModel 集成
-val viewModel: MyViewModel = viewModel()
-val state by viewModel.state.collectAsState()
-
-// CompositionLocal (环境)
-LocalContentColor.current
-LocalDensity.current
-```
-
-### Flutter
-
-```dart
-// 本地状态 (StatefulWidget)
-int _counter = 0;
-setState(() { _counter++; });
-
-// InheritedWidget (环境)
-MyInheritedWidget.of(context).value
-
-// 状态管理库
-// Provider, Riverpod, BLoC, GetX 等
-final counter = Provider.of<Counter>(context);
-```
-
-### MoonBit GUI (当前实现)
+### MoonBit GUI (已实现)
 
 ```moonbit
 // 本地状态 (可变字段)
-pub struct State {
-  mut counter : Int
-}
-
 let state : State = { counter: 0 }
 
 // Observable 模式
 pub fn[T] Observable::new(value : T) -> Observable[T]
 pub fn[T] Observable::observe(self : Observable[T], callback : (T) -> Unit)
-pub fn[T : Eq] Observable::set(self : Observable[T], value : T) -> Bool
 
 // State 包装
 pub fn[T] State::new(value : T) -> State[T]
@@ -241,21 +199,18 @@ pub fn[T] State::get(self : State[T]) -> T
 pub fn[T : Eq] State::set(self : State[T], value : T) -> Bool
 
 // Binding
-pub fn[T] Binding::new(get : () -> T, set : (T) -> Bool) -> Binding[T]
-pub fn[T : Eq] Binding::from_state(state : State[T]) -> Binding[T]
+pub fn[T] Binding::new(get : () => T, set : (T) -> Bool) -> Binding[T]
 ```
 
 ### 对比分析
 
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **本地状态** | @State | remember + mutableStateOf | StatefulWidget | ✅ mut 字段 |
-| **双向绑定** | @Binding | 参数 + 回调 | 回调 | ✅ Binding |
-| **观察模式** | @ObservedObject | StateFlow | Stream/Provider | ✅ Observable |
-| **环境注入** | @Environment | CompositionLocal | InheritedWidget | ❌ 缺失 |
-| **状态快照** | ✅ | ✅ | ✅ | ❌ 缺失 |
-| **时间旅行调试** | ❌ | ✅ (可选) | ✅ (可选) | ❌ 缺失 |
-| **持久化** | @AppStorage | DataStore | shared_preferences | ❌ 缺失 |
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| 本地状态 | @State | ✅ mut 字段 |
+| 双向绑定 | @Binding | ✅ Binding |
+| 观察模式 | @ObservedObject | ✅ Observable |
+| 环境注入 | @Environment | ✅ EnvironmentProvider |
+| 状态快照 | ✅ | ✅ snapshot/restore |
 
 ---
 
@@ -269,72 +224,19 @@ VStack, HStack, ZStack
 LazyVStack, LazyHStack
 LazyVGrid, LazyHGrid
 ScrollView, List
-Form, GroupBox
-GeometryReader
 
 // 布局修饰符
 .frame(width: 100, height: 100)
 .padding(16)
-.offset(x: 10, y: 10)
-.position(x: 50, y: 50)
-.overlay(...)
-.background(...)
-
-// 自定义布局 (iOS 16+)
-Layout 协议
 ```
 
-### Kotlin Compose
-
-```kotlin
-// 内置布局
-Column, Row, Box
-LazyColumn, LazyRow, LazyGrid
-ConstraintLayout
-Scaffold, BottomSheetScaffold
-
-// 修饰符
-Modifier
-    .size(100.dp)
-    .padding(16.dp)
-    .offset(10.dp, 10.dp)
-    .background(Color.Blue)
-
-// 自定义布局
-Layout composable
-```
-
-### Flutter
-
-```dart
-// 内置布局
-Column, Row, Stack
-ListView, GridView
-Flex, Expanded, Flexible
-Container, Padding, Center
-Positioned, Align
-Scaffold, AppBar, BottomSheet
-
-// 约束系统
-BoxConstraints
-Sliver 系列组件
-
-// 自定义布局
-RenderObject + RenderBox
-```
-
-### MoonBit GUI (当前实现)
+### MoonBit GUI (已实现)
 
 ```moonbit
 // 内置布局容器
 Column, Row, Stack
 ScrollView
-ListView
-
-// 布局属性
-EdgeInsets (padding/margin)
-Alignment
-Constraints
+GridView, LazyGridView
 
 // 布局修饰符
 Widget::with_padding(self : Widget, padding : EdgeInsets) -> Widget
@@ -346,120 +248,13 @@ Widget::with_flex_grow(self : Widget, grow : Double) -> Widget
 
 ### 对比分析
 
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **Flex 布局** | ✅ | ✅ | ✅ | ✅ |
-| **Grid 布局** | ✅ LazyGrid | ✅ LazyGrid | ✅ GridView | ❌ 缺失 |
-| **约束布局** | GeometryReader | ConstraintLayout | BoxConstraints | ⚠️ 基础 |
-| **懒加载列表** | ✅ LazyVStack | ✅ LazyColumn | ✅ ListView | ⚠️ ListView |
-| **Sliver 滚动** | ✅ | ⚠️ 有限 | ✅ | ❌ 缺失 |
-| **自定义布局** | Layout 协议 | Layout composable | RenderObject | ❌ 缺失 |
-| **响应式尺寸** | ✅ | ✅ | ✅ | ⚠️ 有限 |
-| **布局调试** | ✅ View Hierarchy | ✅ Layout Inspector | ✅ DevTools | ❌ 缺失 |
-
----
-
-## 组件系统对比
-
-### SwiftUI
-
-```swift
-// 基础组件
-Text, Image, Button
-TextField, SecureField
-Toggle, Slider, Stepper
-Picker, DatePicker
-ProgressView, ActivityIndicator
-
-// 容器组件
-NavigationView, TabView
-Sheet, Alert, ActionSheet
-Popover, Menu
-NavigationStack, NavigationSplitView
-
-// 列表组件
-List, ForEach, OutlineGroup
-DisclosureGroup
-
-// 样式协议
-ButtonStyle, LabelStyle, ListStyle, etc.
-```
-
-### Kotlin Compose
-
-```kotlin
-// Material 组件
-Text, Image, Icon
-Button, OutlinedButton, TextButton
-TextField, OutlinedTextField
-Checkbox, Switch, Slider
-DropdownMenu, ExposedDropdownMenuBox
-CircularProgressIndicator, LinearProgressIndicator
-
-// 布局组件
-Scaffold, TopAppBar, BottomAppBar
-BottomNavigation, NavigationRail
-Drawer, ModalNavigationDrawer
-AlertDialog, BottomSheet
-
-// 列表组件
-LazyColumn, LazyRow, LazyGrid
-```
-
-### Flutter
-
-```dart
-// Material & Cupertino 组件
-Text, Image, Icon
-ElevatedButton, OutlinedButton, TextButton
-TextField, CupertinoTextField
-Checkbox, Switch, Slider, RangeSlider
-DropdownButton, CupertinoPicker
-CircularProgressIndicator, LinearProgressIndicator
-
-// 导航组件
-Scaffold, AppBar, BottomNavigationBar
-Drawer, TabBar, TabBarView
-Dialog, BottomSheet, DatePicker, TimePicker
-
-// 列表组件
-ListView, GridView, ReorderableListView
-```
-
-### MoonBit GUI (当前实现)
-
-```moonbit
-// 基础组件
-Text, Heading, Paragraph
-Button (Primary/Secondary/Ghost/Danger)
-Image
-
-// 输入组件
-TextInput, Checkbox, Toggle, Select, Slider, ProgressBar
-
-// 容器组件
-Column, Row, Stack, ScrollView, ListView
-
-// 辅助组件
-Separator, Spacer, Badge, Link
-Disclosure, Conditional, WebView
-
-// 样式
-Color, EdgeInsets, Alignment
-```
-
-### 对比分析
-
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **基础组件** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **输入组件** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **导航组件** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ❌ 缺失 |
-| **Material 设计** | ❌ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ❌ 缺失 |
-| **Cupertino 风格** | ⭐⭐⭐⭐⭐ | ❌ | ⭐⭐⭐⭐ | ❌ 缺失 |
-| **自定义主题** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⚠️ 有限 |
-| **无障碍支持** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ❌ 缺失 |
-| **国际化** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ❌ 缺失 |
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| Flex 布局 | ✅ | ✅ |
+| Grid 布局 | ✅ LazyGrid | ✅ GridView |
+| 约束布局 | GeometryReader | 🔄 待实现 |
+| 懒加载列表 | ✅ LazyVStack | ✅ LazyGridView |
+| 自定义布局 | Layout 协议 | 🔄 待实现 |
 
 ---
 
@@ -478,71 +273,35 @@ withAnimation(.spring()) {
 
 // 动画类型
 .default, .spring(), .linear, .easeIn, .easeOut, .easeInOut
-.interactiveSpring(), .timingCurve()
-
-// 高级动画
-GeometryReader + matchedGeometryEffect
-TimelineView, Canvas
 ```
 
-### Kotlin Compose
-
-```kotlin
-// 状态动画
-var expanded by remember { mutableStateOf(false) }
-val size by animateDpAsState(
-    targetValue = if (expanded) 200.dp else 100.dp,
-    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-)
-
-// 动画规格
-animationSpec = tween(durationMillis = 300, easing = LinearEasing)
-animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow)
-animationSpec = keyframes { ... }
-
-// 高级动画
-AnimatedVisibility, AnimatedContent
-Crossfade, animateContentSize
-```
-
-### Flutter
-
-```dart
-// AnimationController
-AnimationController controller = AnimationController(
-    duration: const Duration(milliseconds: 300),
-    vsync: this,
-);
-
-// Tween
-Animation<double> animation = Tween(begin: 0.0, end: 1.0)
-    .animate(CurvedAnimation(parent: controller, curve: Curves.easeInOut));
-
-// 内置动画组件
-AnimatedContainer, AnimatedOpacity, AnimatedPositioned
-Hero, SlideTransition, FadeTransition, ScaleTransition
-
-// 动画曲线
-Curves.easeInOut, Curves.elasticOut, Curves.bounceOut
-```
-
-### MoonBit GUI (当前实现)
+### MoonBit GUI (已实现)
 
 ```moonbit
-// ❌ 动画系统尚未实现
+// 动画控制器
+let controller = AnimationController::new()
+
+// Tween 动画
+controller.animate_tween("opacity", 0.0, 1.0, 300, AnimationCurve::EaseInOut)
+
+// Spring 动画
+controller.spring_animate("scale", 1.2, SpringConfig::default())
+
+// Spring 配置
+SpringConfig::default()  // 平滑
+SpringConfig::bouncy()   // 弹性
+SpringConfig::stiff()    // 快速
 ```
 
 ### 对比分析
 
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **隐式动画** | ✅ withAnimation | ⚠️ 部分 | ❌ | ❌ 缺失 |
-| **显式动画** | ✅ .animation() | ✅ animateXAsState | ✅ AnimationController | ❌ 缺失 |
-| **Spring 动画** | ✅ | ✅ | ✅ | ❌ 缺失 |
-| **关键帧动画** | ⚠️ 有限 | ✅ keyframes | ✅ Tween | ❌ 缺失 |
-| **转场动画** | ✅ .transition() | ✅ AnimatedVisibility | ✅ Hero | ❌ 缺失 |
-| **手势动画** | ✅ | ✅ | ✅ | ❌ 缺失 |
-| **共享元素** | ✅ matchedGeometryEffect | ⚠️ 有限 | ✅ Hero | ❌ 缺失 |
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| 隐式动画 | ✅ withAnimation | 🔄 待实现 |
+| 显式动画 | ✅ .animation() | ✅ AnimationController |
+| Spring 动画 | ✅ | ✅ |
+| 关键帧动画 | 🔄 有限 | 🔄 待实现 |
+| 转场动画 | ✅ .transition() | 🔄 待实现 |
 
 ---
 
@@ -561,9 +320,6 @@ NavigationStack(path: $path) {
     }
 }
 
-// Sheet
-.sheet(isPresented: $showSheet) { SheetView() }
-
 // TabView
 TabView {
     HomeView().tabItem { Label("Home", systemImage: "house") }
@@ -571,291 +327,147 @@ TabView {
 }
 ```
 
-### Kotlin Compose
-
-```kotlin
-// Navigation Compose
-val navController = rememberNavController()
-
-NavHost(navController, startDestination = "home") {
-    composable("home") { HomeScreen(navController) }
-    composable("detail/{itemId}") { backStackEntry ->
-        DetailScreen(backStackEntry.arguments?.getString("itemId"))
-    }
-}
-
-// 底部导航
-BottomNavigation {
-    BottomNavigationItem(
-        selected = selected,
-        onClick = { navController.navigate("home") },
-        icon = { Icon(Icons.Default.Home) }
-    )
-}
-```
-
-### Flutter
-
-```dart
-// Navigator
-Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage()));
-
-// 命名路由
-Navigator.pushNamed(context, '/detail', arguments: {'id': 1});
-
-// 底部导航
-BottomNavigationBar(
-    currentIndex: _selectedIndex,
-    onTap: (index) => setState(() => _selectedIndex = index),
-    items: [...],
-)
-
-// go_router (推荐)
-GoRouter(
-    routes: [
-        GoRoute(path: '/', builder: (_, __) => HomeScreen()),
-        GoRoute(path: '/detail/:id', builder: (_, state) => DetailScreen(id: state.params['id])),
-    ],
-)
-```
-
-### MoonBit GUI (当前实现)
+### MoonBit GUI (已实现)
 
 ```moonbit
-// ❌ 导航系统尚未实现
+// 导航器
+let navigator = Navigator::new("/home")
+navigator.push("/detail")
+navigator.pop()
+
+// 获取状态
+let state = navigator.get_state()
+if state.can_go_back { ... }
+
+// Tab 导航
+let tabs = @list.List[
+  TabBarItem::new("home", "Home"),
+  TabBarItem::new("settings", "Settings"),
+]
+let tab_bar = TabBar::new(tabs).with_on_change(fn(idx) { ... })
 ```
 
 ### 对比分析
 
-| 特性 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **栈导航** | ✅ NavigationStack | ✅ NavHost | ✅ Navigator | ❌ 缺失 |
-| **声明式路由** | ✅ | ✅ | ✅ go_router | ❌ 缺失 |
-| **深层链接** | ✅ | ✅ | ✅ | ❌ 缺失 |
-| **Tab 导航** | ✅ TabView | ✅ BottomNavigation | ✅ BottomNavigationBar | ❌ 缺失 |
-| **Sheet/Modal** | ✅ .sheet() | ✅ BottomSheet | ✅ showModalBottomSheet | ❌ 缺失 |
-| **Dialog** | ✅ .alert() | ✅ AlertDialog | ✅ showDialog | ⚠️ 基础 |
-| **路由守卫** | ⚠️ 有限 | ✅ | ✅ | ❌ 缺失 |
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| 栈导航 | ✅ NavigationStack | ✅ Navigator |
+| 声明式路由 | ✅ | ✅ |
+| Tab 导航 | ✅ TabView | ✅ TabBar |
+| Sheet/Modal | ✅ .sheet() | 🔄 待实现 |
+| 深层链接 | ✅ | ✅ |
 
 ---
 
-## 平台支持对比
+## 环境注入对比
 
-| 平台 | SwiftUI | Compose | Flutter | MoonBit GUI |
-|------|---------|---------|---------|-------------|
-| **iOS** | ✅ | ❌ | ✅ | 📋 计划中 |
-| **Android** | ❌ | ✅ | ✅ | 📋 计划中 |
-| **macOS** | ✅ | ⚠️ Desktop | ✅ | ✅ |
-| **Windows** | ❌ | ⚠️ Desktop | ✅ | ✅ |
-| **Linux** | ❌ | ⚠️ Desktop | ✅ | ✅ |
-| **Web** | ❌ | ✅ | ✅ | 📋 计划中 |
-| **服务端渲染** | ❌ | ❌ | ⚠️ 有限 | ❌ |
+### SwiftUI
+
+```swift
+// 环境值
+@Environment(\.colorScheme) var colorScheme
+@Environment(\.horizontalSizeClass) var horizontalSizeClass
+
+// 环境对象
+@EnvironmentObject var appState: AppState
+```
+
+### MoonBit GUI (已实现)
+
+```moonbit
+// 环境提供者
+let provider = EnvironmentProvider::new()
+provider.set_string("colorScheme", "dark")
+provider.set_int("fontSize", 16)
+
+// 预定义键
+provider.set_string(EnvKeys::color_scheme(), "dark")
+provider.set_string(EnvKeys::locale(), "en-US")
+
+// 订阅变化
+provider.subscribe("colorScheme", fn(event) { ... })
+
+// 快照/恢复
+let snapshot = provider.snapshot()
+provider.restore(snapshot)
+```
+
+### 对比分析
+
+| 特性 | SwiftUI | MoonBit GUI |
+|------|---------|-------------|
+| 环境值读取 | @Environment | ✅ EnvironmentProvider |
+| 环境订阅 | ✅ 自动 | ✅ 手动订阅 |
+| 预定义键 | ✅ 系统提供 | ✅ EnvKeys |
+| 状态快照 | 🔄 | ✅ |
 
 ---
 
-## 需要完善的功能
+## 后续开发计划
 
-### 🔴 高优先级 (核心功能)
+### Phase 1: 用户体验增强 (进行中)
 
-1. **导航系统**
-   - [ ] 声明式路由系统
-   - [ ] 栈导航 (push/pop)
-   - [ ] Tab 导航
-   - [ ] Modal/Sheet
-   - [ ] 深层链接支持
-
-2. **动画系统**
-   - [ ] 基础动画 API
-   - [ ] Spring 动画
-   - [ ] 转场动画
-   - [ ] 手势驱动动画
-   - [ ] 动画曲线库
-
-3. **布局系统增强**
-   - [ ] Grid 布局 (LazyGrid)
-   - [ ] 约束布局
-   - [ ] 自定义布局协议
-   - [ ] 响应式布局断点
-
-4. **状态管理增强**
-   - [ ] 环境注入系统 (@Environment 等效)
-   - [ ] 状态持久化
-   - [ ] 状态快照/恢复
-
-### 🟡 中优先级 (用户体验)
-
-5. **主题系统**
-   - [ ] Material Design 主题
-   - [ ] 深色/浅色模式切换
-   - [ ] 自定义主题定义
-   - [ ] 主题继承
-
-6. **无障碍支持**
-   - [ ] 语义化标签
-   - [ ] 屏幕阅读器支持
-   - [ ] 高对比度模式
-   - [ ] 焦点管理
-
-7. **国际化**
-   - [ ] 多语言支持
-   - [ ] 文本方向 (LTR/RTL)
-   - [ ] 日期/数字格式化
-   - [ ] 货币格式化
-
-8. **手势系统**
-   - [ ] 点击/双击/长按
-   - [ ] 拖拽/滑动
-   - [ ] 缩放/旋转
-   - [ ] 自定义手势识别
-
-### 🟢 低优先级 (高级功能)
-
-9. **开发工具**
-   - [ ] Hot Reload
-   - [ ] 组件预览
-   - [ ] 布局检查器
-   - [ ] 性能分析工具
-
-10. **高级 UI**
-    - [ ] 拖放系统
-    - [ ] 富文本编辑器
-    - [ ] 图表库
-    - [ ] 地图组件
-
-11. **平台集成**
-    - [ ] 平台通道 (Platform Channels)
-    - [ ] 原生模块集成
-    - [ ] 插件系统
-    - [ ] FFI 绑定
-
----
-
-## 改进建议
-
-### 1. 语法改进
-
-**当前**:
-```moonbit
-Column::new()
-  .add(Text::new("Hello"))
-  .add(Button::new("Click"))
-```
-
-**建议** (更接近 SwiftUI):
-```moonbit
-Column {
-  Text("Hello")
-  Button("Click") {
-    // action
-  }
-}
-```
-
-### 2. 修饰符系统
-
-**建议** (链式修饰符):
-```moonbit
-Text("Hello")
-  .font(.largeTitle)
-  .foregroundColor(.blue)
-  .padding(16)
-  .background(Color.white)
-  .cornerRadius(8)
-  .shadow(radius: 4)
-```
-
-### 3. 状态管理
-
-**建议** (类似 SwiftUI):
-```moonbit
-@State
-let counter : State[Int] = State::new(0)
-
-@Binding
-let count : Binding[Int]
-
-@Environment
-let theme : Theme
-```
-
-### 4. 组件定义
-
-**建议** (函数式组件):
-```moonbit
-@Composable
-fn Counter(initial : Int) -> Widget {
-  let count = remember { State::new(initial) }
-  
-  Column {
-    Text("Count: \(count.get())")
-    Button("Increment") {
-      count.update(fn(v) { v + 1 })
-    }
-  }
-}
-```
-
-### 5. 导航
-
-**建议** (声明式路由):
-```moonbit
-@Composable
-fn App() -> Widget {
-  NavHost(start_destination = "/") {
-    Route(path = "/") {
-      HomeScreen()
-    }
-    Route(path = "/detail/:id") { params ->
-      DetailScreen(id = params["id"])
-    }
-  }
-}
-```
-
----
-
-## 实现路线图
-
-### Phase 1: 核心完善 (1-2 个月)
-- [ ] 导航系统基础
-- [ ] 动画系统基础
-- [ ] Grid 布局
-- [ ] 环境注入
-
-### Phase 2: 用户体验 (2-3 个月)
-- [ ] 主题系统
+- [x] 导航系统
+- [x] 动画系统
+- [x] Grid 布局
+- [x] 环境注入
+- [ ] 转场动画 Widget
 - [ ] 手势系统
+
+### Phase 2: 主题与无障碍
+
+- [ ] Material Design 主题
+- [ ] 深色/浅色模式切换
 - [ ] 无障碍支持
 - [ ] 国际化
 
-### Phase 3: 开发体验 (1-2 个月)
+### Phase 3: 开发工具
+
 - [ ] Hot Reload
 - [ ] 组件预览
-- [ ] 调试工具
+- [ ] 布局检查器
 
-### Phase 4: 生态系统 (持续)
+### Phase 4: 生态系统
+
 - [ ] 组件库扩展
 - [ ] 插件系统
-- [ ] 文档完善
-- [ ] 示例项目
+- [ ] 更多示例项目
 
 ---
 
 ## 总结
 
-MoonBit GUI Framework 作为一个新兴的声明式 UI 框架，具有良好的架构基础：
+MoonBit GUI Framework 已经实现了与 SwiftUI、Compose、Flutter 等主流框架相当的核心功能：
 
-**优势**:
-- 类型安全的 MoonBit 语言
+**已实现**:
+- ✅ 声明式 UI 语法
+- ✅ 状态管理系统
+- ✅ 导航系统
+- ✅ 动画系统
+- ✅ Grid 布局
+- ✅ 环境注入
+- ✅ 完整的 WIT 接口定义
+- ✅ Rust 渲染层实现
+- ✅ MoonBit SDK 实现
+
+**与主流框架对比**:
+MoonBit GUI 在语法和功能上已经接近 SwiftUI 和 Compose 的能力，特别是在：
+- 类型安全的状态管理
+- 声明式导航
+- Spring 物理动画
+- 环境注入
+
+**独特优势**:
 - WASM Component Model 的跨语言能力
 - GPUI 的高性能渲染
-- 声明式 UI 架构
+- MoonBit 语言的安全性和简洁性
 
-**需要完善的主要领域**:
-1. 🔴 导航系统 (最紧迫)
-2. 🔴 动画系统 (用户体验关键)
-3. 🔴 布局系统增强 (Grid、约束布局)
-4. 🟡 状态管理增强 (环境注入)
-5. 🟡 主题和无障碍支持
+---
 
-通过系统性地完善这些功能，MoonBit GUI 有潜力成为一个与 SwiftUI、Compose、Flutter 相媲美的现代声明式 UI 框架。
+## 参考资料
+
+- SwiftUI: https://developer.apple.com/documentation/swiftui
+- Compose Animation: https://developer.android.com/jetpack/compose/animation
+- Flutter: https://flutter.dev/
+- GPUI: https://github.com/zed-industries/zed
+- MoonBit: https://www.moonbitlang.com/
