@@ -82,7 +82,7 @@ pub use gesture_recognizer::{
     GestureRecognizer, GestureState, GestureType, GestureResult, TouchEvent, 
     TouchEventType, TouchPoint, TapGestureRecognizer, PanGestureRecognizer, 
     LongPressGestureRecognizer, SwipeGestureRecognizer, SwipeDirection, Edge,
-    GestureRegistry, Point, PinchGestureRecognizer, RotationGestureRecognizer,
+    GestureRegistry, PinchGestureRecognizer, RotationGestureRecognizer,
     ScreenEdgePanGestureRecognizer,
 };
 
