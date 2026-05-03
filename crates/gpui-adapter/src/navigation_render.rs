@@ -184,6 +184,24 @@ pub struct RouteConfig {
     pub requires_auth: bool,
 }
 
+/// NavHost configuration
+#[derive(Debug, Clone)]
+pub struct NavHostConfig {
+    pub initial_route: String,
+    pub routes: Vec<RouteConfig>,
+    pub show_back_button: bool,
+}
+
+impl Default for NavHostConfig {
+    fn default() -> Self {
+        Self {
+            initial_route: "/".to_string(),
+            routes: Vec::new(),
+            show_back_button: true,
+        }
+    }
+}
+
 /// Transition types
 #[derive(Debug, Clone, Copy)]
 pub enum TransitionType {
@@ -319,7 +337,7 @@ impl NavHostWidget {
         
         // Register all routes
         for route in &config.routes {
-            navigator.register_route(route);
+            navigator.register_route(route.clone());
         }
         
         Self {

@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use crate::animation_render::{AnimationCurve, AnimationSpec, SpringConfig};
-use crate::transition_render::{Rect, Point, Transform, ViewId};
+use crate::gesture_recognizer::Point;
+use crate::transition_render::{Rect, Transform, ViewId};
 
 /// Shared element options
 #[derive(Debug, Clone)]

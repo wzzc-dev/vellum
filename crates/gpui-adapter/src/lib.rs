@@ -51,8 +51,8 @@ pub use wit_host::{GuiHost, GuiRuntimeState};
 
 // Re-export navigation types
 pub use navigation_render::{
-    NavigatorController, NavigationController as NavControllerResource,
-    NavigationControllerResource, NavigationEvent, NavigationState, RouteConfig,
+    NavigatorController, NavigationControllerResource, NavHostConfig,
+    NavigationEvent, NavigationState, RouteConfig,
     TabBar, TabBarItem, TransitionType,
 };
 
@@ -92,7 +92,6 @@ pub use transition_render::{
     TransitionCoordinator, TransitionConfig, TransitionStyle, TransitionRenderState,
     ActiveTransition, SharedElement, ViewId, VisibilityTransition, SlideEdge,
     Transform, AnimatedContainer, AnimatedContainerConfig, RunningAnimation,
-    Rect,
 };
 
 // Re-export shared element types

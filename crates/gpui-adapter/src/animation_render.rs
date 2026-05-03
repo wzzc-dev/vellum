@@ -301,7 +301,7 @@ impl AnimationController {
     }
 
     pub fn stop_all(&self) {
-        let mut animations = self.animations.write().unwrap();
+        let animations = self.animations.write().unwrap();
         let properties: Vec<String> = animations.keys().cloned().collect();
         drop(animations);
         
@@ -346,7 +346,7 @@ impl AnimationController {
         let mut animations = self.animations.write().unwrap();
         let mut changes = Vec::new();
         
-        let mut to_remove = Vec::new();
+        let mut to_remove: Vec<String> = Vec::new();
         
         for (name, state) in animations.iter_mut() {
             if !state.is_running() {
