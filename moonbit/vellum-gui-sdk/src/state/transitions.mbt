@@ -72,9 +72,9 @@ pub struct SharedElementOptions {
     pub spring: Option<SpringConfig>,
 }
 
-impl Default for SharedElementOptions {
-    pub fn default() -> Self {
-        SharedElementOptions {
+impl SharedElementOptions {
+    pub fn default() -> SharedElementOptions {
+        SharedElementOptions::{
             duration_ms: 300,
             curve: AnimationCurve::EaseInOut,
             use_spring: false,
@@ -117,14 +117,14 @@ pub fn slide_from_bottom() -> VisibilityTransition {
 }
 
 // Helper functions to create transition styles
-pub fn push_transition(config: TransitionConfig) -> TransitionStyle {
+pub fn push_transition(_config: TransitionConfig) -> TransitionStyle {
     TransitionStyle::Push
 }
 
-pub fn modal_transition(config: TransitionConfig) -> TransitionStyle {
+pub fn modal_transition(_config: TransitionConfig) -> TransitionStyle {
     TransitionStyle::Modal
 }
 
-pub fn flip_transition(config: TransitionConfig) -> TransitionStyle {
+pub fn flip_transition(_config: TransitionConfig) -> TransitionStyle {
     TransitionStyle::Flip
 }

@@ -7,8 +7,6 @@
 ///| - Keyframe animations
 ///| - Transition widgets
 
-pub all type AnimationControllerImpl = @animation.AnimationController
-
 ///| Animation curve types
 pub enum AnimationCurve {
   /// Linear animation (constant speed)
@@ -25,17 +23,6 @@ pub enum AnimationCurve {
   Elastic
 }
 
-pub fn AnimationCurve::to_wit(self : AnimationCurve) -> @animation.AnimationCurve {
-  match self {
-    Linear => @animation.linear
-    EaseIn => @animation.ease-in
-    EaseOut => @animation.ease-out
-    EaseInOut => @animation.ease-in-out
-    Bounce => @animation.bounce
-    Elastic => @animation.elastic
-  }
-}
-
 ///| Animation direction
 pub enum AnimationDirection {
   /// Normal direction
@@ -46,15 +33,6 @@ pub enum AnimationDirection {
   Alternate
   /// Alternate in reverse
   AlternateReverse
-}
-
-pub fn AnimationDirection::to_wit(self : AnimationDirection) -> @animation.AnimationDirection {
-  match self {
-    Normal => @animation.normal
-    Reverse => @animation.reverse
-    Alternate => @animation.alternate
-    AlternateReverse => @animation.alternate-reverse
-  }
 }
 
 ///| Animation status
@@ -86,24 +64,13 @@ pub struct AnimationSpec {
 }
 
 pub fn AnimationSpec::default() -> AnimationSpec {
-  {
+  AnimationSpec::{
     duration_ms: 300,
     curve: AnimationCurve::EaseInOut,
     delay_ms: 0,
     repeat: false,
     repeat_count: 0,
     direction: AnimationDirection::Normal
-  }
-}
-
-pub fn AnimationSpec::to_wit(self : AnimationSpec) -> @animation.AnimationSpec {
-  {
-    duration_ms: self.duration_ms,
-    curve: self.curve.to_wit(),
-    delay_ms: self.delay_ms,
-    repeat: self.repeat,
-    repeat_count: self.repeat_count,
-    direction: self.direction.to_wit()
   }
 }
 
@@ -118,7 +85,7 @@ pub struct AnimationSpecBuilder {
 }
 
 pub fn AnimationSpec::builder() -> AnimationSpecBuilder {
-  {
+  AnimationSpecBuilder::{
     duration_ms: 300,
     curve: AnimationCurve::EaseInOut,
     delay_ms: 0,
@@ -149,7 +116,7 @@ pub fn AnimationSpecBuilder::direction(self : AnimationSpecBuilder, dir : Animat
 }
 
 pub fn AnimationSpecBuilder::build(self : AnimationSpecBuilder) -> AnimationSpec {
-  {
+  AnimationSpec::{
     duration_ms: self.duration_ms,
     curve: self.curve,
     delay_ms: self.delay_ms,
@@ -172,7 +139,7 @@ pub struct SpringConfig {
 }
 
 pub fn SpringConfig::default() -> SpringConfig {
-  {
+  SpringConfig::{
     damping_ratio: 0.5,
     stiffness: 100.0,
     mass: 1.0,
@@ -181,7 +148,7 @@ pub fn SpringConfig::default() -> SpringConfig {
 }
 
 pub fn SpringConfig::bouncy() -> SpringConfig {
-  {
+  SpringConfig::{
     damping_ratio: 0.3,
     stiffness: 100.0,
     mass: 1.0,
@@ -190,20 +157,11 @@ pub fn SpringConfig::bouncy() -> SpringConfig {
 }
 
 pub fn SpringConfig::stiff() -> SpringConfig {
-  {
+  SpringConfig::{
     damping_ratio: 0.8,
     stiffness: 300.0,
     mass: 1.0,
     initial_velocity: 0.0
-  }
-}
-
-pub fn SpringConfig::to_wit(self : SpringConfig) -> @animation.SpringConfig {
-  {
-    damping_ratio: self.damping_ratio,
-    stiffness: self.stiffness,
-    mass: self.mass,
-    initial_velocity: self.initial_velocity
   }
 }
 
@@ -218,7 +176,7 @@ pub struct AnimatedProperty {
 }
 
 pub fn AnimatedProperty::new(name : String, from : Double, to : Double) -> AnimatedProperty {
-  { name: name, from: from, to: to }
+  AnimatedProperty::{ name, from, to }
 }
 
 ///| Keyframe definition
@@ -232,7 +190,7 @@ pub struct Keyframe {
 }
 
 pub fn Keyframe::new(progress : Double, value : Double) -> Keyframe {
-  { progress: progress, value: value, curve: None }
+  Keyframe::{ progress, value, curve: None }
 }
 
 pub fn Keyframe::with_curve(self : Keyframe, curve : AnimationCurve) -> Keyframe {
@@ -243,8 +201,6 @@ pub fn Keyframe::with_curve(self : Keyframe, curve : AnimationCurve) -> Keyframe
 pub struct KeyframeAnimationConfig {
   /// Duration in milliseconds
   pub duration_ms : Int
-  /// Keyframes
-  pub keyframes : @list.List[Keyframe]
   /// Number of repetitions
   pub repeat_count : Int
   /// Whether to stay at final value after animation
@@ -261,146 +217,6 @@ pub enum FillMode {
   Forwards
   /// Keep both first and last frames
   Both
-}
-
-///| Animation controller for managing animations
-pub struct AnimationController {
-  controller : AnimationControllerImpl
-}
-
-pub fn AnimationController::new() -> AnimationController {
-  { controller: @animation.animation_controller_new() }
-}
-
-///| Animate a property from one value to another
-pub fn AnimationController::animate(
-  self : AnimationController,
-  property : String,
-  from : Double,
-  to : Double,
-  spec : AnimationSpec
-) -> Unit {
-  @animation.animation_controller_animate(
-    self.controller,
-    property,
-    from,
-    to,
-    spec.to_wit()
-  )
-}
-
-///| Animate with duration and curve
-pub fn AnimationController::animate_tween(
-  self : AnimationController,
-  property : String,
-  from : Double,
-  to : Double,
-  duration_ms : Int,
-  curve : AnimationCurve
-) -> Unit {
-  self.animate(property, from, to, {
-    duration_ms: duration_ms,
-    curve: curve,
-    delay_ms: 0,
-    repeat: false,
-    repeat_count: 0,
-    direction: AnimationDirection::Normal
-  })
-}
-
-///| Animate with spring physics
-pub fn AnimationController::spring_animate(
-  self : AnimationController,
-  property : String,
-  to : Double,
-  config : SpringConfig
-) -> Unit {
-  @animation.animation_controller_spring_animate(
-    self.controller,
-    property,
-    to,
-    config.to_wit()
-  )
-}
-
-///| Animate with default spring
-pub fn AnimationController::spring(
-  self : AnimationController,
-  property : String,
-  to : Double
-) -> Unit {
-  self.spring_animate(property, to, SpringConfig::default())
-}
-
-///| Animate multiple properties at once
-pub fn AnimationController::animate_all(
-  self : AnimationController,
-  properties : @list.List[AnimatedProperty],
-  spec : AnimationSpec
-) -> Unit {
-  let wit_props = @list.map(properties, fn(p : AnimatedProperty) -> @animation.AnimatedProperty {
-    { name: p.name, from: p.from, to: p.to }
-  })
-  @animation.animation_controller_animate_all(
-    self.controller,
-    wit_props,
-    spec.to_wit()
-  )
-}
-
-///| Create a keyframe animation
-pub fn AnimationController::keyframe_animate(
-  self : AnimationController,
-  property : String,
-  duration_ms : Int,
-  keyframes : @list.List[Keyframe]
-) -> Unit {
-  let config : @animation.KeyframeAnimationConfig = {
-    duration_ms: duration_ms,
-    keyframes: @list.map(keyframes, fn(k : Keyframe) -> @animation.Keyframe {
-      {
-        progress: k.progress,
-        value: k.value,
-        curve: match k.curve {
-          Some(c) => Some(c.to_wit())
-          None => None
-        }
-      }
-    }),
-    repeat_count: 0,
-    fill_mode: @animation.forwards
-  }
-  @animation.animation_controller_keyframe_animate(self.controller, property, config)
-}
-
-///| Stop a specific animation
-pub fn AnimationController::stop(self : AnimationController, property : String) -> Unit {
-  @animation.animation_controller_stop(self.controller, property)
-}
-
-///| Stop all animations
-pub fn AnimationController::stop_all(self : AnimationController) -> Unit {
-  @animation.animation_controller_stop_all(self.controller)
-}
-
-///| Pause a specific animation
-pub fn AnimationController::pause(self : AnimationController, property : String) -> Unit {
-  @animation.animation_controller_pause(self.controller, property)
-}
-
-///| Resume a paused animation
-pub fn AnimationController::resume(self : AnimationController, property : String) -> Unit {
-  @animation.animation_controller_resume(self.controller, property)
-}
-
-///| Check if an animation is running
-pub fn AnimationController::is_running(self : AnimationController, property : String) -> Bool {
-  @animation.animation_controller_is_running(self.controller, property)
-}
-
-///| Get current value of a property
-pub fn AnimationController::get_value(self : AnimationController, property : String) -> Option[Double] {
-  @animation.animation_controller_get_value(self.controller, property)
 }
 
 ///| Animation event types

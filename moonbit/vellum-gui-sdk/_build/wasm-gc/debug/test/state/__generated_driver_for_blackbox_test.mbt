@@ -414,6 +414,8 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   },
   "types.mbt": {
   },
+  "transitions.mbt": {
+  },
   "toggle_test.mbt": {
     0: (__test_746f67676c655f746573742e6d6274_0, ["toggle new"]),
     1: (__test_746f67676c655f746573742e6d6274_1, ["toggle new on"]),
@@ -575,6 +577,8 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   },
   "progress_bar.mbt": {
   },
+  "navigation.mbt": {
+  },
   "list_view_test.mbt": {
     0: (__test_6c6973745f766965775f746573742e6d6274_0, ["ListView::new creates list view"]),
     1: (__test_6c6973745f766965775f746573742e6d6274_1, ["ListView::get_items returns items"]),
@@ -618,6 +622,10 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   },
   "image.mbt": {
   },
+  "grid.mbt": {
+  },
+  "gestures.mbt": {
+  },
   "event_types.mbt": {
   },
   "event_test.mbt": {
@@ -640,6 +648,8 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
   "event_names.mbt": {
   },
   "event.mbt": {
+  },
+  "environment.mbt": {
   },
   "dialog_test.mbt": {
     0: (__test_6469616c6f675f746573742e6d6274_0, ["Dialog::alert creates dialog"]),
@@ -716,6 +726,8 @@ let moonbit_test_driver_internal_no_args_tests : MoonBitTestDriverInternalTestMa
     15: (__test_6170705f746573742e6d6274_15, ["app multiple windows"]),
   },
   "app.mbt": {
+  },
+  "animation.mbt": {
   },
 }
 
