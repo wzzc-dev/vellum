@@ -61,13 +61,13 @@ pub struct TouchPoint {
 
 // Gesture type variants
 pub enum GestureType {
-    Tap { taps_required: U32, touches_required: U32 },
-    LongPress { minimum_duration_ms: U32, allow_movement: Float },
-    Pan { minimum_distance: Float, maximum_distance: Option<Float> },
-    Swipe { direction: SwipeDirection, minimum_distance: Float },
+    Tap(taps_required: U32, touches_required: U32),
+    LongPress(minimum_duration_ms: U32, allow_movement: Float),
+    Pan(minimum_distance: Float, maximum_distance: Option<Float>),
+    Swipe(direction: SwipeDirection, minimum_distance: Float),
     Pinch,
     Rotation,
-    ScreenEdgePan { edges: List<Edge> },
+    ScreenEdgePan(edges: List<Edge>),
 }
 
 // Gesture recognized result
@@ -83,7 +83,7 @@ pub struct GestureResult {
 
 // Helper functions to create gesture types
 pub fn tap_gesture(taps: U32, touches: U32) -> GestureType {
-    GestureType::Tap { taps_required: taps, touches_required: touches }
+    GestureType::Tap(taps, touches)
 }
 
 pub fn single_tap_gesture() -> GestureType {
@@ -95,15 +95,15 @@ pub fn double_tap_gesture() -> GestureType {
 }
 
 pub fn pan_gesture(min_distance: Float) -> GestureType {
-    GestureType::Pan { minimum_distance: min_distance, maximum_distance: None }
+    GestureType::Pan(min_distance, None)
 }
 
 pub fn long_press_gesture(duration_ms: U32, allow_movement: Float) -> GestureType {
-    GestureType::LongPress { minimum_duration_ms: duration_ms, allow_movement }
+    GestureType::LongPress(duration_ms, allow_movement)
 }
 
 pub fn swipe_gesture(direction: SwipeDirection, min_distance: Float) -> GestureType {
-    GestureType::Swipe { direction, minimum_distance: min_distance }
+    GestureType::Swipe(direction, min_distance)
 }
 
 pub fn swipe_right(min_distance: Float) -> GestureType {
@@ -123,7 +123,7 @@ pub fn rotation_gesture() -> GestureType {
 }
 
 pub fn screen_edge_pan_gesture(edge: Edge) -> GestureType {
-    GestureType::ScreenEdgePan { edges: List::new(edge) }
+    GestureType::ScreenEdgePan(List::new(edge))
 }
 
 pub fn left_edge_pan() -> GestureType {

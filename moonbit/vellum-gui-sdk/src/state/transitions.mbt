@@ -46,9 +46,9 @@ pub enum SlideEdge {
 // View visibility animation
 pub enum VisibilityTransition {
     Fade,
-    Slide { edge: SlideEdge },
-    Scale { factor: Float },
-    Offset { x: Float, y: Float },
+    Slide(edge: SlideEdge),
+    Scale(factor: Float),
+    Offset(x: Float, y: Float),
 }
 
 // Animated container widget configuration
@@ -72,9 +72,9 @@ pub struct SharedElementOptions {
     pub spring: Option<SpringConfig>,
 }
 
-impl SharedElementOptions {
+pub impl SharedElementOptions {
     pub fn default() -> SharedElementOptions {
-        SharedElementOptions::{
+        SharedElementOptions {
             duration_ms: 300,
             curve: AnimationCurve::EaseInOut,
             use_spring: false,
@@ -89,15 +89,15 @@ pub fn fade_transition() -> VisibilityTransition {
 }
 
 pub fn slide_from_edge(edge: SlideEdge) -> VisibilityTransition {
-    VisibilityTransition::Slide { edge }
+    VisibilityTransition::Slide(edge)
 }
 
 pub fn scale_transition(factor: Float) -> VisibilityTransition {
-    VisibilityTransition::Scale { factor }
+    VisibilityTransition::Scale(factor)
 }
 
 pub fn offset_transition(x: Float, y: Float) -> VisibilityTransition {
-    VisibilityTransition::Offset { x, y }
+    VisibilityTransition::Offset(x, y)
 }
 
 pub fn slide_from_left() -> VisibilityTransition {
