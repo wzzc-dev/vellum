@@ -1,7 +1,7 @@
 ///|
 /// Create a new Observable with an initial value.
 pub fn[T] Observable::new(value : T) -> Observable[T] {
-  { value: value, observers: @list.empty() }
+  Observable::{ value: value, observers: @list.empty() }
 }
 
 ///|
@@ -44,7 +44,7 @@ pub fn[T : Eq] Observable::set(
 ///|
 /// Create a new State with an initial value.
 pub fn[T] State::new(value : T) -> State[T] {
-  { observable: Observable::new(value) }
+  State::{ observable: Observable::new(value) }
 }
 
 ///|
@@ -91,7 +91,7 @@ pub fn[T] Binding::new(
   get : () -> T,
   set : (T) -> Bool,
 ) -> Binding[T] {
-  { get: get, set: set }
+  Binding::{ get: get, set: set }
 }
 
 ///|
@@ -131,7 +131,7 @@ pub fn[T] Binding::constant(value : T) -> Binding[T] {
 /// Create a new Computed value with a getter function.
 pub fn[T] Computed::new(getter : () -> T) -> Computed[T] {
   let initial = getter()
-  { getter: getter, cached_value: initial, dirty: false }
+  Computed::{ getter: getter, cached_value: initial, dirty: false }
 }
 
 ///|
@@ -153,7 +153,7 @@ pub fn[T] Computed::mark_dirty(self : Computed[T]) -> Unit {
 ///|
 /// Create a new AutorunHandle.
 pub fn AutorunHandle::new(dispose_fn : () -> Unit) -> AutorunHandle {
-  { dispose_fn: dispose_fn, is_disposed: false }
+  AutorunHandle::{ dispose_fn: dispose_fn, is_disposed: false }
 }
 
 ///|
@@ -174,7 +174,7 @@ pub fn AutorunHandle::is_disposed(self : AutorunHandle) -> Bool {
 ///|
 /// Create a new WatchHandle.
 pub fn[T] WatchHandle::new(dispose_fn : () -> Unit, initial : T) -> WatchHandle[T] {
-  { dispose_fn: dispose_fn, is_disposed: false, last_value: initial }
+  WatchHandle::{ dispose_fn: dispose_fn, is_disposed: false, last_value: initial }
 }
 
 ///|

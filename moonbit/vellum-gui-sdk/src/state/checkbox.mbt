@@ -10,7 +10,7 @@ pub struct Checkbox {
 ///|
 /// Create a new Checkbox with an ID, label, and initial checked state.
 pub fn Checkbox::new(id : String, label : String, checked : Bool) -> Checkbox {
-  {
+  Checkbox::{
     base: Widget::new("checkbox", id),
     label: label,
     checked: checked,

@@ -18,7 +18,7 @@ pub struct Button {
 ///|
 /// Create a new Button with the given label.
 pub fn Button::new(label : String) -> Button {
-  {
+  Button::{
     base: Widget::new("button", "button-gen-1"),
     label: label,
     button_type: Normal,
@@ -29,7 +29,7 @@ pub fn Button::new(label : String) -> Button {
 ///|
 /// Create an icon button.
 pub fn Button::icon(icon_name : String) -> Button {
-  {
+  Button::{
     base: Widget::new("icon-button", "button-gen-1"),
     label: icon_name,
     button_type: Icon,
@@ -40,7 +40,7 @@ pub fn Button::icon(icon_name : String) -> Button {
 ///|
 /// Create a text button.
 pub fn Button::text(label : String) -> Button {
-  {
+  Button::{
     base: Widget::new("text-button", "button-gen-1"),
     label: label,
     button_type: Text,

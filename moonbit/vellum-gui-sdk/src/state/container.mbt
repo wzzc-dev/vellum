@@ -19,7 +19,7 @@ pub struct Container {
 ///|
 /// Create a new Column container.
 pub fn Container::column(children : @list.List[Widget]) -> Container {
-  {
+  Container::{
     base: build_column_base(children),
     container_type: Column,
     spacing: 0.0,
@@ -30,7 +30,7 @@ pub fn Container::column(children : @list.List[Widget]) -> Container {
 ///|
 /// Create a new Row container.
 pub fn Container::row(children : @list.List[Widget]) -> Container {
-  {
+  Container::{
     base: build_row_base(children),
     container_type: Row,
     spacing: 0.0,
@@ -41,7 +41,7 @@ pub fn Container::row(children : @list.List[Widget]) -> Container {
 ///|
 /// Create a new Stack container.
 pub fn Container::stack(children : @list.List[Widget]) -> Container {
-  {
+  Container::{
     base: build_stack_base(children),
     container_type: Stack,
     spacing: 0.0,
@@ -52,7 +52,7 @@ pub fn Container::stack(children : @list.List[Widget]) -> Container {
 ///|
 /// Create a new Flex container.
 pub fn Container::flex(children : @list.List[Widget]) -> Container {
-  {
+  Container::{
     base: build_flex_base(children),
     container_type: Flex,
     spacing: 0.0,
