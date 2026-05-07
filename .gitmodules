@@ -1,0 +1,8 @@
+[submodule "moonbit-skills"]
+	path = moonbit-skills
+	url = https://github.com/moonbitlang/skills
+	branch = master
+[submodule "moonbit-quickcheck"]
+	path = moonbit-quickcheck
+	url = https://github.com/moonbitlang/quickcheck.git
+	branch = main

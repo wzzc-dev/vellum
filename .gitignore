@@ -6,3 +6,5 @@
 .tmp-home/
 examples-extensions/pomodoro/_build
 examples-extensions/pomodoro/target
+examples-extensions/moonbit-gui/_build
+moonbit/vellum-gui-sdk/_build/*
