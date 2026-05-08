@@ -1,0 +1,9 @@
+id = "vellum.demo.markdown"
+name = "Vellum Markdown Demo"
+version = "0.1.0"
+kind = "app"
+component = "target/wasm32-wasip2/release/vellum_markdown_demo.wasm"
+
+[capabilities]
+native_markdown_editor = true
+filesystem = true

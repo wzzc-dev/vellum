@@ -19,7 +19,7 @@ use crate::ui::{UiEvent, UiNode};
 #[allow(dead_code)]
 mod bindings {
     wasmtime::component::bindgen!({
-        path: "wit/vellum-extension.wit",
+        path: "../../wit/vellum-extension.wit",
         world: "extension-world",
     });
 }

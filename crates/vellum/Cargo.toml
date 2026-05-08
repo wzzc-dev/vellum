@@ -6,10 +6,12 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 dirs = "6"
-editor = { path = "../editor" }
 gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["webview"] }
 regex = "1"
 rfd = "0.15"
-vellum-extension = { path = "../extension" }
-workspace = { path = "../workspace" }
+vellum-editor = { path = "../vellum-editor" }
+vellum-extension-compat = { path = "../vellum-extension-compat" }
+vellum-renderer-gpui = { path = "../vellum-renderer-gpui" }
+vellum-runtime = { path = "../vellum-runtime" }
+vellum-workspace = { path = "../vellum-workspace" }

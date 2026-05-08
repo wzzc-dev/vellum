@@ -1,0 +1,292 @@
+package vellum:gui/grid@0.1.0;
+
+/// Grid axis alignment
+enum grid-alignment {
+    /// Align to start
+    start,
+    /// Align to center
+    center,
+    /// Align to end
+    end,
+    /// Stretch to fill space
+    stretch,
+    /// Space items evenly
+    space-between,
+    /// Space items evenly with space around
+    space-around,
+    /// Space items evenly with space equally
+    space-evenly,
+}
+
+/// Grid track sizing
+variant grid-track-size {
+    /// Fixed size in pixels
+    fixed {
+        size: f32,
+    },
+    /// Fill remaining space
+    fill {
+        min-size: option<f32>,
+        max-size: option<f32>,
+    },
+    /// Size based on content
+    auto,
+    /// Minimum size
+    minmax {
+        min: f32,
+        max: f32,
+    },
+}
+
+/// Grid line placement
+record grid-line-placement {
+    /// Start line (1-indexed)
+    start: u32,
+    /// End line (inclusive)
+    end: option<u32>,
+    /// Named line start
+    start-name: option<string>,
+    /// Named line end
+    end-name: option<string>,
+}
+
+/// Column span configuration
+record column-span {
+    /// Number of columns to span
+    span: u32,
+    /// Alignment within the span
+    alignment: option<grid-alignment>,
+}
+
+/// Row span configuration
+record row-span {
+    /// Number of rows to span
+    span: u32,
+    /// Alignment within the span
+    alignment: option<grid-alignment>,
+}
+
+/// Grid item placement
+record grid-item-placement {
+    /// Row placement
+    row: grid-line-placement,
+    /// Column placement
+    column: grid-line-placement,
+    /// Row span
+    row-span: option<row-span>,
+    /// Column span
+    column-span: option<column-span>,
+}
+
+/// Default grid item placement (auto placement)
+func default-placement() -> grid-item-placement {
+    grid-item-placement {
+        row: grid-line-placement { start: 0, end: None, start-name: None, end-name: None },
+        column: grid-line-placement { start: 0, end: None, start-name: None, end-name: None },
+        row-span: None,
+        column-span: None,
+    }
+}
+
+/// Grid configuration
+record grid-config {
+    /// Number of columns (for grid-template-columns)
+    columns: u32,
+    /// Number of rows (for grid-template-rows, 0 = auto)
+    rows: u32,
+    /// Column gap
+    column-gap: f32,
+    /// Row gap
+    row-gap: f32,
+    /// Column sizing rules
+    column-sizes: option<list<grid-track-size>>,
+    /// Row sizing rules
+    row-sizes: option<list<grid-track-size>>,
+    /// Default horizontal alignment
+    justify-items: grid-alignment,
+    /// Default vertical alignment
+    align-items: grid-alignment,
+    /// Horizontal alignment of the entire grid
+    justify-content: grid-alignment,
+    /// Vertical alignment of the entire grid
+    align-content: grid-alignment,
+    /// Maximum width
+    max-width: option<f32>,
+    /// Maximum height
+    max-height: option<f32>,
+}
+
+/// Default grid config
+/// 2 columns, auto rows, 8px gaps
+func default-grid-config() -> grid-config {
+    grid-config {
+        columns: 2,
+        rows: 0,
+        column-gap: 8.0,
+        row-gap: 8.0,
+        column-sizes: None,
+        row-sizes: None,
+        justify-items: stretch,
+        align-items: stretch,
+        justify-content: start,
+        align-content: start,
+        max-width: None,
+        max-height: None,
+    }
+}
+
+/// Grid item data
+record grid-item-data {
+    /// Widget identifier
+    widget-id: string,
+    /// Placement configuration
+    placement: grid-item-placement,
+    /// Custom alignment override
+    justify-self: option<grid-alignment>,
+    /// Custom alignment override
+    align-self: option<grid-alignment>,
+}
+
+/// Grid view controller resource
+resource grid-view {
+    /// Create with configuration
+    constructor(config: grid-config);
+
+    /// Add an item with default placement
+    add-item: func(widget-id: string);
+
+    /// Add an item with custom placement
+    add-item-with-placement: func(item: grid-item-data);
+
+    /// Add multiple items with default placement
+    add-items: func(widget-ids: list<string>);
+
+    /// Remove an item by index
+    remove-item: func(index: u32);
+
+    /// Remove item by widget ID
+    remove-item-by-id: func(widget-id: string) -> bool;
+
+    /// Update item placement
+    update-placement: func(widget-id: string, placement: grid-item-placement) -> bool;
+
+    /// Clear all items
+    clear: func();
+
+    /// Get number of items
+    item-count: func() -> u32;
+
+    /// Get item at index
+    get-item: func(index: u32) -> option<grid-item-data>;
+
+    /// Get item by widget ID
+    get-item-by-id: func(widget-id: string) -> option<grid-item-data>;
+
+    /// Set column count (responsive)
+    set-columns: func(count: u32);
+
+    /// Set gaps
+    set-gaps: func(column-gap: f32, row-gap: f32);
+
+    /// Scroll to item
+    scroll-to-item: func(index: u32, animated: bool);
+
+    /// Scroll to item by ID
+    scroll-to-item-by-id: func(widget-id: string, animated: bool) -> bool;
+}
+
+/// Lazy grid configuration for large lists
+record lazy-grid-config {
+    /// Base grid configuration
+    base: grid-config,
+    /// Whether to cache rendered items
+    cache-extent: option<f32>,
+    /// Item height estimator (for scrolling optimization)
+    estimated-item-height: f32,
+    /// Whether to reverse layout
+    reverse: bool,
+}
+
+/// Lazy grid controller resource
+resource lazy-grid-view {
+    /// Create with configuration
+    constructor(config: lazy-grid-config);
+
+    /// Add item to the end
+    append-item: func(widget-id: string);
+
+    /// Add item to the beginning
+    prepend-item: func(widget-id: string);
+
+    /// Insert item at index
+    insert-item: func(index: u32, widget-id: string);
+
+    /// Remove item at index
+    remove-item: func(index: u32);
+
+    /// Move item from one index to another
+    move-item: func(from-index: u32, to-index: u32);
+
+    /// Update item at index
+    update-item: func(index: u32, widget-id: string);
+
+    /// Set total item count (for empty placeholder)
+    set-item-count: func(count: u32);
+
+    /// Get visible range
+    get-visible-range: func() -> tuple<u32, u32>;
+
+    /// Scroll to index
+    scroll-to-index: func(index: u32, animated: bool);
+
+    /// Invalidate all items (force rebuild)
+    invalidate-all: func();
+
+    /// Invalidate item at index
+    invalidate-item: func(index: u32);
+}
+
+/// Grid event types
+variant grid-event {
+    /// Item was tapped
+    item-tapped {
+        index: u32,
+        widget-id: string,
+    },
+    /// Item was long-pressed
+    item-long-pressed {
+        index: u32,
+        widget-id: string,
+    },
+    /// Visible range changed
+    visible-range-changed {
+        start: u32,
+        end: u32,
+    },
+    /// Scroll position changed
+    scroll-position-changed {
+        offset: f32,
+    },
+    /// Item was removed
+    item-removed {
+        index: u32,
+        widget-id: string,
+    },
+    /// Item was inserted
+    item-inserted {
+        index: u32,
+        widget-id: string,
+    },
+}
+
+/// Grid scroll behavior
+enum grid-scroll-behavior {
+    /// Keep selection visible
+    keep-selection-visible,
+    /// Scroll to top
+    scroll-to-top,
+    /// Scroll to bottom
+    scroll-to-bottom,
+    /// No scroll
+    none,
+}

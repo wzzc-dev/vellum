@@ -1,5 +1,7 @@
 # Vellum MoonBit 扩展开发指南
 
+> This document describes the legacy `vellum:extension/extension-world` compatibility path. New app and plugin work should use `wit/vellum-app.wit`; see [GUI Framework Guide](./gui-framework-guide.md).
+
 ## 概述
 
 Vellum 支持使用 [MoonBit](https://www.moonbitlang.com/) 编写 WASM Component 扩展。MoonBit 扩展通过 WASM Component Model 与宿主（Vellum app）交互，可以访问文档、渲染 UI 面板、注册命令、使用定时器等能力。
@@ -60,7 +62,7 @@ mkdir my-extension && cd my-extension
 WIT 文件定义了宿主与扩展之间的接口。将其符号链接到项目中：
 
 ```bash
-ln -s /path/to/vellum/crates/extension/wit wit
+ln -s /path/to/vellum/wit wit
 ```
 
 ### 3. 生成 MoonBit 绑定
@@ -741,7 +743,7 @@ wasm-tools component wit target/wasm32-wasip2/release/my_extension.wasm
 
 ## 完整示例：Pomodoro 番茄钟
 
-参考项目中的 `examples-extensions/pomodoro/` 目录，它演示了：
+参考项目中的 `examples/legacy-extensions/pomodoro/` 目录，它演示了：
 
 - 定时器能力（`request_tick` / `cancel_tick` / `handle timer.tick`）
 - 面板 UI 构建（Column、Row、Text、Heading、Button、Badge、Progress、Separator）
@@ -752,7 +754,7 @@ wasm-tools component wit target/wasm32-wasip2/release/my_extension.wasm
 构建与运行：
 
 ```bash
-cd examples-extensions/pomodoro
+cd examples/legacy-extensions/pomodoro
 ./build.sh
 cargo run -p vellum
 ```

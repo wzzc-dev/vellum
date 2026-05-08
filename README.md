@@ -2,7 +2,9 @@
 
 [简体中文](./README.zh-CN.md)
 
-Vellum is a desktop Markdown editor built with Rust and `gpui`. It is also being refactored into a MoonBit + Rust/GPUI GUI framework where MoonBit describes app UI and Rust renders native widgets.
+Vellum is being refactored into a MoonBit + Rust/GPUI GUI framework. MoonBit components describe app logic and typed UI trees, Rust/GPUI renders native UI and manages windows/events, and WIT connects both sides through the WASM Component Model.
+
+The Markdown WYSIWYG editor remains the primary demo. Its outer shell is a MoonBit app component, while the editor widget itself is a Rust/GPUI native view embedded through `NativeView(kind = "markdown-editor")`.
 
 ![Vellum screenshot](./docs/vellum-screenshot.png)
 
@@ -36,11 +38,11 @@ Vellum is a desktop Markdown editor built with Rust and `gpui`. It is also being
 - [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) - UI framework
 - [gpui-components](https://github.com/longbridge/gpui-component) - UI component library
 
-### Extension System
+### Framework Runtime
 
 - [Wasmtime](https://wasmtime.dev/) - WASM runtime
 - [WIT](https://component-model.bytecodealliance.org/) - Interface types
-- [MoonBit](https://www.moonbitlang.com/) - Extension language
+- [MoonBit](https://www.moonbitlang.com/) - App and plugin language
 
 ---
 
@@ -72,23 +74,32 @@ cargo run
 ```
 vellum/
 ├── crates/                          # Rust crates
-│   ├── vellum/                      # App entry point
-│   ├── editor/                      # Editor core
-│   ├── workspace/                   # Workspace management
-│   ├── extension/                   # Extension host
-│   ├── extension-sdk/               # Extension SDK
-│   └── gpui-adapter/                # GPUI adapter for MoonBit GUI
-├── examples-extensions/             # Example extensions
-│   ├── pomodoro/                    # Pomodoro timer extension
-│   └── moonbit-gui/                 # MoonBit GUI extension
+│   ├── vellum/                      # Desktop host: windows, menus, app startup
+│   ├── vellum-runtime/              # Wasmtime runtime and vellum.toml manifest
+│   ├── vellum-renderer-gpui/        # Typed ViewTree -> GPUI renderer
+│   ├── vellum-editor/               # Markdown editor native widget facade
+│   ├── vellum-workspace/            # Workspace/file services facade
+│   ├── vellum-extension-compat/     # Legacy extension-world compatibility
+│   ├── editor/                      # Existing editor implementation
+│   ├── workspace/                   # Existing workspace implementation
+│   └── extension/                   # Existing legacy extension implementation
+├── wit/                             # Canonical WIT packages
+│   ├── vellum-app.wit               # App/plugin typed UI protocol
+│   ├── vellum-extension.wit         # Legacy extension-world compat protocol
+│   └── legacy/                      # Old experimental WIT files
 ├── moonbit/                         # MoonBit modules
-│   └── vellum-gui-sdk/              # MoonBit GUI SDK
-│       └── apps/markdown-demo/       # MoonBit framework demo app
+│   ├── vellum-app-sdk/              # New app DSL staging package
+│   ├── vellum-plugin-sdk/           # New plugin DSL staging package
+│   ├── demos/markdown-editor/       # Main MoonBit app demo
+│   └── legacy-extensions/           # Old MoonBit extension examples
+├── examples/
+│   ├── plugins/                     # New typed plugin examples
+│   └── legacy-extensions/           # Compatibility examples
 ├── docs/                            # Documentation
 │   ├── architecture.md              # Architecture overview
 │   ├── building.md                  # Building & running guide
 │   ├── gui-framework-guide.md       # GUI framework guide
-│   └── moonbit-extension-guide.md   # MoonBit extension guide
+│   └── legacy-extension.md          # Legacy extension compatibility guide
 ├── Cargo.toml
 └── README.md
 ```
@@ -102,9 +113,9 @@ vellum/
 | [Building Guide](./docs/building.md) | How to build and run the project |
 | [Architecture Overview](./docs/architecture.md) | Project architecture, modules, and design |
 | [GUI Framework Guide](./docs/gui-framework-guide.md) | How to use the MoonBit GUI framework |
-| [MoonBit Extension Guide](./docs/moonbit-extension-guide.md) | How to write extensions in MoonBit |
-| [Pomodoro Example](./examples-extensions/pomodoro/) | Full-featured extension example |
-| [MoonBit GUI Example](./examples-extensions/moonbit-gui/) | Simple GUI extension example |
+| [Legacy Extension Compatibility](./docs/legacy-extension.md) | How the old extension-world path is preserved |
+| [MoonBit Extension Guide](./docs/moonbit-extension-guide.md) | Legacy MoonBit extension reference |
+| [Markdown Demo](./moonbit/demos/markdown-editor/) | Main MoonBit app shell with native editor |
 
 ---
 
@@ -123,10 +134,10 @@ cargo run --release
 To run the experimental MoonBit framework shell:
 
 ```bash
-cd moonbit/vellum-gui-sdk/apps/markdown-demo
+cd moonbit/demos/markdown-editor
 ./build.sh
-cd ../../../..
-VELLUM_APP=moonbit/vellum-gui-sdk/apps/markdown-demo cargo run -p Vellum
+cd ../../..
+VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 ```
 
 For more details, see [Building Guide](./docs/building.md).
@@ -143,23 +154,23 @@ cargo test -p workspace
 
 ---
 
-## Build Example Extensions
+## Build Legacy Example Extensions
 
 ### Pomodoro Timer Extension
 
 ```bash
-cd examples-extensions/pomodoro
+cd examples/legacy-extensions/pomodoro
 ./build.sh
-cd ../../
+cd ../../..
 cargo run
 ```
 
 ### MoonBit GUI Extension
 
 ```bash
-cd examples-extensions/moonbit-gui
+cd examples/legacy-extensions/moonbit-gui
 ./build.sh
-cd ../../
+cd ../../..
 cargo run
 ```
 

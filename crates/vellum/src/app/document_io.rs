@@ -3,7 +3,7 @@ use std::fs;
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{clear_last_opened_path, read_last_opened_path, write_last_opened_path};
-use editor::FileSyncEvent;
+use vellum_editor::FileSyncEvent;
 
 impl VellumApp {
     pub(super) fn refresh_tree(&mut self, cx: &mut Context<Self>) {

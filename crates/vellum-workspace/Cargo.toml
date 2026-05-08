@@ -1,0 +1,8 @@
+[package]
+name = "vellum-workspace"
+version = "0.1.0"
+edition = "2024"
+description = "Workspace and file services for the Vellum GUI framework"
+
+[dependencies]
+workspace = { path = "../workspace" }

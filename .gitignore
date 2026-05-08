@@ -11,3 +11,11 @@ moonbit/vellum-gui-sdk/**/_build/
 moonbit/vellum-gui-sdk/examples/**/target/
 moonbit/vellum-gui-sdk/apps/**/target/
 moonbit/vellum-gui-sdk/_build/
+moonbit/demos/**/_build/
+moonbit/demos/**/target/
+moonbit/legacy-extensions/**/_build/
+moonbit/legacy-extensions/**/target/
+moonbit/vellum-app-sdk/**/_build/
+moonbit/vellum-plugin-sdk/**/_build/
+examples/legacy-extensions/**/_build/
+examples/legacy-extensions/**/target/

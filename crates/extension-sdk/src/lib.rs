@@ -7,7 +7,7 @@ pub mod ui;
 
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "../extension/wit",
+        path: "../../wit/vellum-extension.wit",
         world: "extension-world",
         pub_export_macro: true,
         default_bindings_module: "$crate::bindings",

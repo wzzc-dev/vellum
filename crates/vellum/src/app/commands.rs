@@ -238,67 +238,67 @@ impl VellumApp {
 
         match cmd {
             PaletteCommand::Bold => {
-                window.dispatch_action(Box::new(editor::BoldSelection), cx);
+                window.dispatch_action(Box::new(vellum_editor::BoldSelection), cx);
             }
             PaletteCommand::Italic => {
-                window.dispatch_action(Box::new(editor::ItalicSelection), cx);
+                window.dispatch_action(Box::new(vellum_editor::ItalicSelection), cx);
             }
             PaletteCommand::InlineCode => {
-                window.dispatch_action(Box::new(editor::ToggleInlineCode), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleInlineCode), cx);
             }
             PaletteCommand::Strikethrough => {
-                window.dispatch_action(Box::new(editor::ToggleStrikethrough), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleStrikethrough), cx);
             }
             PaletteCommand::Link => {
-                window.dispatch_action(Box::new(editor::LinkSelection), cx);
+                window.dispatch_action(Box::new(vellum_editor::LinkSelection), cx);
             }
             PaletteCommand::Heading1 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading1), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading1), cx);
             }
             PaletteCommand::Heading2 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading2), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading2), cx);
             }
             PaletteCommand::Heading3 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading3), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading3), cx);
             }
             PaletteCommand::Heading4 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading4), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading4), cx);
             }
             PaletteCommand::Heading5 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading5), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading5), cx);
             }
             PaletteCommand::Heading6 => {
-                window.dispatch_action(Box::new(editor::ToggleHeading6), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleHeading6), cx);
             }
             PaletteCommand::Paragraph => {
-                window.dispatch_action(Box::new(editor::ToggleParagraph), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleParagraph), cx);
             }
             PaletteCommand::Blockquote => {
-                window.dispatch_action(Box::new(editor::ToggleBlockquote), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleBlockquote), cx);
             }
             PaletteCommand::BulletList => {
-                window.dispatch_action(Box::new(editor::ToggleBulletList), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleBulletList), cx);
             }
             PaletteCommand::OrderedList => {
-                window.dispatch_action(Box::new(editor::ToggleOrderedList), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleOrderedList), cx);
             }
             PaletteCommand::HorizontalRule => {
-                window.dispatch_action(Box::new(editor::InsertHorizontalRule), cx);
+                window.dispatch_action(Box::new(vellum_editor::InsertHorizontalRule), cx);
             }
             PaletteCommand::CodeFence => {
-                window.dispatch_action(Box::new(editor::InsertCodeFence), cx);
+                window.dispatch_action(Box::new(vellum_editor::InsertCodeFence), cx);
             }
             PaletteCommand::Table => {
-                window.dispatch_action(Box::new(editor::InsertTable), cx);
+                window.dispatch_action(Box::new(vellum_editor::InsertTable), cx);
             }
             PaletteCommand::SourceMode => {
-                window.dispatch_action(Box::new(editor::ToggleSourceMode), cx);
+                window.dispatch_action(Box::new(vellum_editor::ToggleSourceMode), cx);
             }
             PaletteCommand::Undo => {
-                window.dispatch_action(Box::new(editor::UndoEdit), cx);
+                window.dispatch_action(Box::new(vellum_editor::UndoEdit), cx);
             }
             PaletteCommand::Redo => {
-                window.dispatch_action(Box::new(editor::RedoEdit), cx);
+                window.dispatch_action(Box::new(vellum_editor::RedoEdit), cx);
             }
             PaletteCommand::ToggleSidebar => {
                 self.toggle_sidebar_visibility(cx);
@@ -316,19 +316,19 @@ impl VellumApp {
                 self.open_find_replace_panel();
             }
             PaletteCommand::ThemeDefault => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Default);
+                vellum_editor::set_syntax_theme(vellum_editor::SyntaxTheme::Default);
             }
             PaletteCommand::ThemeDracula => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Dracula);
+                vellum_editor::set_syntax_theme(vellum_editor::SyntaxTheme::Dracula);
             }
             PaletteCommand::ThemeSolarized => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Solarized);
+                vellum_editor::set_syntax_theme(vellum_editor::SyntaxTheme::Solarized);
             }
             PaletteCommand::ThemeGitHub => {
-                editor::set_syntax_theme(editor::SyntaxTheme::GitHub);
+                vellum_editor::set_syntax_theme(vellum_editor::SyntaxTheme::GitHub);
             }
             PaletteCommand::MathBlock => {
-                window.dispatch_action(Box::new(editor::InsertMathBlock), cx);
+                window.dispatch_action(Box::new(vellum_editor::InsertMathBlock), cx);
             }
         }
 

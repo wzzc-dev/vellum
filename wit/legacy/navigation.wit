@@ -1,0 +1,138 @@
+package vellum:gui/navigation@0.1.0;
+
+/// Navigation state record
+record navigation-state {
+    /// Current route path
+    current-route: string,
+    /// Route parameters
+    params: list<tuple<string, string>>,
+    /// Whether we can go back
+    can-go-back: bool,
+    /// History stack depth
+    stack-depth: u32,
+}
+
+/// Navigation parameters
+record navigation-params {
+    /// Parameter key-value pairs
+    params: list<tuple<string, string>>,
+    /// Whether to replace current route
+    replace: bool,
+    /// Transition animation type
+    transition: option<transition-type>,
+}
+
+/// Transition animation types
+variant transition-type {
+    /// Push from right (iOS style)
+    push-right,
+    /// Push from bottom
+    push-bottom,
+    /// Push from left
+    push-left,
+    /// Push from top
+    push-top,
+    /// Fade transition
+    fade,
+    /// No animation
+    none,
+}
+
+/// Navigator resource for programmatic navigation
+resource navigator {
+    /// Create a new navigator with initial route
+    constructor(initial-route: string);
+
+    /// Navigate to a new route
+    push: func(route: string, params: option<navigation-params>);
+
+    /// Go back to previous route
+    pop: func() -> bool;
+
+    /// Replace current route without adding to history
+    replace: func(route: string, params: option<navigation-params>);
+
+    /// Check if we can go back
+    can-go-back: func() -> bool;
+
+    /// Get current navigation state
+    get-state: func() -> navigation-state;
+
+    /// Clear all navigation history
+    clear-history: func();
+
+    /// Set the root route
+    set-root: func(route: string);
+}
+
+/// Navigation event types
+variant navigation-event {
+    /// Route was pushed onto stack
+    pushed {
+        route: string,
+        params: list<tuple<string, string>>,
+    },
+    /// Route was popped from stack
+    popped {
+        route: string,
+        popped-route: string,
+    },
+    /// Route was replaced
+    replaced {
+        old-route: string,
+        new-route: string,
+    },
+    /// Navigation state changed
+    state-changed {
+        state: navigation-state,
+    },
+    /// Deep link received
+    deep-link {
+        url: string,
+    },
+}
+
+/// Route configuration for NavHost
+record route-config {
+    /// Route path pattern (e.g., "/users/:id")
+    path: string,
+    /// Route name for debugging
+    name: option<string>,
+    /// Whether this route requires authentication
+    requires-auth: bool,
+}
+
+/// NavHost configuration
+record nav-host-config {
+    /// Initial route
+    initial-route: string,
+    /// All registered routes
+    routes: list<route-config>,
+    /// Default transition animation
+    default-transition: transition-type,
+    /// Whether to show back button
+    show-back-button: bool,
+    /// Deep link base URL
+    deep-link-base: option<string>,
+}
+
+/// Navigation controller resource
+resource navigation-controller {
+    /// Create with configuration
+    constructor(config: nav-host-config);
+
+    /// Register a route
+    register-route: func(config: route-config);
+
+    /// Unregister a route
+    unregister-route: func(path: string);
+
+    /// Start navigation with the given navigator
+    start: func(navigator: navigator);
+
+    /// Handle deep link
+    handle-deep-link: func(url: string) -> bool;
+
+    /// Get navigator instance
+    get-navigator: func() -> navigator;
+}

@@ -8,13 +8,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
- "editor",
  "gpui",
  "gpui-component",
  "regex",
  "rfd",
- "vellum-extension",
- "workspace",
+ "vellum-editor",
+ "vellum-extension-compat",
+ "vellum-renderer-gpui",
+ "vellum-runtime",
+ "vellum-workspace",
 ]
 
 [[package]]
@@ -8280,6 +8282,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vellum-editor"
+version = "0.1.0"
+dependencies = [
+ "editor",
+]
+
+[[package]]
 name = "vellum-extension"
 version = "0.1.0"
 dependencies = [
@@ -8290,8 +8299,16 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 0.8.23",
+ "vellum-runtime",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "vellum-extension-compat"
+version = "0.1.0"
+dependencies = [
+ "vellum-extension",
 ]
 
 [[package]]
@@ -8309,6 +8326,33 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "vellum-extension-sdk",
+]
+
+[[package]]
+name = "vellum-renderer-gpui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "vellum-runtime",
+]
+
+[[package]]
+name = "vellum-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml 0.8.23",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "vellum-workspace"
+version = "0.1.0"
+dependencies = [
+ "workspace",
 ]
 
 [[package]]

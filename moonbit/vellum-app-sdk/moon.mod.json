@@ -1,0 +1,7 @@
+{
+  "name": "vellum/app-sdk",
+  "version": "0.1.0",
+  "description": "MoonBit DSL helpers for Vellum app components",
+  "readme": "README.md",
+  "source": "src"
+}

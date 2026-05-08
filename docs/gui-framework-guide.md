@@ -19,7 +19,7 @@ flowchart LR
     Renderer --> Native["Native MarkdownEditor Widget"]
 ```
 
-The new WIT package lives at `crates/extension/wit/vellum-app.wit`.
+The canonical WIT package lives at `wit/vellum-app.wit`.
 
 The first implementation uses whole-tree replacement after each event. Stable node ids are still required because the Rust renderer keeps local GPUI state for controls such as text inputs.
 
@@ -87,7 +87,7 @@ filesystem = true
 Build the MoonBit component:
 
 ```bash
-cd moonbit/vellum-gui-sdk/apps/markdown-demo
+cd moonbit/demos/markdown-editor
 ./build.sh
 ```
 
@@ -95,11 +95,11 @@ Launch Vellum with the MoonBit shell enabled:
 
 ```bash
 cd /Volumes/Data/Code/Note/vellum
-VELLUM_APP=moonbit/vellum-gui-sdk/apps/markdown-demo cargo run -p Vellum
+VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 ```
 
 Without `VELLUM_APP`, Vellum keeps running as the existing Rust Markdown editor.
 
 ## Notes
 
-The old `vellum:extension/extension-world` path remains for compatibility during migration. New app work should target `vellum:app/app-world` and typed `view-tree`, not JSON panel payloads.
+The old `vellum:extension/extension-world` path remains for compatibility during migration through `crates/vellum-extension-compat` and `wit/vellum-extension.wit`. New app and plugin work should target `vellum:app/app-world` and typed `view-tree`, not JSON panel payloads.

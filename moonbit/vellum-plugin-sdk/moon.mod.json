@@ -1,0 +1,7 @@
+{
+  "name": "vellum/plugin-sdk",
+  "version": "0.1.0",
+  "description": "MoonBit helpers for Vellum plugin components",
+  "readme": "README.md",
+  "source": "src"
+}

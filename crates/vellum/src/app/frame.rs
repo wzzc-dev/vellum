@@ -305,12 +305,12 @@ impl VellumApp {
         if let Some(window) = window.as_deref_mut() {
             for edit in outputs.pending_edits {
                 let result = match edit {
-                    vellum_extension::PendingEdit::Insert { position, text } => {
+                    vellum_extension_compat::PendingEdit::Insert { position, text } => {
                         self.active_editor_entity().update(cx, |editor, cx| {
                             editor.replace_byte_range(position, position, text, window, cx)
                         })
                     }
-                    vellum_extension::PendingEdit::ReplaceRange { start, end, text } => {
+                    vellum_extension_compat::PendingEdit::ReplaceRange { start, end, text } => {
                         self.active_editor_entity().update(cx, |editor, cx| {
                             editor.replace_byte_range(start, end, text, window, cx)
                         })
@@ -330,7 +330,7 @@ impl VellumApp {
 
     pub(super) fn loaded_extension_manifests(
         &self,
-    ) -> Vec<vellum_extension::manifest::ExtensionManifest> {
+    ) -> Vec<vellum_extension_compat::manifest::ExtensionManifest> {
         self.extension_host.loaded_manifests()
     }
 
@@ -696,17 +696,17 @@ impl VellumApp {
                                     .label("LivePreview")
                                     .selected(
                                         self.editor_snapshot.view_mode
-                                            == editor::EditorViewMode::LivePreview,
+                                            == vellum_editor::EditorViewMode::LivePreview,
                                     ),
                             )
                             .child(Button::new("view-mode-source").label("Source").selected(
-                                self.editor_snapshot.view_mode == editor::EditorViewMode::Source,
+                                self.editor_snapshot.view_mode == vellum_editor::EditorViewMode::Source,
                             ))
                             .on_click(move |selected: &Vec<usize>, window, app| {
                                 let target = if selected.contains(&1) {
-                                    editor::EditorViewMode::Source
+                                    vellum_editor::EditorViewMode::Source
                                 } else {
-                                    editor::EditorViewMode::LivePreview
+                                    vellum_editor::EditorViewMode::LivePreview
                                 };
                                 let _ = view.update(app, |this, cx| {
                                     this.active_editor_entity().update(cx, |editor, cx| {

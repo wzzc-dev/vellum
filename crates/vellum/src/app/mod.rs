@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use editor::{
+use vellum_editor::{
     BoldSelection, DemoteBlock, EditorDecoration, EditorEvent, EditorSnapshot, ExitBlockEdit,
     FocusNextBlock, FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable,
     ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
@@ -31,9 +31,9 @@ use gpui_component::{
     tree::TreeState,
 };
 use rfd::FileDialog;
-use vellum_extension::app_ui::ViewTree;
-use vellum_extension::{ExtensionHost, LoadedAppComponent};
-use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
+use vellum_extension_compat::ExtensionHost;
+use vellum_runtime::{LoadedAppComponent, ViewTree};
+use vellum_workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 
 use webview::WebViewManager;
 
@@ -161,7 +161,7 @@ struct VellumApp {
     command_palette: command_palette::CommandPaletteState,
     framework_app: Option<LoadedAppComponent>,
     framework_view: Option<ViewTree>,
-    framework_inputs: HashMap<String, framework::FrameworkInput>,
+    framework_inputs: HashMap<String, vellum_renderer_gpui::FrameworkInput>,
 }
 
 pub fn run() -> Result<()> {

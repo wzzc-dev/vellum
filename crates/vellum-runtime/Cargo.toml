@@ -1,0 +1,12 @@
+[package]
+name = "vellum-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "WASM Component runtime and typed UI protocol for the Vellum GUI framework"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+wasmtime = { version = "35", features = ["component-model"] }
+wasmtime-wasi = "35"

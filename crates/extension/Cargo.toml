@@ -12,6 +12,7 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 wasmtime = { version = "35", features = ["component-model"] }
 wasmtime-wasi = "35"
+vellum-runtime = { path = "../vellum-runtime" }
 
 [features]
 default = []

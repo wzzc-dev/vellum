@@ -1,0 +1,135 @@
+package vellum:gui/gestures@0.1.0;
+
+use vellum:gui/types.{ point };
+
+/// Gesture recognizer state
+enum gesture-state {
+    /// Waiting for input
+    possible,
+    /// Currently recognizing
+    began,
+    /// Recognized gesture
+    changed,
+    /// Recognized complete
+    ended,
+    /// Recognized failed
+    failed,
+    /// Canceled by system
+    cancelled,
+}
+
+/// Gesture recognized result
+record gesture-result {
+    /// The gesture type
+    gesture-type: gesture-type,
+    /// Current state
+    state: gesture-state,
+    /// Touch points involved
+    touches: list<touch-point>,
+    /// Velocity of gesture
+    velocity: point,
+    /// Translation from start
+    translation: point,
+    /// Scale factor (for pinch)
+    scale: option<f32>,
+    /// Rotation in radians (for rotation)
+    rotation: option<f32>,
+}
+
+/// Single touch point
+record touch-point {
+    /// Unique identifier
+    id: u64,
+    /// Current position
+    position: point,
+    /// Initial position
+    start-position: point,
+    /// Timestamp of touch
+    timestamp-ms: u64,
+    /// Force value (for pressure-sensitive)
+    force: f32,
+    /// Radius of touch
+    radius: f32,
+}
+
+/// Type of gesture
+variant gesture-type {
+    /// Tap gesture
+    tap { taps-required: u32, touches-required: u32 },
+    /// Long press
+    long-press { minimum-duration-ms: u32, allow-movement: f32 },
+    /// Pan/Drag
+    pan { minimum-distance: f32, maximum-distance: option<f32> },
+    /// Swipe
+    swipe { direction: swipe-direction, minimum-distance: f32 },
+    /// Pinch
+    pinch,
+    /// Rotation
+    rotation,
+    /// Screen edge pan
+    screen-edge-pan { edges: list<edge> },
+}
+
+/// Edge of screen for screen-edge gestures
+enum edge {
+    left, right, top, bottom
+}
+
+/// Direction for swipe
+enum swipe-direction {
+    right, left, up, down
+}
+
+/// Gesture recognizer resource
+resource gesture-recognizer {
+    /// Create a new recognizer
+    constructor(type: gesture-type);
+    
+    /// Get current state
+    get-state: func() -> gesture-state;
+    
+    /// Get current result
+    get-result: func() -> option<gesture-result>;
+    
+    /// Set enabled state
+    set-enabled: func(enabled: bool);
+    
+    /// Get enabled state
+    is-enabled: func() -> bool;
+    
+    /// Get the gesture type
+    get-gesture-type: func() -> gesture-type;
+    
+    /// Set minimum number of touches
+    set-minimum-touches: func(count: u32);
+    
+    /// Set maximum number of touches
+    set-maximum-touches: func(count: u32);
+    
+    /// Add a dependency (this recognizer waits for another to fail)
+    require-failure-of: func(recognizer: gesture-recognizer);
+    
+    /// Allow simultaneous recognition with another
+    allow-simultaneous-with: func(recognizer: gesture-recognizer);
+}
+
+/// Gesture delegate interface
+interface gesture-delegate {
+    /// Should a gesture be allowed to begin
+    gesture-should-begin: func(recognizer: gesture-recognizer) -> bool;
+    
+    /// Should two gestures be allowed to recognize simultaneously
+    gesture-should-recognize-simultaneously: func(recognizer1: gesture-recognizer, recognizer2: gesture-recognizer) -> bool;
+    
+    /// Should a gesture require the other to fail
+    gesture-should-require-failure-of: func(recognizer: gesture-recognizer, other: gesture-recognizer) -> bool;
+}
+
+/// Screen coordinates converter
+interface coordinate-system {
+    /// Convert from local to screen coordinates
+    convert-to-screen: func(local-point: point) -> point;
+    
+    /// Convert from screen to local coordinates
+    convert-from-screen: func(screen-point: point) -> point;
+}

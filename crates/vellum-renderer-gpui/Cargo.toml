@@ -1,0 +1,10 @@
+[package]
+name = "vellum-renderer-gpui"
+version = "0.1.0"
+edition = "2024"
+description = "GPUI renderer for Vellum typed view trees"
+
+[dependencies]
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+vellum-runtime = { path = "../vellum-runtime" }

@@ -1,0 +1,290 @@
+package vellum:gui/animation@0.1.0;
+
+/// Animation curve types
+enum animation-curve {
+    /// Linear animation (constant speed)
+    linear,
+    /// Ease-in: start slow, end fast
+    ease-in,
+    /// Ease-out: start fast, end slow
+    ease-out,
+    /// Ease-in-out: start slow, speed up, end slow
+    ease-in-out,
+    /// Bounce effect at the end
+    bounce,
+    /// Elastic effect (overshoot and settle)
+    elastic,
+    /// Custom cubic bezier
+    custom-bezier,
+}
+
+/// Animation direction
+enum animation-direction {
+    /// Normal direction
+    normal,
+    /// Reverse direction
+    reverse,
+    /// Alternate between normal and reverse
+    alternate,
+    /// Alternate in reverse
+    alternate-reverse,
+}
+
+/// Animation status
+enum animation-status {
+    /// Animation is stopped
+    stopped,
+    /// Animation is running forward
+    running-forward,
+    /// Animation is running backward
+    running-backward,
+    /// Animation is paused
+    paused,
+}
+
+/// Basic animation specification
+record animation-spec {
+    /// Animation duration in milliseconds
+    duration-ms: u32,
+    /// Animation curve
+    curve: animation-curve,
+    /// Delay before starting in milliseconds
+    delay-ms: u32,
+    /// Whether to repeat the animation
+    repeat: bool,
+    /// Number of repetitions (0 = infinite)
+    repeat-count: u32,
+    /// Animation direction
+    direction: animation-direction,
+}
+
+/// Default animation spec
+/// Duration: 300ms, ease-in-out, no delay, no repeat
+func default-animation-spec() -> animation-spec {
+    animation-spec {
+        duration-ms: 300,
+        curve: ease-in-out,
+        delay-ms: 0,
+        repeat: false,
+        repeat-count: 0,
+        direction: normal,
+    }
+}
+
+/// Spring animation configuration
+record spring-config {
+    /// Damping ratio (0.0 = no damping, 1.0 = critically damped)
+    damping-ratio: f32,
+    /// Spring stiffness (higher = faster oscillation)
+    stiffness: f32,
+    /// Mass of the animated object
+    mass: f32,
+    /// Initial velocity
+    initial-velocity: f32,
+}
+
+/// Default spring config
+/// Creates a smooth, slightly bouncy spring
+func default-spring-config() -> spring-config {
+    spring-config {
+        damping-ratio: 0.5,
+        stiffness: 100.0,
+        mass: 1.0,
+        initial-velocity: 0.0,
+    }
+}
+
+/// Bouncy spring (more overshoot)
+func bouncy-spring-config() -> spring-config {
+    spring-config {
+        damping-ratio: 0.3,
+        stiffness: 100.0,
+        mass: 1.0,
+        initial-velocity: 0.0,
+    }
+}
+
+/// Stiff spring (fast, little overshoot)
+func stiff-spring-config() -> spring-config {
+    spring-config {
+        damping-ratio: 0.8,
+        stiffness: 300.0,
+        mass: 1.0,
+        initial-velocity: 0.0,
+    }
+}
+
+/// Animated property
+record animated-property {
+    /// Property name (e.g., "opacity", "scale", "offset-x")
+    name: string,
+    /// Start value
+    from: f32,
+    /// End value
+    to: f32,
+}
+
+/// Keyframe definition
+record keyframe {
+    /// Progress point (0.0 to 1.0)
+    progress: f32,
+    /// Value at this progress point
+    value: f32,
+    /// Animation curve for this segment
+    curve: option<animation-curve>,
+}
+
+/// Keyframe animation configuration
+record keyframe-animation-config {
+    /// Duration in milliseconds
+    duration-ms: u32,
+    /// Keyframes
+    keyframes: list<keyframe>,
+    /// Number of repetitions
+    repeat-count: u32,
+    /// Whether to stay at final value after animation
+    fill-mode: fill-mode,
+}
+
+/// Fill mode for animations
+enum fill-mode {
+    /// Remove animation effect when complete
+    none,
+    /// Keep the first frame until animation starts
+    backwards,
+    /// Keep the last frame after animation completes
+    forwards,
+    /// Keep both first and last frames
+    both,
+}
+
+/// Animation controller resource
+resource animation-controller {
+    /// Create a new animation controller
+    constructor();
+
+    /// Animate a property from one value to another
+    animate: func(
+        property: string,
+        from: f32,
+        to: f32,
+        spec: animation-spec
+    );
+
+    /// Animate with spring physics
+    spring-animate: func(
+        property: string,
+        to: f32,
+        config: spring-config
+    );
+
+    /// Animate multiple properties at once
+    animate-all: func(
+        properties: list<animated-property>,
+        spec: animation-spec
+    );
+
+    /// Create a keyframe animation
+    keyframe-animate: func(
+        property: string,
+        config: keyframe-animation-config
+    );
+
+    /// Stop a specific animation
+    stop: func(property: string);
+
+    /// Stop all animations
+    stop-all: func();
+
+    /// Pause a specific animation
+    pause: func(property: string);
+
+    /// Resume a paused animation
+    resume: func(property: string);
+
+    /// Check if an animation is running
+    is-running: func(property: string) -> bool;
+
+    /// Get current value of a property
+    get-value: func(property: string) -> option<f32>;
+
+    /// Get animation status
+    get-status: func(property: string) -> animation-status;
+}
+
+/// Animation event types
+variant animation-event {
+    /// Animation started
+    started {
+        property: string,
+    },
+    /// Animation completed
+    completed {
+        property: string,
+    },
+    /// Animation cancelled
+    cancelled {
+        property: string,
+    },
+    /// Animation value changed
+    value-changed {
+        property: string,
+        value: f32,
+    },
+    /// Animation repeated
+    repeated {
+        property: string,
+        repeat-count: u32,
+    },
+    /// Spring animation update
+    spring-update {
+        property: string,
+        value: f32,
+        velocity: f32,
+    },
+    /// Spring animation settled
+    spring-settled {
+        property: string,
+        value: f32,
+    },
+}
+
+/// Transition types for navigation
+variant page-transition {
+    /// Fade transition
+    fade {
+        duration-ms: u32,
+    },
+    /// Slide transition
+    slide {
+        direction: slide-direction,
+        duration-ms: u32,
+    },
+    /// Scale transition
+    scale {
+        duration-ms: u32,
+    },
+    /// Combined slide and fade
+    slide-and-fade {
+        direction: slide-direction,
+        duration-ms: u32,
+    },
+}
+
+/// Slide direction
+enum slide-direction {
+    from-left,
+    from-right,
+    from-top,
+    from-bottom,
+}
+
+/// Animated visibility widget config
+record animated-visibility-config {
+    /// Enter animation
+    enter: option<animated-property>,
+    /// Exit animation
+    exit: option<animated-property>,
+    /// Whether to initially visible
+    initially-visible: bool,
+}

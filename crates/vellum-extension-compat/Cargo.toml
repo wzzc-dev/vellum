@@ -1,0 +1,15 @@
+[package]
+name = "vellum-extension-compat"
+version = "0.1.0"
+edition = "2024"
+description = "Legacy extension-world compatibility layer for Vellum"
+
+[features]
+default = []
+gpui-adapter = ["vellum-extension/gpui-adapter"]
+hot-reload = ["vellum-extension/hot-reload"]
+gestures = ["vellum-extension/gestures"]
+transitions = ["vellum-extension/transitions"]
+
+[dependencies]
+vellum-extension = { path = "../extension" }

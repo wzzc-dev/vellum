@@ -142,7 +142,7 @@ document_read = true
             .and_then(|path| path.parent())
             .unwrap()
             .to_path_buf();
-        let extension_root = workspace.join("examples-extensions");
+        let extension_root = workspace.join("examples/legacy-extensions");
         let component = workspace.join("target/wasm32-wasip2/release/vellum_markdown_lint.wasm");
         assert!(
             component.exists(),

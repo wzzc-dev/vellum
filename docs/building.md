@@ -233,14 +233,14 @@ cargo run -- --help
 ### 1. 构建 Pomodoro 扩展
 
 ```bash
-cd examples-extensions/pomodoro
+cd examples/legacy-extensions/pomodoro
 ./build.sh
 ```
 
 ### 2. 构建 MoonBit GUI 扩展
 
 ```bash
-cd examples-extensions/moonbit-gui
+cd examples/legacy-extensions/moonbit-gui
 ./build.sh
 ```
 
@@ -281,7 +281,7 @@ cargo run
 
 ```bash
 # 1. 修改扩展代码
-cd examples-extensions/moonbit-gui
+cd examples/legacy-extensions/moonbit-gui
 vim gen/world/extensionWorld/...
 
 # 2. 构建扩展
@@ -368,7 +368,7 @@ cargo build -vv # 非常详细
 - 阅读 [architecture.md](./architecture.md) 了解项目架构
 - 阅读 [gui-framework-guide.md](./gui-framework-guide.md) 学习 GUI 框架
 - 阅读 [moonbit-extension-guide.md](./moonbit-extension-guide.md) 学习扩展开发
-- 查看 [examples-extensions/](../examples-extensions/) 中的示例
+- 查看 [examples/legacy-extensions/](../examples/legacy-extensions/) 中的兼容示例
 
 ---
 
