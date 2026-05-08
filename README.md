@@ -2,7 +2,7 @@
 
 [简体中文](./README.zh-CN.md)
 
-Vellum is a desktop Markdown editor built with Rust and `gpui`. It also supports extensions written in MoonBit!
+Vellum is a desktop Markdown editor built with Rust and `gpui`. It is also being refactored into a MoonBit + Rust/GPUI GUI framework where MoonBit describes app UI and Rust renders native widgets.
 
 ![Vellum screenshot](./docs/vellum-screenshot.png)
 
@@ -23,6 +23,8 @@ Vellum is a desktop Markdown editor built with Rust and `gpui`. It also supports
 - ✅ Extension panels with declarative UI
 - ✅ Extension commands
 - ✅ Extension timers
+- 🚧 Experimental MoonBit App Component runtime with typed WIT UI trees
+- 🚧 Native Markdown editor embedded as a framework `native-view`
 
 ---
 
@@ -81,6 +83,7 @@ vellum/
 │   └── moonbit-gui/                 # MoonBit GUI extension
 ├── moonbit/                         # MoonBit modules
 │   └── vellum-gui-sdk/              # MoonBit GUI SDK
+│       └── apps/markdown-demo/       # MoonBit framework demo app
 ├── docs/                            # Documentation
 │   ├── architecture.md              # Architecture overview
 │   ├── building.md                  # Building & running guide
@@ -115,6 +118,15 @@ Or in release mode:
 
 ```bash
 cargo run --release
+```
+
+To run the experimental MoonBit framework shell:
+
+```bash
+cd moonbit/vellum-gui-sdk/apps/markdown-demo
+./build.sh
+cd ../../../..
+VELLUM_APP=moonbit/vellum-gui-sdk/apps/markdown-demo cargo run -p Vellum
 ```
 
 For more details, see [Building Guide](./docs/building.md).
@@ -189,4 +201,3 @@ Thanks to the following projects and communities:
 - [gpui-components](https://github.com/longbridge/gpui-component)
 - [Wasmtime](https://wasmtime.dev/)
 - [MoonBit](https://www.moonbitlang.com/)
-

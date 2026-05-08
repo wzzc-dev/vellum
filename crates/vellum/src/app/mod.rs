@@ -31,7 +31,8 @@ use gpui_component::{
     tree::TreeState,
 };
 use rfd::FileDialog;
-use vellum_extension::ExtensionHost;
+use vellum_extension::app_ui::ViewTree;
+use vellum_extension::{ExtensionHost, LoadedAppComponent};
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 
 use webview::WebViewManager;
@@ -40,6 +41,7 @@ mod command_palette;
 mod commands;
 mod document_io;
 mod frame;
+mod framework;
 mod layout;
 mod render;
 mod webview;
@@ -157,6 +159,9 @@ struct VellumApp {
     webview_manager: WebViewManager,
     focus_mode: bool,
     command_palette: command_palette::CommandPaletteState,
+    framework_app: Option<LoadedAppComponent>,
+    framework_view: Option<ViewTree>,
+    framework_inputs: HashMap<String, framework::FrameworkInput>,
 }
 
 pub fn run() -> Result<()> {
@@ -460,6 +465,7 @@ impl VellumApp {
         let palette_state = command_palette::CommandPaletteState::new(
             cx.new(|cx| InputState::new(window, cx).placeholder("Search commands...")),
         );
+        let (framework_app, framework_view) = Self::load_framework_app_from_env();
 
         let mut this = Self {
             app_state: AppState::default(),
@@ -523,6 +529,9 @@ impl VellumApp {
             webview_manager: WebViewManager::new(),
             focus_mode: false,
             command_palette: palette_state,
+            framework_app,
+            framework_view,
+            framework_inputs: HashMap::new(),
         };
         window.focus(&this.focus_handle);
 

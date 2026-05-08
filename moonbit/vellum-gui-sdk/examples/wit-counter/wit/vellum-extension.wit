@@ -1,0 +1,88 @@
+package vellum:extension@0.1.0;
+
+interface types {
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    record host-error {
+        message: string,
+    }
+
+    record extension-error {
+        message: string,
+    }
+
+    record activation-context {
+        extension-id: string,
+        extension-path: string,
+    }
+
+    record extension-event {
+        event-type: string,
+        document-text: string,
+        document-path: option<string>,
+        timestamp-ms: option<u64>,
+    }
+
+    record ui-event {
+        panel-id: string,
+        element-id: string,
+        event-kind: string,
+        value: option<string>,
+        index: option<u32>,
+        checked: option<bool>,
+    }
+}
+
+interface host {
+    use types.{host-error, log-level};
+
+    log: func(level: log-level, message: string);
+    show-status-message: func(message: string) -> result<_, host-error>;
+}
+
+interface editor {
+    use types.{host-error};
+
+    document-text: func() -> result<string, host-error>;
+    document-path: func() -> result<option<string>, host-error>;
+    replace-range: func(start: u64, end: u64, text: string) -> result<_, host-error>;
+    insert-text: func(position: u64, text: string) -> result<_, host-error>;
+    set-decorations: func(data: list<u8>) -> result<_, host-error>;
+    clear-decorations: func() -> result<_, host-error>;
+}
+
+interface ui {
+    use types.{host-error};
+
+    set-panel-view: func(panel-id: string, data: list<u8>) -> result<_, host-error>;
+}
+
+interface timer {
+    use types.{host-error};
+
+    now-ms: func() -> u64;
+    request-tick: func(interval-ms: u32) -> result<_, host-error>;
+    cancel-tick: func() -> result<_, host-error>;
+}
+
+world extension-world {
+    use types.{activation-context, extension-error, extension-event, ui-event};
+
+    import host;
+    import editor;
+    import ui;
+    import timer;
+
+    export activate: func(ctx: activation-context) -> result<_, extension-error>;
+    export deactivate: func() -> result<_, extension-error>;
+    export handle-event: func(event: extension-event) -> result<_, extension-error>;
+    export execute-command: func(command-id: string) -> result<_, extension-error>;
+    export handle-ui-event: func(event: ui-event) -> result<_, extension-error>;
+    export handle-hover: func(hover-data: string) -> result<option<list<u8>>, extension-error>;
+}

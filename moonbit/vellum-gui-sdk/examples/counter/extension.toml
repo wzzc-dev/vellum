@@ -1,0 +1,27 @@
+id = "vellum.sdk-example.counter"
+name = "MoonBit SDK Counter"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "Counter example built with MoonBit as a Vellum WASM component"
+
+[wasm]
+component = "target/wasm32-wasip2/release/vellum_sdk_example_counter.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "counter.reset"
+title = "Counter: Reset"
+
+[[contributes.panels]]
+id = "counter"
+title = "Counter"
+icon = "plus"
+location = "right"
+

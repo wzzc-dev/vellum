@@ -8,34 +8,24 @@
 ///| - Modal/Sheet support
 ///| - Deep linking
 
-pub all type NavigatorController = @navigation.Navigator
-pub all type NavigationState = @navigation.NavigationState
-
 ///| Navigation state record
 pub struct NavigationState {
-  /// Current route path
   pub current_route : String
-  /// Route parameters
   pub params : @list.List[(String, String)]
-  /// Whether we can go back
   pub can_go_back : Bool
-  /// History stack depth
   pub stack_depth : Int
 }
 
 ///| Navigation parameters
 pub struct NavigationParams {
-  /// Parameter key-value pairs
   pub params : @list.List[(String, String)]
-  /// Whether to replace current route
   pub replace : Bool
-  /// Transition animation type
   pub transition : Option[TransitionType]
 }
 
 pub fn NavigationParams::new() -> NavigationParams {
   {
-    params: @list.Nil,
+    params: @list.empty(),
     replace: false,
     transition: None
   }
@@ -43,76 +33,104 @@ pub fn NavigationParams::new() -> NavigationParams {
 
 ///| Transition animation types
 pub enum TransitionType {
-  /// Push from right (iOS style)
   PushRight
-  /// Push from bottom
   PushBottom
-  /// Push from left
   PushLeft
-  /// Push from top
   PushTop
-  /// Fade transition
   Fade
-  /// No animation
   None
 }
 
 ///| Navigator for programmatic navigation
 pub struct Navigator {
-  controller : NavigatorController
+  pub initial_route : String
+  pub current_route : String
+  pub history : @list.List[String]
 }
 
 pub fn Navigator::new(initial_route : String) -> Navigator {
-  { controller: @navigation.navigator_new(initial_route) }
+  {
+    initial_route: initial_route,
+    current_route: initial_route,
+    history: @list.empty().add(initial_route)
+  }
 }
 
 ///| Navigate to a new route
-pub fn Navigator::push(self : Navigator, route : String) -> Unit {
-  @navigation.navigator_push(self.controller, route, None)
-}
-
-///| Navigate to a route with parameters
-pub fn Navigator::push_with_params(self : Navigator, route : String, params : NavigationParams) -> Unit {
-  @navigation.navigator_push(self.controller, route, Some(params))
+pub fn Navigator::push(self : Navigator, route : String) -> Navigator {
+  {
+    initial_route: self.initial_route,
+    current_route: route,
+    history: self.history.add(route)
+  }
 }
 
 ///| Go back to previous route
-pub fn Navigator::pop(self : Navigator) -> Bool {
-  @navigation.navigator_pop(self.controller)
+pub fn Navigator::pop(self : Navigator) -> Navigator {
+  match self.history.length() > 1 {
+    true => {
+      let prev = self.history.unsafe_tail()
+      match prev.head() {
+        Some(route) => {
+          {
+            initial_route: self.initial_route,
+            current_route: route,
+            history: prev
+          }
+        }
+        None => self
+      }
+    }
+    false => self
+  }
 }
 
 ///| Replace current route without adding to history
-pub fn Navigator::replace(self : Navigator, route : String) -> Unit {
-  @navigation.navigator_replace(self.controller, route, None)
+pub fn Navigator::replace(self : Navigator, route : String) -> Navigator {
+  {
+    initial_route: self.initial_route,
+    current_route: route,
+    history: self.history
+  }
 }
 
 ///| Check if we can go back
 pub fn Navigator::can_go_back(self : Navigator) -> Bool {
-  @navigation.navigator_can_go_back(self.controller)
+  self.history.length() > 1
 }
 
 ///| Get current navigation state
 pub fn Navigator::get_state(self : Navigator) -> NavigationState {
-  @navigation.navigator_get_state(self.controller)
+  {
+    current_route: self.current_route,
+    params: @list.empty(),
+    can_go_back: self.can_go_back(),
+    stack_depth: self.history.length()
+  }
 }
 
 ///| Clear all navigation history
-pub fn Navigator::clear_history(self : Navigator) -> Unit {
-  @navigation.navigator_clear_history(self.controller)
+pub fn Navigator::clear_history(self : Navigator) -> Navigator {
+  {
+    initial_route: self.initial_route,
+    current_route: self.current_route,
+    history: @list.empty().add(self.current_route)
+  }
 }
 
 ///| Set the root route
-pub fn Navigator::set_root(self : Navigator, route : String) -> Unit {
-  @navigation.navigator_set_root(self.controller, route)
+pub fn Navigator::set_root(self : Navigator, route : String) -> Navigator {
+  {
+    initial_route: route,
+    current_route: route,
+    history: @list.empty().add(route)
+  }
 }
 
 ///| Route configuration for NavHost
 pub struct RouteConfig {
-  /// Route path pattern (e.g., "/users/:id")
   pub path : String
-  /// Route name for debugging
   pub name : Option[String]
-  /// Whether this route requires authentication
   pub requires_auth : Bool
 }
 
@@ -134,22 +152,17 @@ pub fn RouteConfig::with_auth(self : RouteConfig) -> RouteConfig {
 
 ///| NavHost configuration
 pub struct NavHostConfig {
-  /// Initial route
   pub initial_route : String
-  /// All registered routes
   pub routes : @list.List[RouteConfig]
-  /// Default transition animation
   pub default_transition : TransitionType
-  /// Whether to show back button
   pub show_back_button : Bool
-  /// Deep link base URL
   pub deep_link_base : Option[String]
 }
 
 pub fn NavHostConfig::new(initial_route : String) -> NavHostConfig {
   {
     initial_route: initial_route,
-    routes: @list.Nil,
+    routes: @list.empty(),
     default_transition: TransitionType::PushRight,
     show_back_button: true,
     deep_link_base: None
@@ -169,18 +182,14 @@ pub fn NavHostConfig::with_back_button(self : NavHostConfig, show : Bool) -> Nav
 }
 
 ///| Route builder function type
-pub type RouteBuilder = Unit -> Widget
+pub type RouteBuilder = (Unit) -> Widget
 
 ///| Route definition
 pub struct Route {
-  /// Route path
   pub path : String
-  /// Route name
   pub name : String
-  /// Widget builder
   builder : RouteBuilder
-  /// Requires authentication
-  requires_auth : Bool
+  pub requires_auth : Bool
 }
 
 pub fn Route::new(path : String, name : String, builder : RouteBuilder) -> Route {
@@ -196,63 +205,54 @@ pub fn Route::with_auth(self : Route) -> Route {
   { ..self, requires_auth: true }
 }
 
+///| Navigation event types
+pub enum NavigationEvent {
+  Pushed(String, @list.List[(String, String)])
+  Popped(String, String)
+  Replaced(String, String)
+  StateChanged(NavigationState)
+  DeepLink(String)
+}
+
 ///| Navigation controller for managing navigation state
 pub struct NavigationController {
-  controller : @navigation.NavigationController
+  pub config : NavHostConfig
+  pub navigator : Navigator
 }
 
 pub fn NavigationController::new(config : NavHostConfig) -> NavigationController {
-  { controller: @navigation.navigation_controller_new(config) }
+  {
+    config: config,
+    navigator: Navigator::new(config.initial_route)
+  }
 }
 
 ///| Register a route
-pub fn NavigationController::register_route(self : NavigationController, route : RouteConfig) -> Unit {
-  @navigation.navigation_controller_register_route(self.controller, route)
+pub fn NavigationController::register_route(self : NavigationController, route : RouteConfig) -> NavigationController {
+  { ..self, config: { ..self.config, routes: self.config.routes.add(route) } }
 }
 
 ///| Unregister a route
-pub fn NavigationController::unregister_route(self : NavigationController, path : String) -> Unit {
-  @navigation.navigation_controller_unregister_route(self.controller, path)
+pub fn NavigationController::unregister_route(self : NavigationController, path : String) -> NavigationController {
+  let filtered = self.config.routes.filter(fn(r) { r.path != path })
+  { ..self, config: { ..self.config, routes: filtered } }
 }
 
-///| Start navigation with the given navigator
-pub fn NavigationController::start(self : NavigationController, navigator : Navigator) -> Unit {
-  @navigation.navigation_controller_start(self.controller, navigator.controller)
-}
-
-///| Handle deep link
-pub fn NavigationController::handle_deep_link(self : NavigationController, url : String) -> Bool {
-  @navigation.navigation_controller_handle_deep_link(self.controller, url)
+///| Start navigation
+pub fn NavigationController::start(self : NavigationController) -> Navigator {
+  self.navigator
 }
 
 ///| Get navigator instance
 pub fn NavigationController::get_navigator(self : NavigationController) -> Navigator {
-  Navigator::{ controller: @navigation.navigation_controller_get_navigator(self.controller) }
-}
-
-///| Navigation event types
-pub enum NavigationEvent {
-  /// Route was pushed onto stack
-  Pushed(route : String, params : @list.List[(String, String)])
-  /// Route was popped from stack
-  Popped(route : String, popped_route : String)
-  /// Route was replaced
-  Replaced(old_route : String, new_route : String)
-  /// Navigation state changed
-  StateChanged(state : NavigationState)
-  /// Deep link received
-  DeepLink(url : String)
+  self.navigator
 }
 
 ///| Tab bar item
 pub struct TabBarItem {
-  /// Tab identifier
   pub id : String
-  /// Tab label
   pub label : String
-  /// Tab icon (optional)
   pub icon : Option[String]
-  /// Whether the tab is enabled
   pub enabled : Bool
 }
 
@@ -273,31 +273,15 @@ pub fn TabBarItem::disabled(self : TabBarItem) -> TabBarItem {
   { ..self, enabled: false }
 }
 
-///| Tab bar controller for managing tabs
+///| Tab bar for managing tabs
 pub struct TabBar {
-  /// Current selected tab index
   pub selected_index : Int
-  /// Tab items
   pub items : @list.List[TabBarItem]
-  /// Callback when tab changes
-  on_change : (Int) -> Unit
 }
 
 pub fn TabBar::new(items : @list.List[TabBarItem]) -> TabBar {
   {
     selected_index: 0,
-    items: items,
-    on_change: fn(_) { () }
-  }
-}
-
-pub fn TabBar::with_on_change(self : TabBar, callback : (Int) -> Unit) -> TabBar {
-  { ..self, on_change: callback }
-}
-
-///| Select a tab by index
-pub fn TabBar::select(self : TabBar, index : Int) -> Unit {
-  if index >= 0 && index < @list.length(self.items) {
-    self.on_change(index)
+    items: items
   }
 }

@@ -7,4 +7,7 @@
 examples-extensions/pomodoro/_build
 examples-extensions/pomodoro/target
 examples-extensions/moonbit-gui/_build
-moonbit/vellum-gui-sdk/_build/*
+moonbit/vellum-gui-sdk/**/_build/
+moonbit/vellum-gui-sdk/examples/**/target/
+moonbit/vellum-gui-sdk/apps/**/target/
+moonbit/vellum-gui-sdk/_build/

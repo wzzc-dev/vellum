@@ -1,0 +1,31 @@
+id = "vellum.sdk-example.form"
+name = "MoonBit SDK Form"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "Form and validation example built with MoonBit"
+
+[wasm]
+component = "target/wasm32-wasip2/release/vellum_sdk_example_form.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "form.submit"
+title = "Form: Submit"
+
+[[contributes.commands]]
+id = "form.reset"
+title = "Form: Reset"
+
+[[contributes.panels]]
+id = "form"
+title = "Form"
+icon = "clipboard"
+location = "right"
+

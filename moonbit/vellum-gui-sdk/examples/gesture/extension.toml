@@ -1,0 +1,27 @@
+id = "vellum.sdk-example.gesture"
+name = "MoonBit SDK Gesture"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "Gesture concept example built with MoonBit"
+
+[wasm]
+component = "target/wasm32-wasip2/release/vellum_sdk_example_gesture.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "gesture.reset"
+title = "Gesture: Reset"
+
+[[contributes.panels]]
+id = "gesture"
+title = "Gesture"
+icon = "hand"
+location = "right"
+

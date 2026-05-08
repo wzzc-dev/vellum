@@ -1079,7 +1079,12 @@ impl VellumApp {
             }
         }
 
-        content.into_any_element()
+        div()
+            .size_full()
+            .min_h(px(0.))
+            .overflow_y_scrollbar()
+            .child(content)
+            .into_any_element()
     }
 
     fn render_sidebar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1206,6 +1211,7 @@ impl Render for VellumApp {
         let show_tabs = self.tabs.len() > 1 && !self.focus_mode;
         let show_status_bar = self.status_bar_visible && !self.focus_mode;
 
+        let framework_view = self.framework_view.clone();
         let editor_panel = div()
             .size_full()
             .min_w(px(0.))
@@ -1213,15 +1219,14 @@ impl Render for VellumApp {
             .bg(cx.theme().background)
             .flex()
             .flex_col()
-            .when(self.find_panel_visible, |this| {
-                this.child(self.render_find_bar(cx))
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(self.active_editor_entity().clone()),
+            .when(
+                self.framework_view.is_none() && self.find_panel_visible,
+                |this| this.child(self.render_find_bar(cx)),
             )
+            .child(div().flex_1().min_h(px(0.)).child(match framework_view {
+                Some(tree) => self.render_framework_tree(&tree, window, cx),
+                None => self.active_editor_entity().clone().into_any_element(),
+            }))
             .into_any_element();
 
         let mut layout = h_resizable("vellum-layout");

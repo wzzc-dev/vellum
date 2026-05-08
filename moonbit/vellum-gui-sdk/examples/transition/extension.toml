@@ -1,0 +1,31 @@
+id = "vellum.sdk-example.transition"
+name = "MoonBit SDK Transition"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vellum"]
+description = "Transition state example built with MoonBit"
+
+[wasm]
+component = "target/wasm32-wasip2/release/vellum_sdk_example_transition.wasm"
+
+[activation]
+events = []
+
+[capabilities]
+panels = true
+commands = true
+
+[[contributes.commands]]
+id = "transition.next"
+title = "Transition: Next"
+
+[[contributes.commands]]
+id = "transition.reset"
+title = "Transition: Reset"
+
+[[contributes.panels]]
+id = "transition"
+title = "Transition"
+icon = "move-right"
+location = "right"
+

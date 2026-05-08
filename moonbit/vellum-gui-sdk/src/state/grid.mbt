@@ -7,60 +7,30 @@
 ///| - Gap control
 ///| - Lazy loading for large lists
 
-pub all type GridViewImpl = @grid.GridView
-pub all type LazyGridViewImpl = @grid.LazyGridView
-
 ///| Grid axis alignment
 pub enum GridAlignment {
-  /// Align to start
   Start
-  /// Align to center
   Center
-  /// Align to end
   End
-  /// Stretch to fill space
   Stretch
-  /// Space items evenly
   SpaceBetween
-  /// Space items evenly with space around
   SpaceAround
-  /// Space items evenly with space equally
   SpaceEvenly
-}
-
-pub fn GridAlignment::to_wit(self : GridAlignment) -> @grid.GridAlignment {
-  match self {
-    Start => @grid.start
-    Center => @grid.center
-    End => @grid.end
-    Stretch => @grid.stretch
-    SpaceBetween => @grid.space-between
-    SpaceAround => @grid.space-around
-    SpaceEvenly => @grid.space-evenly
-  }
 }
 
 ///| Grid track sizing
 pub enum GridTrackSize {
-  /// Fixed size in pixels
   Fixed(Double)
-  /// Fill remaining space
-  Fill { min_size : Option[Double], max_size : Option[Double] }
-  /// Size based on content
+  Fill(Option[Double], Option[Double])
   Auto
-  /// Minimum size
-  MinMax { min : Double, max : Double }
+  MinMax(Double, Double)
 }
 
 ///| Grid line placement
 pub struct GridLinePlacement {
-  /// Start line (1-indexed)
   pub start : Int
-  /// End line (inclusive)
   pub end : Option[Int]
-  /// Named line start
   pub start_name : Option[String]
-  /// Named line end
   pub end_name : Option[String]
 }
 
@@ -75,9 +45,7 @@ pub fn GridLinePlacement::default() -> GridLinePlacement {
 
 ///| Column span configuration
 pub struct ColumnSpan {
-  /// Number of columns to span
   pub span : Int
-  /// Alignment within the span
   pub alignment : Option[GridAlignment]
 }
 
@@ -87,9 +55,7 @@ pub fn ColumnSpan::new(span : Int) -> ColumnSpan {
 
 ///| Row span configuration
 pub struct RowSpan {
-  /// Number of rows to span
   pub span : Int
-  /// Alignment within the span
   pub alignment : Option[GridAlignment]
 }
 
@@ -99,13 +65,9 @@ pub fn RowSpan::new(span : Int) -> RowSpan {
 
 ///| Grid item placement
 pub struct GridItemPlacement {
-  /// Row placement
   pub row : GridLinePlacement
-  /// Column placement
   pub column : GridLinePlacement
-  /// Row span
   pub row_span : Option[RowSpan]
-  /// Column span
   pub column_span : Option[ColumnSpan]
 }
 
@@ -120,13 +82,9 @@ pub fn GridItemPlacement::default() -> GridItemPlacement {
 
 ///| Grid item with span support
 pub struct GridItem {
-  /// Widget identifier
-  widget_id : String
-  /// Placement configuration
+  pub widget_id : String
   pub placement : GridItemPlacement
-  /// Custom alignment override
   pub justify_self : Option[GridAlignment]
-  /// Custom alignment override
   pub align_self : Option[GridAlignment]
 }
 
@@ -169,29 +127,17 @@ pub fn GridItem::main_span(self : GridItem, span : Int) -> GridItem {
 
 ///| Grid configuration
 pub struct GridConfig {
-  /// Number of columns (for grid-template-columns)
   pub columns : Int
-  /// Number of rows (for grid-template-rows, 0 = auto)
   pub rows : Int
-  /// Column gap
   pub column_gap : Double
-  /// Row gap
   pub row_gap : Double
-  /// Column sizing rules
   pub column_sizes : Option[@list.List[GridTrackSize]]
-  /// Row sizing rules
   pub row_sizes : Option[@list.List[GridTrackSize]]
-  /// Default horizontal alignment
   pub justify_items : GridAlignment
-  /// Default vertical alignment
   pub align_items : GridAlignment
-  /// Horizontal alignment of the entire grid
   pub justify_content : GridAlignment
-  /// Vertical alignment of the entire grid
   pub align_content : GridAlignment
-  /// Maximum width
   pub max_width : Option[Double]
-  /// Maximum height
   pub max_height : Option[Double]
 }
 
@@ -209,43 +155,6 @@ pub fn GridConfig::new(columns : Int) -> GridConfig {
     align_content: GridAlignment::Start,
     max_width: None,
     max_height: None
-  }
-}
-
-pub fn GridConfig::to_wit(self : GridConfig) -> @grid.GridConfig {
-  {
-    columns: self.columns,
-    rows: self.rows,
-    column_gap: self.column_gap,
-    row_gap: self.row_gap,
-    column_sizes: match self.column_sizes {
-      Some(sizes) => Some(@list.map(sizes, fn(s : GridTrackSize) -> @grid.GridTrackSize {
-        match s {
-          Fixed(size) => @grid.fixed({ size: size })
-          Fill { min_size, max_size } => @grid.fill({ min_size: min_size, max_size: max_size })
-          Auto => @grid.auto
-          MinMax { min, max } => @grid.minmax({ min: min, max: max })
-        }
-      }))
-      None => None
-    },
-    row_sizes: match self.row_sizes {
-      Some(sizes) => Some(@list.map(sizes, fn(s : GridTrackSize) -> @grid.GridTrackSize {
-        match s {
-          Fixed(size) => @grid.fixed({ size: size })
-          Fill { min_size, max_size } => @grid.fill({ min_size: min_size, max_size: max_size })
-          Auto => @grid.auto
-          MinMax { min, max } => @grid.minmax({ min: min, max: max })
-        }
-      }))
-      None => None
-    },
-    justify_items: self.justify_items.to_wit(),
-    align_items: self.align_items.to_wit(),
-    justify_content: self.justify_content.to_wit(),
-    align_content: self.align_content.to_wit(),
-    max_width: self.max_width,
-    max_height: self.max_height
   }
 }
 
@@ -309,105 +218,55 @@ pub fn GridConfigBuilder::build(self : GridConfigBuilder) -> GridConfig {
 
 ///| Grid view controller for managing grid items
 pub struct GridView {
-  controller : GridViewImpl
-  /// Grid configuration
   pub config : GridConfig
-  /// Number of items
   pub item_count : Int
+  pub items : @list.List[GridItem]
 }
 
 pub fn GridView::new(config : GridConfig) -> GridView {
-  let controller = @grid.grid_view_new(config.to_wit())
-  { controller: controller, config: config, item_count: 0 }
+  GridView::{ config: config, item_count: 0, items: @list.empty() }
 }
 
 ///| Add an item with default placement
-pub fn GridView::add_item(self : GridView, widget_id : String) -> Unit {
-  @grid.grid_view_add_item(self.controller, widget_id)
-  { controller: self.controller, config: self.config, item_count: self.item_count + 1 }
+pub fn GridView::add_item(self : GridView, widget_id : String) -> GridView {
+  let item = GridItem::new(widget_id)
+  GridView::{ config: self.config, item_count: self.item_count + 1, items: self.items.add(item) }
 }
 
 ///| Add an item with custom placement
-pub fn GridView::add_item_with_placement(self : GridView, item : GridItem) -> Unit {
-  let placement : @grid.GridItemPlacement = {
-    row: {
-      start: item.placement.row.start,
-      end: item.placement.row.end,
-      start_name: item.placement.row.start_name,
-      end_name: item.placement.row.end_name
-    },
-    column: {
-      start: item.placement.column.start,
-      end: item.placement.column.end,
-      start_name: item.placement.column.start_name,
-      end_name: item.placement.column.end_name
-    },
-    row_span: match item.placement.row_span {
-      Some(rs) => Some({ span: rs.span, alignment: match rs.alignment {
-        Some(a) => Some(a.to_wit())
-        None => None
-      }})
-      None => None
-    },
-    column_span: match item.placement.column_span {
-      Some(cs) => Some({ span: cs.span, alignment: match cs.alignment {
-        Some(a) => Some(a.to_wit())
-        None => None
-      }})
-      None => None
-    },
-    justify_self: match item.justify_self {
-      Some(a) => Some(a.to_wit())
-      None => None
-    },
-    align_self: match item.align_self {
-      Some(a) => Some(a.to_wit())
-      None => None
-    }
-  }
-  @grid.grid_view_add_item_with_placement(self.controller, { widget_id: item.widget_id, placement: placement })
-  { controller: self.controller, config: self.config, item_count: self.item_count + 1 }
+pub fn GridView::add_item_with_placement(self : GridView, item : GridItem) -> GridView {
+  GridView::{ config: self.config, item_count: self.item_count + 1, items: self.items.add(item) }
 }
 
 ///| Add multiple items with default placement
-pub fn GridView::add_items(self : GridView, widget_ids : @list.List[String]) -> Unit {
-  for widget_id in widget_ids {
-    @grid.grid_view_add_item(self.controller, widget_id)
-  }
-  { controller: self.controller, config: self.config, item_count: self.item_count + @list.length(widget_ids) }
+pub fn GridView::add_items(self : GridView, widget_ids : @list.List[String]) -> GridView {
+  let new_items = widget_ids.map(fn(id) { GridItem::new(id) })
+  let combined = self.items.concat(new_items)
+  GridView::{ config: self.config, item_count: self.item_count + widget_ids.length(), items: combined }
 }
 
 ///| Remove an item by index
-pub fn GridView::remove_item(self : GridView, index : Int) -> Unit {
-  @grid.grid_view_remove_item(self.controller, index)
-  { controller: self.controller, config: self.config, item_count: @int.max(0, self.item_count - 1) }
+pub fn GridView::remove_item(self : GridView, index : Int) -> GridView {
+  GridView::{ config: self.config, item_count: if self.item_count > 0 { self.item_count - 1 } else { 0 }, items: self.items }
 }
 
 ///| Remove item by widget ID
-pub fn GridView::remove_item_by_id(self : GridView, widget_id : String) -> Bool {
-  let result = @grid.grid_view_remove_item_by_id(self.controller, widget_id)
-  if result {
-    { controller: self.controller, config: self.config, item_count: @int.max(0, self.item_count - 1) }
-  } else {
-    self
-  }
-  result
+pub fn GridView::remove_item_by_id(self : GridView, widget_id : String) -> GridView {
+  let filtered = self.items.filter(fn(item) { item.widget_id != widget_id })
+  GridView::{ config: self.config, item_count: filtered.length(), items: filtered }
 }
 
 ///| Clear all items
-pub fn GridView::clear(self : GridView) -> Unit {
-  @grid.grid_view_clear(self.controller)
-  { controller: self.controller, config: self.config, item_count: 0 }
+pub fn GridView::clear(self : GridView) -> GridView {
+  GridView::{ config: self.config, item_count: 0, items: @list.empty() }
 }
 
 ///| Set column count (responsive)
 pub fn GridView::set_columns(self : GridView, count : Int) -> GridView {
-  @grid.grid_view_set_columns(self.controller, count)
-  { controller: self.controller, config: { ..self.config, columns: count }, item_count: self.item_count }
+  GridView::{ config: GridConfig::{ ..self.config, columns: count }, item_count: self.item_count, items: self.items }
 }
 
 ///| Set gaps
 pub fn GridView::set_gaps(self : GridView, column_gap : Double, row_gap : Double) -> GridView {
-  @grid.grid_view_set_gaps(self.controller, column_gap, row_gap)
-  { controller: self.controller, config: { ..self.config, column_gap: column_gap, row_gap: row_gap }, item_count: self.item_count }
+  GridView::{ config: GridConfig::{ ..self.config, column_gap: column_gap, row_gap: row_gap }, item_count: self.item_count, items: self.items }
 }

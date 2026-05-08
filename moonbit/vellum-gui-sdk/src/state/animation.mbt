@@ -221,20 +221,13 @@ pub enum FillMode {
 
 ///| Animation event types
 pub enum AnimationEvent {
-  /// Animation started
-  Started(property : String)
-  /// Animation completed
-  Completed(property : String)
-  /// Animation cancelled
-  Cancelled(property : String)
-  /// Animation value changed
-  ValueChanged(property : String, value : Double)
-  /// Animation repeated
-  Repeated(property : String, repeat_count : Int)
-  /// Spring animation update
-  SpringUpdate(property : String, value : Double, velocity : Double)
-  /// Spring animation settled
-  SpringSettled(property : String, value : Double)
+  Started(String)
+  Completed(String)
+  Cancelled(String)
+  ValueChanged(String, Double)
+  Repeated(String, Int)
+  SpringUpdate(String, Double, Double)
+  SpringSettled(String, Double)
 }
 
 ///| Slide direction
@@ -247,14 +240,10 @@ pub enum SlideDirection {
 
 ///| Page transition types
 pub enum PageTransition {
-  /// Fade transition
-  Fade(duration_ms : Int)
-  /// Slide transition
-  Slide(direction : SlideDirection, duration_ms : Int)
-  /// Scale transition
-  Scale(duration_ms : Int)
-  /// Combined slide and fade
-  SlideAndFade(direction : SlideDirection, duration_ms : Int)
+  Fade(Int)
+  Slide(SlideDirection, Int)
+  Scale(Int)
+  SlideAndFade(SlideDirection, Int)
 }
 
 pub fn PageTransition::fade() -> PageTransition { Fade(300) }

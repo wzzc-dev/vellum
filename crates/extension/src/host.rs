@@ -19,7 +19,7 @@ use crate::ui::{UiEvent, UiNode};
 #[allow(dead_code)]
 mod bindings {
     wasmtime::component::bindgen!({
-        path: "wit",
+        path: "wit/vellum-extension.wit",
         world: "extension-world",
     });
 }
@@ -736,7 +736,9 @@ impl ExtensionHost {
     }
 
     #[cfg(feature = "hot-reload")]
-    pub fn hot_reload_controller_mut(&mut self) -> Option<&mut crate::hot_reload::HotReloadController> {
+    pub fn hot_reload_controller_mut(
+        &mut self,
+    ) -> Option<&mut crate::hot_reload::HotReloadController> {
         self.hot_reload_controller.as_mut()
     }
 }
