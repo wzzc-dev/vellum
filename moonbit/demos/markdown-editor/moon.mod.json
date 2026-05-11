@@ -1,1 +1,8 @@
-{ "name": "vellum/demo-markdown-editor", "preferred-target": "wasm" }
+{
+  "name": "vellum/demo-markdown-editor",
+  "version": "0.1.0",
+  "preferred-target": "wasm",
+  "deps": {
+    "vellum/app-sdk": "0.1.0"
+  }
+}

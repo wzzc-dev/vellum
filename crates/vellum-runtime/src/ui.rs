@@ -129,7 +129,7 @@ pub struct NativeViewProps {
     pub props: Vec<Property>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Property {
     pub name: String,
     pub value: String,
@@ -163,6 +163,53 @@ pub struct NativeEvent {
 pub struct CommandEvent {
     pub command_id: String,
     pub payload: Vec<Property>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EditorSnapshot {
+    pub display_name: String,
+    pub path: Option<String>,
+    pub dirty: bool,
+    pub word_count: u32,
+    pub document_text: String,
+    pub view_mode: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PluginState {
+    Enabled,
+    Disabled,
+    Failed,
+}
+
+impl Default for PluginState {
+    fn default() -> Self {
+        Self::Enabled
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginCommand {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginPanel {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub state: PluginState,
+    pub commands: Vec<PluginCommand>,
+    pub panels: Vec<PluginPanel>,
+    pub error: Option<String>,
 }
 
 #[cfg(test)]

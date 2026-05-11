@@ -53,7 +53,7 @@
 
 | 功能 | 状态 | 实现文件 |
 |------|------|----------|
-| 声明式路由 | ✅ 已完成 | [navigation.wit](file:///workspace/wit/legacy/navigation.wit), [navigation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/navigation.mbt) |
+| 声明式路由 | ✅ 已完成 | [navigation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/navigation.mbt) |
 | 栈导航 (push/pop) | ✅ 已完成 | [navigation_render.rs](file:///workspace/crates/gpui-adapter/src/navigation_render.rs) |
 | Tab 导航 | ✅ 已完成 | TabBarItem, TabBar |
 | 深层链接 | ✅ 已完成 | handle_deep_link |
@@ -63,7 +63,7 @@
 
 | 功能 | 状态 | 实现文件 |
 |------|------|----------|
-| 基础 Tween 动画 | ✅ 已完成 | [animation.wit](file:///workspace/wit/legacy/animation.wit), [animation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/animation.mbt) |
+| 基础 Tween 动画 | ✅ 已完成 | [animation.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/animation.mbt) |
 | Spring 动画 | ✅ 已完成 | [animation_render.rs](file:///workspace/crates/gpui-adapter/src/animation_render.rs) |
 | 动画曲线 (Linear, EaseIn, EaseOut, Bounce, Elastic) | ✅ 已完成 | AnimationCurve |
 | 动画控制器 | ✅ 已完成 | AnimationController |
@@ -73,7 +73,7 @@
 
 | 功能 | 状态 | 实现文件 |
 |------|------|----------|
-| Grid 配置 | ✅ 已完成 | [grid.wit](file:///workspace/wit/legacy/grid.wit), [grid.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/grid.mbt) |
+| Grid 配置 | ✅ 已完成 | [grid.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/grid.mbt) |
 | 列/行跨度 | ✅ 已完成 | [grid_render.rs](file:///workspace/crates/gpui-adapter/src/grid_render.rs) |
 | Grid 对齐 | ✅ 已完成 | GridAlignment |
 | Lazy Grid | ✅ 已完成 | LazyGridView |
@@ -82,7 +82,7 @@
 
 | 功能 | 状态 | 实现文件 |
 |------|------|----------|
-| Environment Provider | ✅ 已完成 | [environment.wit](file:///workspace/wit/legacy/environment.wit), [environment.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/environment.mbt) |
+| Environment Provider | ✅ 已完成 | [environment.mbt](file:///workspace/moonbit/vellum-gui-sdk/src/state/environment.mbt) |
 | 类型安全的环境值 | ✅ 已完成 | [environment_render.rs](file:///workspace/crates/gpui-adapter/src/environment_render.rs) |
 | 环境订阅 | ✅ 已完成 | subscribe, unsubscribe |
 | 预定义环境键 | ✅ 已完成 | EnvKeys module |

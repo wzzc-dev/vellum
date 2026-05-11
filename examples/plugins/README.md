@@ -1,10 +1,23 @@
 # Vellum Plugin Examples
 
-This directory is reserved for new typed plugin component examples.
+This directory contains typed plugin component examples for `vellum:app/app-world`.
 
-New examples should use:
+Current example:
 
-- `vellum.toml`
-- `kind = "plugin"`
-- the root `wit/vellum-app.wit` protocol
-- typed view trees instead of legacy JSON panel payloads
+- `counter/` builds a minimal plugin panel component with `vellum.toml`, a typed `ViewTree`, and a `Ping Host` action.
+
+The handwritten plugin logic lives in `src/`, while `gen/world/appWorld/` only forwards the WIT exports to that implementation.
+
+Build it with:
+
+```bash
+cd examples/plugins/counter
+./build.sh
+```
+
+Or build every plugin example:
+
+```bash
+cd examples/plugins
+./build-all.sh
+```

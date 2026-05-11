@@ -201,13 +201,13 @@ impl VellumApp {
         self.open_right_panel(RightPanelView::Plugins, cx);
     }
 
-    pub(super) fn on_install_dev_extension(
+    pub(super) fn on_install_dev_plugin(
         &mut self,
-        _: &InstallDevExtension,
+        _: &InstallDevPlugin,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.install_dev_extension(window, cx);
+        self.install_dev_plugin(window, cx);
     }
 
     pub(super) fn on_open_command_palette(

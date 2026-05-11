@@ -39,21 +39,6 @@ extern "wasm" fn mbt_ffi_free(position : Int) =
 #|(func (param i32) local.get 0 i32.const 8 i32.sub call $moonbit.decref)
 
 #doc(hidden)
-pub fn wasmExportInitPostReturn(p0 : Int) -> Unit {
-      @appWorld.wasmExportInitPostReturn(p0)
-}
-
-#doc(hidden)
-pub fn wasmExportUpdate(p0 : Int, p1 : Int64, p2 : Int, p3 : Int, p4 : Int, p5 : Int, p6 : Int, p7 : Int, p8 : Int, p9 : Int, p10 : Int, p11 : Int) -> Int {
-      @appWorld.wasmExportUpdate(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11)
-}
-
-#doc(hidden)
-pub fn wasmExportUpdatePostReturn(p0 : Int) -> Unit {
-      @appWorld.wasmExportUpdatePostReturn(p0)
-}
-
-#doc(hidden)
 pub fn wasmExportInit(p0 : Int, p1 : Int, p2 : Int, p3 : Int) -> Int {
       @appWorld.wasmExportInit(p0, p1, p2, p3)
 }
@@ -64,7 +49,22 @@ pub fn wasmExportShutdown() -> Int {
 }
 
 #doc(hidden)
+pub fn wasmExportUpdate(p0 : Int, p1 : Int64, p2 : Int, p3 : Int, p4 : Int, p5 : Int, p6 : Int, p7 : Int, p8 : Int, p9 : Int, p10 : Int, p11 : Int) -> Int {
+      @appWorld.wasmExportUpdate(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11)
+}
+
+#doc(hidden)
 pub fn wasmExportShutdownPostReturn(p0 : Int) -> Unit {
       @appWorld.wasmExportShutdownPostReturn(p0)
+}
+
+#doc(hidden)
+pub fn wasmExportUpdatePostReturn(p0 : Int) -> Unit {
+      @appWorld.wasmExportUpdatePostReturn(p0)
+}
+
+#doc(hidden)
+pub fn wasmExportInitPostReturn(p0 : Int) -> Unit {
+      @appWorld.wasmExportInitPostReturn(p0)
 }
 

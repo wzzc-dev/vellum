@@ -1,6 +1,6 @@
 # Vellum GUI Framework Guide
 
-Vellum is being migrated from a Markdown editor with a MoonBit extension layer into a MoonBit + Rust/GPUI GUI framework.
+Vellum is now organized around a MoonBit + Rust/GPUI GUI framework. MoonBit components describe typed UI trees, Rust/GPUI renders them natively, and WIT keeps the boundary type-safe.
 
 The v1 framework path is intentionally small and typed:
 
@@ -20,6 +20,8 @@ flowchart LR
 ```
 
 The canonical WIT package lives at `wit/vellum-app.wit`.
+
+The shared MoonBit bindings and tree helpers live in `moonbit/vellum-app-sdk`. Runnable apps and plugins keep their handwritten logic in `src/`, while `gen/world/appWorld/` stays as the generated export layer.
 
 The first implementation uses whole-tree replacement after each event. Stable node ids are still required because the Rust renderer keeps local GPUI state for controls such as text inputs.
 
@@ -68,7 +70,7 @@ The renderer currently supports:
 
 ## Manifest
 
-Framework apps use `vellum.toml`:
+Apps and plugins both use `vellum.toml`:
 
 ```toml
 id = "vellum.demo.markdown"
@@ -81,6 +83,8 @@ component = "target/wasm32-wasip2/release/vellum_markdown_demo.wasm"
 native_markdown_editor = true
 filesystem = true
 ```
+
+Plugin manifests look the same, but set `kind = "plugin"` and declare `contributes.panels` or `contributes.commands`.
 
 ## Run The Demo
 
@@ -100,6 +104,18 @@ VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 
 Without `VELLUM_APP`, Vellum keeps running as the existing Rust Markdown editor.
 
-## Notes
+## Host Services
 
-The old `vellum:extension/extension-world` path remains for compatibility during migration through `crates/vellum-extension-compat` and `wit/vellum-extension.wit`. New app and plugin work should target `vellum:app/app-world` and typed `view-tree`, not JSON panel payloads.
+The runtime currently exposes a small set of typed host calls:
+
+- `log`
+- `show-status-message`
+- `request-render`
+- `editor-command`
+- `get-editor-snapshot`
+- `plugin-list`
+- `plugin-enable`
+- `plugin-disable`
+- `plugin-reload`
+
+The Markdown demo already uses editor snapshots and plugin listing to build its sidebar, and plugin panels are mounted through `NativeView(kind = "plugin-panel")`.

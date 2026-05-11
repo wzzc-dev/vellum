@@ -8,9 +8,10 @@ use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::manifest::VellumManifest;
 use crate::ui::{
-    AppEvent, ButtonProps, ButtonVariant, CommandEvent, ContainerProps, EdgeInsets, InputProps,
-    NativeEvent, NativeViewProps, Property, ScrollViewProps, SplitAxis, SplitViewProps, TabItem,
-    TabsProps, TextProps, TextStyle, UiEvent, ViewKind, ViewNode, ViewTree,
+    AppEvent, ButtonProps, ButtonVariant, CommandEvent, ContainerProps, EdgeInsets, EditorSnapshot,
+    InputProps, NativeEvent, NativeViewProps, PluginCommand, PluginInfo, PluginPanel, PluginState,
+    Property, ScrollViewProps, SplitAxis, SplitViewProps, TabItem, TabsProps, TextProps, TextStyle,
+    UiEvent, ViewKind, ViewNode, ViewTree,
 };
 
 #[allow(dead_code)]
@@ -25,12 +26,15 @@ use bindings::AppWorld;
 use bindings::vellum::app::types::{
     AppContext, AppError, AppEvent as WitAppEvent, ButtonProps as WitButtonProps,
     ButtonVariant as WitButtonVariant, CommandEvent as WitCommandEvent,
-    ContainerProps as WitContainerProps, EdgeInsets as WitEdgeInsets, InputProps as WitInputProps,
-    LogLevel, NativeEvent as WitNativeEvent, NativeViewProps as WitNativeViewProps,
-    Property as WitProperty, ScrollViewProps as WitScrollViewProps, SplitAxis as WitSplitAxis,
-    SplitViewProps as WitSplitViewProps, TabItem as WitTabItem, TabsProps as WitTabsProps,
-    TextProps as WitTextProps, TextStyle as WitTextStyle, UiEvent as WitUiEvent,
-    ViewKind as WitViewKind, ViewNode as WitViewNode, ViewTree as WitViewTree,
+    ContainerProps as WitContainerProps, EdgeInsets as WitEdgeInsets,
+    EditorSnapshot as WitEditorSnapshot, InputProps as WitInputProps, LogLevel,
+    NativeEvent as WitNativeEvent, NativeViewProps as WitNativeViewProps,
+    PluginCommand as WitPluginCommand, PluginInfo as WitPluginInfo, PluginPanel as WitPluginPanel,
+    PluginState as WitPluginState, Property as WitProperty, ScrollViewProps as WitScrollViewProps,
+    SplitAxis as WitSplitAxis, SplitViewProps as WitSplitViewProps, TabItem as WitTabItem,
+    TabsProps as WitTabsProps, TextProps as WitTextProps, TextStyle as WitTextStyle,
+    UiEvent as WitUiEvent, ViewKind as WitViewKind, ViewNode as WitViewNode,
+    ViewTree as WitViewTree,
 };
 
 pub struct VellumAppRuntime {
@@ -117,6 +121,22 @@ impl LoadedAppComponent {
         self.store.data_mut().render_requested = false;
     }
 
+    pub fn set_editor_snapshot(&mut self, snapshot: EditorSnapshot) {
+        self.store.data_mut().editor_snapshot = snapshot;
+    }
+
+    pub fn set_plugin_infos(&mut self, plugins: Vec<PluginInfo>) {
+        self.store.data_mut().plugins = plugins;
+    }
+
+    pub fn take_editor_commands(&mut self) -> Vec<EditorCommandRequest> {
+        std::mem::take(&mut self.store.data_mut().editor_commands)
+    }
+
+    pub fn take_plugin_actions(&mut self) -> Vec<PluginAction> {
+        std::mem::take(&mut self.store.data_mut().plugin_actions)
+    }
+
     pub fn init(&mut self) -> Result<&ViewTree> {
         let ctx = AppContext {
             app_id: self.manifest.id.clone(),
@@ -140,12 +160,37 @@ impl LoadedAppComponent {
     }
 }
 
+pub type LoadedComponent = LoadedAppComponent;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorCommandRequest {
+    pub command_id: String,
+    pub payload: Vec<Property>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginActionKind {
+    Enable,
+    Disable,
+    Reload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginAction {
+    pub id: String,
+    pub kind: PluginActionKind,
+}
+
 pub struct AppRuntimeState {
     app_id: String,
     wasi_ctx: WasiCtx,
     resource_table: ResourceTable,
     status_message: Option<String>,
     render_requested: bool,
+    editor_snapshot: EditorSnapshot,
+    plugins: Vec<PluginInfo>,
+    editor_commands: Vec<EditorCommandRequest>,
+    plugin_actions: Vec<PluginAction>,
 }
 
 impl AppRuntimeState {
@@ -156,6 +201,10 @@ impl AppRuntimeState {
             resource_table: ResourceTable::new(),
             status_message: None,
             render_requested: false,
+            editor_snapshot: EditorSnapshot::default(),
+            plugins: Vec::new(),
+            editor_commands: Vec::new(),
+            plugin_actions: Vec::new(),
         }
     }
 }
@@ -186,6 +235,55 @@ impl bindings::vellum::app::host::Host for AppRuntimeState {
 
     fn request_render(&mut self) -> std::result::Result<(), AppError> {
         self.render_requested = true;
+        Ok(())
+    }
+
+    fn editor_command(
+        &mut self,
+        command_id: String,
+        payload: Vec<WitProperty>,
+    ) -> std::result::Result<(), AppError> {
+        self.editor_commands.push(EditorCommandRequest {
+            command_id,
+            payload: payload.into_iter().map(convert_property).collect(),
+        });
+        Ok(())
+    }
+
+    fn get_editor_snapshot(&mut self) -> std::result::Result<WitEditorSnapshot, AppError> {
+        Ok(convert_editor_snapshot_to_wit(self.editor_snapshot.clone()))
+    }
+
+    fn plugin_list(&mut self) -> std::result::Result<Vec<WitPluginInfo>, AppError> {
+        Ok(self
+            .plugins
+            .clone()
+            .into_iter()
+            .map(convert_plugin_info_to_wit)
+            .collect())
+    }
+
+    fn plugin_enable(&mut self, id: String) -> std::result::Result<(), AppError> {
+        self.plugin_actions.push(PluginAction {
+            id,
+            kind: PluginActionKind::Enable,
+        });
+        Ok(())
+    }
+
+    fn plugin_disable(&mut self, id: String) -> std::result::Result<(), AppError> {
+        self.plugin_actions.push(PluginAction {
+            id,
+            kind: PluginActionKind::Disable,
+        });
+        Ok(())
+    }
+
+    fn plugin_reload(&mut self, id: String) -> std::result::Result<(), AppError> {
+        self.plugin_actions.push(PluginAction {
+            id,
+            kind: PluginActionKind::Reload,
+        });
         Ok(())
     }
 }
@@ -377,6 +475,60 @@ fn convert_property_to_wit(prop: Property) -> WitProperty {
     WitProperty {
         name: prop.name,
         value: prop.value,
+    }
+}
+
+fn convert_editor_snapshot_to_wit(snapshot: EditorSnapshot) -> WitEditorSnapshot {
+    WitEditorSnapshot {
+        display_name: snapshot.display_name,
+        path: snapshot.path,
+        dirty: snapshot.dirty,
+        word_count: snapshot.word_count,
+        document_text: snapshot.document_text,
+        view_mode: snapshot.view_mode,
+    }
+}
+
+fn convert_plugin_info_to_wit(info: PluginInfo) -> WitPluginInfo {
+    WitPluginInfo {
+        id: info.id,
+        name: info.name,
+        version: info.version,
+        description: info.description,
+        state: convert_plugin_state_to_wit(info.state),
+        commands: info
+            .commands
+            .into_iter()
+            .map(convert_plugin_command_to_wit)
+            .collect(),
+        panels: info
+            .panels
+            .into_iter()
+            .map(convert_plugin_panel_to_wit)
+            .collect(),
+        error: info.error,
+    }
+}
+
+fn convert_plugin_state_to_wit(state: PluginState) -> WitPluginState {
+    match state {
+        PluginState::Enabled => WitPluginState::Enabled,
+        PluginState::Disabled => WitPluginState::Disabled,
+        PluginState::Failed => WitPluginState::Failed,
+    }
+}
+
+fn convert_plugin_command_to_wit(command: PluginCommand) -> WitPluginCommand {
+    WitPluginCommand {
+        id: command.id,
+        title: command.title,
+    }
+}
+
+fn convert_plugin_panel_to_wit(panel: PluginPanel) -> WitPluginPanel {
+    WitPluginPanel {
+        id: panel.id,
+        title: panel.title,
     }
 }
 

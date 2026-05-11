@@ -140,6 +140,42 @@ interface types {
         payload: list<property>,
     }
 
+    record editor-snapshot {
+        display-name: string,
+        path: option<string>,
+        dirty: bool,
+        word-count: u32,
+        document-text: string,
+        view-mode: string,
+    }
+
+    enum plugin-state {
+        enabled,
+        disabled,
+        failed,
+    }
+
+    record plugin-command {
+        id: string,
+        title: string,
+    }
+
+    record plugin-panel {
+        id: string,
+        title: string,
+    }
+
+    record plugin-info {
+        id: string,
+        name: string,
+        version: string,
+        description: string,
+        state: plugin-state,
+        commands: list<plugin-command>,
+        panels: list<plugin-panel>,
+        error: option<string>,
+    }
+
     variant app-event {
         ui(ui-event),
         native(native-event),
@@ -149,11 +185,17 @@ interface types {
 }
 
 interface host {
-    use types.{app-error, log-level};
+    use types.{app-error, editor-snapshot, log-level, plugin-info, property};
 
     log: func(level: log-level, message: string);
     show-status-message: func(message: string) -> result<_, app-error>;
     request-render: func() -> result<_, app-error>;
+    editor-command: func(command-id: string, payload: list<property>) -> result<_, app-error>;
+    get-editor-snapshot: func() -> result<editor-snapshot, app-error>;
+    plugin-list: func() -> result<list<plugin-info>, app-error>;
+    plugin-enable: func(id: string) -> result<_, app-error>;
+    plugin-disable: func(id: string) -> result<_, app-error>;
+    plugin-reload: func(id: string) -> result<_, app-error>;
 }
 
 world app-world {

@@ -53,7 +53,7 @@ impl VellumApp {
             .detach();
     }
 
-    pub(super) fn install_dev_extension(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn install_dev_plugin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity();
         window
             .spawn(cx, async move |cx| {
@@ -61,14 +61,18 @@ impl VellumApp {
                     return;
                 };
                 let _ = cx.update_window_entity(&view, |this, _window, cx| {
-                    match this.extension_host.install_dev_extension(folder.clone()) {
+                    match this
+                        .plugin_store
+                        .install_dev_plugin(folder.clone(), &dev_plugins_registry_path())
+                    {
                         Ok(id) => {
-                            this.set_status(format!("Installed dev extension {id}"));
+                            this.set_status(format!("Installed dev plugin {id}"));
                             this.open_right_panel(RightPanelView::Plugins, cx);
+                            this.sync_framework_host_context();
                         }
                         Err(err) => {
                             this.set_status(format!(
-                                "Failed to install dev extension {}: {err}",
+                                "Failed to install dev plugin {}: {err}",
                                 folder.display()
                             ));
                         }
@@ -145,18 +149,7 @@ impl VellumApp {
                 let _ = write_last_opened_path(&path);
                 self.recent_files = crate::path::add_recent_file(&path);
                 self.clear_status();
-                let snapshot = self.editor_snapshot.clone();
-                let event_path = snapshot
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string());
-                self.extension_host.dispatch_event(
-                    "document.opened",
-                    event_path.as_deref().unwrap_or_default(),
-                    &snapshot.document_text,
-                    event_path.as_deref(),
-                );
-                self.drain_extension_outputs(Some(window), cx);
+                self.sync_framework_host_context();
                 cx.notify();
             }
             Err(err) => {
@@ -194,18 +187,7 @@ impl VellumApp {
                 let _ = write_last_opened_path(&path);
                 self.clear_status();
                 self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
-                let snapshot = self.editor_snapshot.clone();
-                let event_path = snapshot
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string());
-                self.extension_host.dispatch_event(
-                    "document.opened",
-                    event_path.as_deref().unwrap_or_default(),
-                    &snapshot.document_text,
-                    event_path.as_deref(),
-                );
-                self.drain_extension_outputs(Some(window), cx);
+                self.sync_framework_host_context();
                 cx.notify();
             }
             Err(err) => {
@@ -594,60 +576,6 @@ impl VellumApp {
     pub(super) fn cancel_rename(&mut self, cx: &mut Context<Self>) {
         self.renaming_path = None;
         self.rename_input = None;
-        cx.notify();
-    }
-
-    pub(super) fn confirm_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.renaming_path.take() else {
-            return;
-        };
-        let Some(input) = self.rename_input.take() else {
-            self.renaming_path = Some(path);
-            return;
-        };
-
-        let new_name = input.read(cx).value().to_string();
-        if new_name.is_empty() {
-            cx.notify();
-            return;
-        }
-
-        let Some(parent) = path.parent() else {
-            cx.notify();
-            return;
-        };
-
-        let new_path = parent.join(&new_name);
-        if new_path == path {
-            cx.notify();
-            return;
-        }
-
-        if new_path.exists() {
-            self.set_status(format!("A file named \"{}\" already exists", new_name));
-            cx.notify();
-            return;
-        }
-
-        if let Err(err) = fs::rename(&path, &new_path) {
-            self.set_status(format!("Failed to rename: {err}"));
-            cx.notify();
-            return;
-        }
-
-        for tab in self.tabs.iter_mut() {
-            if tab.editor.read(cx).document_path() == Some(&path) {
-                let _ = tab.editor.update(cx, |editor, cx| {
-                    editor.open_path(new_path.clone(), window, cx)
-                });
-            }
-        }
-
-        if self.workspace.selected_file.as_ref() == Some(&path) {
-            self.workspace.selected_file = Some(new_path.clone());
-        }
-
-        self.refresh_tree(cx);
         cx.notify();
     }
 

@@ -4,14 +4,10 @@ members = [
     "crates/editor",
     "crates/vellum",
     "crates/workspace",
-    "crates/extension",
-    "crates/extension-sdk",
     "crates/gpui-adapter",
     "crates/vellum-runtime",
     "crates/vellum-renderer-gpui",
     "crates/vellum-editor",
     "crates/vellum-workspace",
-    "crates/vellum-extension-compat",
-    "examples/legacy-extensions/markdown-lint",
 ]
 default-members = ["crates/vellum"]

@@ -202,15 +202,6 @@ impl VellumApp {
         }
     }
 
-    fn hide_right_panel_toggle(&mut self, cx: &mut Context<Self>) {
-        self.right_panel_toggle_hide_generation =
-            self.right_panel_toggle_hide_generation.wrapping_add(1);
-        if self.right_panel_toggle_visible && !self.right_panel_visible {
-            self.right_panel_toggle_visible = false;
-            cx.notify();
-        }
-    }
-
     fn schedule_right_panel_toggle_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.right_panel_visible || self.right_panel_toggle_hovered {
             return;
@@ -263,75 +254,113 @@ impl VellumApp {
         }
     }
 
-    pub(super) fn toggle_extension(&mut self, extension_id: String, cx: &mut Context<Self>) {
-        if self.extension_host.registry().is_disabled(&extension_id) {
-            if let Err(e) = self.extension_host.enable_extension(&extension_id) {
-                eprintln!("failed to enable extension {}: {}", extension_id, e);
-            }
-        } else {
-            self.webview_manager.remove_all();
-            if let Err(e) = self.extension_host.unload_extension(&extension_id) {
-                eprintln!("failed to unload extension {}: {}", extension_id, e);
-            }
+    pub(super) fn toggle_plugin(&mut self, plugin_id: String, cx: &mut Context<Self>) {
+        let current = self
+            .plugin_store
+            .plugin_infos()
+            .into_iter()
+            .find(|info| info.id == plugin_id);
+        let result = match current.map(|info| info.state) {
+            Some(vellum_runtime::PluginState::Disabled) => self.plugin_store.enable(&plugin_id),
+            Some(_) => self.plugin_store.disable(&plugin_id),
+            None => Ok(()),
+        };
+        if let Err(err) = result {
+            self.set_status(format!("Plugin update failed: {err}"));
         }
+        self.sync_framework_host_context();
         cx.notify();
     }
 
-    pub(super) fn drain_extension_outputs(
+    pub(super) fn runtime_editor_snapshot(&self) -> vellum_runtime::EditorSnapshot {
+        vellum_runtime::EditorSnapshot {
+            display_name: self.editor_snapshot.display_name.clone(),
+            path: self
+                .editor_snapshot
+                .path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            dirty: self.editor_snapshot.dirty,
+            word_count: self.editor_snapshot.word_count as u32,
+            document_text: self.editor_snapshot.document_text.clone(),
+            view_mode: format!("{:?}", self.editor_snapshot.view_mode),
+        }
+    }
+
+    pub(super) fn sync_framework_host_context(&mut self) {
+        let snapshot = self.runtime_editor_snapshot();
+        let plugins = self.plugin_store.plugin_infos();
+        if let Some(app) = self.framework_app.as_mut() {
+            app.set_editor_snapshot(snapshot.clone());
+            app.set_plugin_infos(plugins.clone());
+        }
+        self.plugin_store.set_host_context(snapshot, plugins);
+    }
+
+    pub(super) fn drain_framework_outputs(
         &mut self,
         mut window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
-        let outputs = self.extension_host.take_outputs();
-        if let Some(status) = outputs.status_message {
-            self.set_status(status);
+        let mut editor_commands = self.plugin_store.drain_editor_commands();
+        let mut plugin_actions = self.plugin_store.drain_plugin_actions();
+        if let Some(app) = self.framework_app.as_mut() {
+            editor_commands.extend(app.take_editor_commands());
+            plugin_actions.extend(app.take_plugin_actions());
+            if let Some(status) = app.take_status_message() {
+                self.set_status(status);
+            }
         }
 
-        if let Some(decorations) = outputs.decorations {
-            let editor_decorations = decorations
-                .into_iter()
-                .map(|decoration| EditorDecoration {
-                    start: decoration.start,
-                    end: decoration.end,
-                    tooltip: decoration.tooltip,
-                })
-                .collect::<Vec<_>>();
-            let editor = self.active_editor_entity();
-            editor.update(cx, |editor, cx| {
-                editor.set_extension_decorations(editor_decorations, cx);
-            });
+        for action in plugin_actions {
+            if let Err(err) = self.plugin_store.apply_plugin_action(action) {
+                self.set_status(format!("Plugin action failed: {err}"));
+            }
         }
 
         if let Some(window) = window.as_deref_mut() {
-            for edit in outputs.pending_edits {
-                let result = match edit {
-                    vellum_extension_compat::PendingEdit::Insert { position, text } => {
-                        self.active_editor_entity().update(cx, |editor, cx| {
-                            editor.replace_byte_range(position, position, text, window, cx)
-                        })
-                    }
-                    vellum_extension_compat::PendingEdit::ReplaceRange { start, end, text } => {
-                        self.active_editor_entity().update(cx, |editor, cx| {
-                            editor.replace_byte_range(start, end, text, window, cx)
-                        })
-                    }
-                };
-                if let Err(err) = result {
-                    self.set_status(format!("Extension edit rejected: {err}"));
-                }
+            for command in editor_commands {
+                self.execute_editor_command(&command.command_id, window, cx);
             }
-        } else if !outputs.pending_edits.is_empty() {
-            self.set_status("Extension edit skipped because no window was available");
+        } else if !editor_commands.is_empty() {
+            self.set_status("Editor command skipped because no window was available");
         }
 
-        self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+        self.sync_framework_host_context();
         cx.notify();
     }
 
-    pub(super) fn loaded_extension_manifests(
-        &self,
-    ) -> Vec<vellum_extension_compat::manifest::ExtensionManifest> {
-        self.extension_host.loaded_manifests()
+    pub(super) fn execute_editor_command(
+        &mut self,
+        command_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command_id {
+            "open" | "open-file" => self.open_file_dialog(window, cx),
+            "save" | "save-now" => {
+                if let Err(err) = self.save_document(window, cx) {
+                    self.set_status(format!("Save failed: {err}"));
+                }
+            }
+            "save-as" => {
+                if let Err(err) = self.save_document_as(window, cx) {
+                    self.set_status(format!("Save As failed: {err}"));
+                }
+            }
+            "toggle-source-mode" => {
+                self.active_editor_entity().update(cx, |editor, cx| {
+                    editor.toggle_view_mode(window, cx);
+                });
+            }
+            "bold" => window.dispatch_action(Box::new(BoldSelection), cx),
+            "italic" => window.dispatch_action(Box::new(ItalicSelection), cx),
+            "insert-table" | "table" => window.dispatch_action(Box::new(InsertTable), cx),
+            "find" => self.open_find_panel(),
+            "undo" => window.dispatch_action(Box::new(UndoEdit), cx),
+            "redo" => window.dispatch_action(Box::new(RedoEdit), cx),
+            other => self.set_status(format!("Unknown editor command: {other}")),
+        }
     }
 
     pub(super) fn document_label(&self) -> String {
@@ -486,77 +515,6 @@ impl VellumApp {
             })
     }
 
-    pub(super) fn render_extensions_menu(&self, cx: &Context<Self>) -> impl IntoElement {
-        let view = cx.entity();
-        let manifests = self.loaded_extension_manifests();
-        let disabled_ids: Vec<String> = self.extension_host.registry().disabled_ids().to_vec();
-
-        Button::new("extensions-menu")
-            .icon(IconName::Settings)
-            .ghost()
-            .compact()
-            .tooltip("Extensions")
-            .dropdown_menu(move |menu, _, _| {
-                let view = view.clone();
-                let mut menu = menu.min_w(px(220.));
-
-                menu = menu.item(
-                    PopupMenuItem::new("Manage Extensions")
-                        .icon(IconName::LayoutDashboard)
-                        .on_click({
-                            let view = view.clone();
-                            move |_, _, cx| {
-                                let _ = view.update(cx, |this, cx| {
-                                    this.open_right_panel(RightPanelView::Plugins, cx);
-                                });
-                            }
-                        }),
-                );
-
-                menu = menu.separator();
-
-                if manifests.is_empty() && disabled_ids.is_empty() {
-                    menu = menu.item(PopupMenuItem::new("No extensions loaded").disabled(true));
-                } else {
-                    for manifest in &manifests {
-                        let is_enabled = !disabled_ids.contains(&manifest.id);
-                        let ext_id = manifest.id.clone();
-                        let label = if is_enabled {
-                            format!("✓ {} — {}", manifest.name, manifest.version)
-                        } else {
-                            format!("  {} — {} (disabled)", manifest.name, manifest.version)
-                        };
-                        menu = menu.item(PopupMenuItem::new(label).on_click({
-                            let view = view.clone();
-                            let eid = ext_id.clone();
-                            move |_, _, cx| {
-                                let _ = view.update(cx, |this, cx| {
-                                    this.toggle_extension(eid.clone(), cx);
-                                });
-                            }
-                        }));
-                    }
-
-                    for ext_id in &disabled_ids {
-                        if !manifests.iter().any(|m| &m.id == ext_id) {
-                            let label = format!("  {} (disabled)", ext_id);
-                            menu = menu.item(PopupMenuItem::new(label).on_click({
-                                let view = view.clone();
-                                let eid = ext_id.clone();
-                                move |_, _, cx| {
-                                    let _ = view.update(cx, |this, cx| {
-                                        this.toggle_extension(eid.clone(), cx);
-                                    });
-                                }
-                            }));
-                        }
-                    }
-                }
-
-                menu
-            })
-    }
-
     pub(super) fn render_sidebar_toggle(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let is_open = self.sidebar_visible;
@@ -700,7 +658,8 @@ impl VellumApp {
                                     ),
                             )
                             .child(Button::new("view-mode-source").label("Source").selected(
-                                self.editor_snapshot.view_mode == vellum_editor::EditorViewMode::Source,
+                                self.editor_snapshot.view_mode
+                                    == vellum_editor::EditorViewMode::Source,
                             ))
                             .on_click(move |selected: &Vec<usize>, window, app| {
                                 let target = if selected.contains(&1) {

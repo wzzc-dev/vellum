@@ -1,0 +1,6 @@
+members = [
+  "./moonbit/vellum-app-sdk",
+  "./moonbit/vellum-plugin-sdk",
+  "./moonbit/demos/markdown-editor",
+  "./examples/plugins/counter",
+]

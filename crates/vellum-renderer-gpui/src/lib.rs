@@ -24,9 +24,16 @@ impl FrameworkInput {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FrameworkRenderScope {
+    App,
+    PluginPanel(String),
+}
+
 pub trait FrameworkRenderHost: Sized {
     fn framework_input_for(
         &mut self,
+        scope: &FrameworkRenderScope,
         id: &str,
         value: &str,
         placeholder: &str,
@@ -34,7 +41,13 @@ pub trait FrameworkRenderHost: Sized {
         cx: &mut Context<Self>,
     ) -> Entity<InputState>;
 
-    fn dispatch_framework_event(&mut self, event: AppEvent, cx: &mut Context<Self>);
+    fn dispatch_framework_event(
+        &mut self,
+        scope: FrameworkRenderScope,
+        event: AppEvent,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    );
 
     fn render_native_view(
         &mut self,
@@ -51,8 +64,18 @@ pub fn render_framework_tree<H: FrameworkRenderHost + 'static>(
     window: &mut Window,
     cx: &mut Context<H>,
 ) -> AnyElement {
+    render_framework_tree_in_scope(host, tree, FrameworkRenderScope::App, window, cx)
+}
+
+pub fn render_framework_tree_in_scope<H: FrameworkRenderHost + 'static>(
+    host: &mut H,
+    tree: &ViewTree,
+    scope: FrameworkRenderScope,
+    window: &mut Window,
+    cx: &mut Context<H>,
+) -> AnyElement {
     match tree.root_node() {
-        Some(root) => render_framework_node(host, tree, root, window, cx),
+        Some(root) => render_framework_node(host, tree, root, &scope, window, cx),
         None => div().into_any_element(),
     }
 }
@@ -61,6 +84,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
     host: &mut H,
     tree: &ViewTree,
     node: &ViewNode,
+    scope: &FrameworkRenderScope,
     window: &mut Window,
     cx: &mut Context<H>,
 ) -> AnyElement {
@@ -83,7 +107,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                     .pl(px(padding.left));
             }
             for child in tree.child_nodes(node) {
-                el = el.child(render_framework_node(host, tree, child, window, cx));
+                el = el.child(render_framework_node(host, tree, child, scope, window, cx));
             }
             el.into_any_element()
         }
@@ -104,7 +128,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                     .pl(px(padding.left));
             }
             for child in tree.child_nodes(node) {
-                el = el.child(render_framework_node(host, tree, child, window, cx));
+                el = el.child(render_framework_node(host, tree, child, scope, window, cx));
             }
             el.into_any_element()
         }
@@ -141,6 +165,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                 ButtonVariant::Danger => button.danger(),
             };
             let target_id = node.id.clone();
+            let scope = scope.clone();
             let view = cx.entity().downgrade();
             button
                 .disabled(props.disabled)
@@ -148,6 +173,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                     if let Some(entity) = view.upgrade() {
                         let _ = entity.update(cx, |host, cx| {
                             host.dispatch_framework_event(
+                                scope.clone(),
                                 AppEvent::Ui(UiEvent {
                                     target_id: target_id.clone(),
                                     event_kind: "button.clicked".into(),
@@ -155,6 +181,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                                     index: None,
                                     checked: None,
                                 }),
+                                Some(_window),
                                 cx,
                             );
                         });
@@ -163,16 +190,23 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                 .into_any_element()
         }
         ViewKind::Input(props) => {
-            let input =
-                host.framework_input_for(&node.id, &props.value, &props.placeholder, window, cx);
+            let input = host.framework_input_for(
+                scope,
+                &node.id,
+                &props.value,
+                &props.placeholder,
+                window,
+                cx,
+            );
             Input::new(&input).w_full().into_any_element()
         }
         ViewKind::Tabs(props) => {
             let selected = props.selected as usize;
-            let mut tabs =
-                ButtonGroup::new(ElementId::Name(format!("framework-tabs-{}", node.id).into()))
-                    .compact()
-                    .ghost();
+            let mut tabs = ButtonGroup::new(ElementId::Name(
+                format!("framework-tabs-{}", node.id).into(),
+            ))
+            .compact()
+            .ghost();
             for (index, tab) in props.tabs.iter().enumerate() {
                 tabs = tabs.child(
                     Button::new(ElementId::Name(
@@ -183,14 +217,17 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                 );
             }
             let target_id = node.id.clone();
+            let scope = scope.clone();
+            let event_scope = scope.clone();
             let view = cx.entity().downgrade();
-            let tabs = tabs.on_click(move |selected: &Vec<usize>, _, cx| {
+            let tabs = tabs.on_click(move |selected: &Vec<usize>, window, cx| {
                 let Some(index) = selected.first().copied() else {
                     return;
                 };
                 if let Some(entity) = view.upgrade() {
                     let _ = entity.update(cx, |host, cx| {
                         host.dispatch_framework_event(
+                            event_scope.clone(),
                             AppEvent::Ui(UiEvent {
                                 target_id: target_id.clone(),
                                 event_kind: "tabs.changed".into(),
@@ -198,6 +235,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                                 index: Some(index as u32),
                                 checked: None,
                             }),
+                            Some(window),
                             cx,
                         );
                     });
@@ -219,11 +257,8 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                     div()
                         .flex_1()
                         .min_h(px(0.))
-                        .child(render_framework_node(host, tree, child, window, cx)),
+                        .child(render_framework_node(host, tree, child, &scope, window, cx)),
                 );
-            }
-            for child in tree.child_nodes(node) {
-                el = el.child(render_framework_node(host, tree, child, window, cx));
             }
             el.into_any_element()
         }
@@ -239,8 +274,9 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                 } else {
                     resizable_panel()
                 };
-                layout =
-                    layout.child(panel.child(render_framework_node(host, tree, child, window, cx)));
+                layout = layout.child(
+                    panel.child(render_framework_node(host, tree, child, scope, window, cx)),
+                );
             }
             div().size_full().child(layout).into_any_element()
         }
@@ -250,7 +286,7 @@ fn render_framework_node<H: FrameworkRenderHost + 'static>(
                 .size_full()
                 .min_h(px(0.));
             for child in tree.child_nodes(node) {
-                el = el.child(render_framework_node(host, tree, child, window, cx));
+                el = el.child(render_framework_node(host, tree, child, scope, window, cx));
             }
             match props.axis {
                 SplitAxis::Horizontal => el.overflow_x_scrollbar().into_any_element(),

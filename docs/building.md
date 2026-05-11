@@ -228,34 +228,37 @@ cargo run -- --help
 
 ---
 
-## 构建示例扩展
+## 构建 MoonBit App 与 Plugin
 
-### 1. 构建 Pomodoro 扩展
+### 1. 构建 Markdown Demo App
 
 ```bash
-cd examples/legacy-extensions/pomodoro
+cd moonbit/demos/markdown-editor
 ./build.sh
 ```
 
-### 2. 构建 MoonBit GUI 扩展
+### 2. 构建 Counter Plugin
 
 ```bash
-cd examples/legacy-extensions/moonbit-gui
+cd examples/plugins/counter
 ./build.sh
 ```
 
-### 3. 构建所有扩展
+### 3. 运行 MoonBit Shell
 
-目前没有统一的脚本，你可以逐个构建或者自己写个脚本。
+```bash
+cd /Volumes/Data/Code/Note/vellum
+VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
+```
 
 ### 注意
 
-如果构建扩展时出现错误，请检查：
+如果构建 MoonBit component 时出现错误，请检查：
 
 1. MoonBit 工具链是否安装正确
 2. `wit-bindgen-cli` 和 `wasm-tools` 是否安装
 3. 运行 `cargo install wit-bindgen-cli wasm-tools`
-4. 查看错误提示
+4. 生成的 `.wasm` 是否位于 `target/wasm32-wasip2/release/`
 
 ---
 
@@ -277,19 +280,19 @@ cargo test
 cargo run
 ```
 
-### 扩展开发
+### MoonBit App / Plugin 开发
 
 ```bash
-# 1. 修改扩展代码
-cd examples/legacy-extensions/moonbit-gui
-vim gen/world/extensionWorld/...
+# 1. 修改 MoonBit app 或 plugin
+cd moonbit/demos/markdown-editor
+vim src/lib.mbt
 
-# 2. 构建扩展
+# 2. 构建 component
 ./build.sh
 
 # 3. 在另一个终端运行应用（根目录）
-cd ../../
-cargo run
+cd /Volumes/Data/Code/Note/vellum
+VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 ```
 
 ---
@@ -305,7 +308,7 @@ cargo run
 **A**：可以！只需要安装头文件和库即可。如果不需要运行 UI，可以只构建核心库：
 
 ```bash
-cargo check -p extension
+cargo check -p vellum-runtime
 cargo check -p gpui-adapter
 ```
 
@@ -349,17 +352,19 @@ cargo build -v  # 详细输出
 cargo build -vv # 非常详细
 ```
 
-### Q: 我的扩展没有显示在应用中？
+### Q: 我的 plugin 没有显示在应用中？
 
 **A**：可能的原因：
-1. `extension.toml` 中的 `component` 路径不对
-2. 扩展没有正确构建
-3. 扩展缺少 `capabilities` 配置
+1. `vellum.toml` 中的 `component` 路径不对
+2. plugin 没有正确构建
+3. plugin 没有声明 `kind = "plugin"`
+4. app 没有通过 `VELLUM_APP` 启动 MoonBit shell
 
 检查：
 1. `target/wasm32-wasip2/release/` 目录下是否有 WASM 文件
-2. `extension.toml` 中的路径是否正确
-3. `capabilities.panels` 和 `contributes.panels` 是否正确配置
+2. `vellum.toml` 中的路径是否正确
+3. `contributes.panels` 是否正确配置
+4. plugin 目录是否位于 `examples/plugins/` 或 `~/.vellum/plugins/`
 
 ---
 
@@ -367,8 +372,8 @@ cargo build -vv # 非常详细
 
 - 阅读 [architecture.md](./architecture.md) 了解项目架构
 - 阅读 [gui-framework-guide.md](./gui-framework-guide.md) 学习 GUI 框架
-- 阅读 [moonbit-extension-guide.md](./moonbit-extension-guide.md) 学习扩展开发
-- 查看 [examples/legacy-extensions/](../examples/legacy-extensions/) 中的兼容示例
+- 查看 [moonbit/demos/markdown-editor/](../moonbit/demos/markdown-editor/) 中的 app demo
+- 查看 [examples/plugins/](../examples/plugins/) 中的 plugin 示例
 
 ---
 

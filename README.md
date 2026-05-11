@@ -20,13 +20,11 @@ The Markdown WYSIWYG editor remains the primary demo. Its outer shell is a MoonB
 - ✅ Watch for external file changes, deletions, and renames
 - ✅ Conflict detection and handling
 - ✅ Restore last opened file on startup
-- ✅ Extension support with WASM Component Model
-- ✅ MoonBit extension development
-- ✅ Extension panels with declarative UI
-- ✅ Extension commands
-- ✅ Extension timers
-- 🚧 Experimental MoonBit App Component runtime with typed WIT UI trees
-- 🚧 Native Markdown editor embedded as a framework `native-view`
+- ✅ MoonBit app runtime on top of the WASM Component Model
+- ✅ Typed `vellum.toml` manifests for apps and plugins
+- ✅ Typed plugin panels and plugin commands
+- ✅ MoonBit Markdown demo shell embedding the native editor
+- ✅ Shared MoonBit app/plugin SDK packages with canonical typed bindings
 
 ---
 
@@ -79,27 +77,23 @@ vellum/
 │   ├── vellum-renderer-gpui/        # Typed ViewTree -> GPUI renderer
 │   ├── vellum-editor/               # Markdown editor native widget facade
 │   ├── vellum-workspace/            # Workspace/file services facade
-│   ├── vellum-extension-compat/     # Legacy extension-world compatibility
 │   ├── editor/                      # Existing editor implementation
-│   ├── workspace/                   # Existing workspace implementation
-│   └── extension/                   # Existing legacy extension implementation
+│   └── workspace/                   # Existing workspace implementation
+├── moon.work                        # MoonBit workspace linking local SDK/demo/plugin modules
 ├── wit/                             # Canonical WIT packages
-│   ├── vellum-app.wit               # App/plugin typed UI protocol
-│   ├── vellum-extension.wit         # Legacy extension-world compat protocol
-│   └── legacy/                      # Old experimental WIT files
+│   └── vellum-app.wit               # App/plugin typed UI protocol
 ├── moonbit/                         # MoonBit modules
-│   ├── vellum-app-sdk/              # New app DSL staging package
-│   ├── vellum-plugin-sdk/           # New plugin DSL staging package
+│   ├── vellum-app-sdk/              # Shared app DSL + canonical generated bindings
+│   ├── vellum-plugin-sdk/           # Shared plugin helpers on top of the app SDK
+│   ├── demos/                       # Runnable MoonBit app demos
 │   ├── demos/markdown-editor/       # Main MoonBit app demo
-│   └── legacy-extensions/           # Old MoonBit extension examples
+│   └── vellum-gui-sdk/              # Older experimental MoonBit GUI package
 ├── examples/
-│   ├── plugins/                     # New typed plugin examples
-│   └── legacy-extensions/           # Compatibility examples
+│   └── plugins/                     # Typed plugin component examples
 ├── docs/                            # Documentation
 │   ├── architecture.md              # Architecture overview
 │   ├── building.md                  # Building & running guide
-│   ├── gui-framework-guide.md       # GUI framework guide
-│   └── legacy-extension.md          # Legacy extension compatibility guide
+│   └── gui-framework-guide.md       # GUI framework guide
 ├── Cargo.toml
 └── README.md
 ```
@@ -113,9 +107,8 @@ vellum/
 | [Building Guide](./docs/building.md) | How to build and run the project |
 | [Architecture Overview](./docs/architecture.md) | Project architecture, modules, and design |
 | [GUI Framework Guide](./docs/gui-framework-guide.md) | How to use the MoonBit GUI framework |
-| [Legacy Extension Compatibility](./docs/legacy-extension.md) | How the old extension-world path is preserved |
-| [MoonBit Extension Guide](./docs/moonbit-extension-guide.md) | Legacy MoonBit extension reference |
 | [Markdown Demo](./moonbit/demos/markdown-editor/) | Main MoonBit app shell with native editor |
+| [Plugin Examples](./examples/plugins/) | Typed plugin component examples |
 
 ---
 
@@ -154,27 +147,16 @@ cargo test -p workspace
 
 ---
 
-## Build Legacy Example Extensions
-
-### Pomodoro Timer Extension
+## Build Plugin Example
 
 ```bash
-cd examples/legacy-extensions/pomodoro
+cd examples/plugins/counter
 ./build.sh
-cd ../../..
-cargo run
+cd ../../
+VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 ```
 
-### MoonBit GUI Extension
-
-```bash
-cd examples/legacy-extensions/moonbit-gui
-./build.sh
-cd ../../..
-cargo run
-```
-
-For detailed instructions, see [Building Guide](./docs/building.md).
+For more detail, see [Building Guide](./docs/building.md).
 
 ---
 

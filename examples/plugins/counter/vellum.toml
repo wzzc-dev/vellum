@@ -1,0 +1,14 @@
+id = "vellum.plugin.counter"
+name = "Counter Plugin"
+version = "0.1.0"
+kind = "plugin"
+component = "target/wasm32-wasip2/release/vellum_counter_plugin.wasm"
+description = "Minimal typed app-world plugin panel."
+
+[contributes]
+panels = [
+  { id = "main", title = "Counter" },
+]
+commands = [
+  { id = "ping", title = "Ping Host" },
+]

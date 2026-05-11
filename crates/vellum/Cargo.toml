@@ -11,7 +11,6 @@ gpui-component = { version = "0.5.1", features = ["webview"] }
 regex = "1"
 rfd = "0.15"
 vellum-editor = { path = "../vellum-editor" }
-vellum-extension-compat = { path = "../vellum-extension-compat" }
 vellum-renderer-gpui = { path = "../vellum-renderer-gpui" }
 vellum-runtime = { path = "../vellum-runtime" }
 vellum-workspace = { path = "../vellum-workspace" }

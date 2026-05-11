@@ -1,0 +1,9 @@
+{
+  "name": "vellum/plugin-counter",
+  "version": "0.1.0",
+  "preferred-target": "wasm",
+  "deps": {
+    "vellum/app-sdk": "0.1.0",
+    "vellum/plugin-sdk": "0.1.0"
+  }
+}

@@ -16,3 +16,5 @@ VELLUM_APP=moonbit/demos/markdown-editor cargo run -p Vellum
 ```
 
 The demo shell is described by MoonBit and rendered by Rust/GPUI. The central editor is still the existing Rust `MarkdownEditor`, embedded with a `native-view` node whose kind is `markdown-editor`.
+
+The handwritten MoonBit app logic now lives in `src/`, while `gen/world/appWorld/` only contains the generated export layer.

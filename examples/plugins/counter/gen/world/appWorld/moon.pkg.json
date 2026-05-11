@@ -1,0 +1,7 @@
+{
+  "warn-list": "-44",
+  "import": [
+    { "path" : "vellum/app-sdk/interface/vellum/app/types", "alias" : "types" },
+    { "path" : "vellum/plugin-counter/src", "alias" : "plugin_impl" }
+  ]
+}
