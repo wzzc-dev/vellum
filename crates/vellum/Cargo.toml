@@ -8,6 +8,7 @@ anyhow = "1.0"
 editor = { path = "../editor" }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
+markdown = "1.0.0"
 regex = "1"
 rfd = "0.15"
 workspace = { path = "../workspace" }

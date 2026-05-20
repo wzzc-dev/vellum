@@ -1,5 +1,7 @@
 use std::fs;
 
+use anyhow::Context as _;
+
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{clear_last_opened_path, read_last_opened_path, write_last_opened_path};
@@ -262,6 +264,51 @@ impl VellumApp {
         self.clear_status();
         cx.notify();
         Ok(())
+    }
+
+    pub(super) fn export_html_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let mut dialog = FileDialog::new().add_filter("HTML", &["html", "htm"]);
+        if let Some(dir) = self.current_document_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+
+        let default_name = self.default_html_export_name();
+        dialog = dialog.set_file_name(&default_name);
+
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+
+        match super::export::export_markdown_to_html(
+            &self.editor_snapshot.document_text,
+            &self.editor_snapshot.display_name,
+        )
+        .and_then(|html| {
+            fs::write(&path, html).with_context(|| format!("failed to write {}", path.display()))
+        }) {
+            Ok(()) => {
+                self.set_status(format!("Exported HTML to {}", path.display()));
+            }
+            Err(err) => {
+                self.set_status(format!("Export failed: {err}"));
+            }
+        }
+        cx.notify();
+    }
+
+    fn default_html_export_name(&self) -> String {
+        let mut name = self.editor_snapshot.display_name.clone();
+        for suffix in [".markdown", ".mdown", ".md"] {
+            if name.to_ascii_lowercase().ends_with(suffix) {
+                let keep = name.len() - suffix.len();
+                name.truncate(keep);
+                break;
+            }
+        }
+        if name.is_empty() {
+            name = "Untitled".to_string();
+        }
+        format!("{name}.html")
     }
 
     pub(super) fn restore_last_opened_document(

@@ -5,13 +5,12 @@ use std::{
 
 use anyhow::Result;
 use editor::{
-    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit,
-    FocusNextBlock, FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable,
-    ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
-    ToggleBlockquote, ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3,
+    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
+    FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable, ItalicSelection,
+    LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote,
+    ToggleBulletList, ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2, ToggleHeading3,
     ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleOrderedList, ToggleParagraph,
-    ToggleFocusHighlightMode, ToggleSourceMode, ToggleTypewriterMode, UndoEdit,
-    bind_keys as bind_editor_keys,
+    ToggleSourceMode, ToggleTypewriterMode, UndoEdit, bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -36,6 +35,7 @@ use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
 mod command_palette;
 mod commands;
 mod document_io;
+mod export;
 mod frame;
 mod layout;
 mod render;
@@ -48,6 +48,7 @@ actions!(
         NewFile,
         SaveNow,
         SaveAs,
+        ExportHtml,
         Quit,
         ToggleSidebar,
         ToggleStatusBar,
@@ -175,6 +176,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-alt-e", ExportHtml, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-f", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-g", FindNextMatch, Some(APP_CONTEXT)),
@@ -196,6 +198,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-n", NewFile, None),
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-alt-e", ExportHtml, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-h", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
@@ -226,6 +229,12 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     cx.on_action(move |_: &OpenFolder, cx| {
         update_vellum_app_from_menu(window, cx, |this, window, cx| {
             this.request_open_folder(window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &ExportHtml, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.export_html_dialog(window, cx);
         });
     });
     let window = main_window;
@@ -265,6 +274,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::separator(),
                 MenuItem::action("Save", SaveNow),
                 MenuItem::action("Save As...", SaveAs),
+                MenuItem::action("Export HTML...", ExportHtml),
                 MenuItem::separator(),
                 MenuItem::action("Close Tab", CloseTab),
             ],
