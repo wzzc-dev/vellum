@@ -257,6 +257,8 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
                     CursorAnchorPolicy::Clamp,
                     false,
                 )
+            } else if is_toc_text(&text) {
+                (BlockKind::Toc, CursorAnchorPolicy::Clamp, false)
             } else {
                 (BlockKind::Paragraph, CursorAnchorPolicy::Clamp, false)
             }
@@ -275,7 +277,18 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
             CursorAnchorPolicy::Clamp,
             false,
         ),
-        "block_quote" => (BlockKind::Blockquote, CursorAnchorPolicy::Clamp, false),
+        "block_quote" => {
+            let text = source_text(source, start_byte..content_end);
+            if let Some(kind) = callout_kind_from_text(&text) {
+                (
+                    BlockKind::Callout { kind },
+                    CursorAnchorPolicy::Clamp,
+                    false,
+                )
+            } else {
+                (BlockKind::Blockquote, CursorAnchorPolicy::Clamp, false)
+            }
+        }
         "list" => (BlockKind::List, CursorAnchorPolicy::Clamp, false),
         "pipe_table" => (BlockKind::Table, CursorAnchorPolicy::Clamp, false),
         "fenced_code_block" => (
@@ -843,6 +856,9 @@ fn recover_block_shape(
             false,
         ));
     }
+    if is_toc_text(&text) {
+        return Some((BlockKind::Toc, CursorAnchorPolicy::Clamp, false));
+    }
     if let Some(depth) = atx_heading_depth_from_text(&text) {
         return Some((
             BlockKind::Heading { depth },
@@ -856,6 +872,13 @@ fn recover_block_shape(
     }
 
     if looks_like_blockquote_block(&text) {
+        if let Some(kind) = callout_kind_from_text(&text) {
+            return Some((
+                BlockKind::Callout { kind },
+                CursorAnchorPolicy::Clamp,
+                false,
+            ));
+        }
         return Some((BlockKind::Blockquote, CursorAnchorPolicy::Clamp, false));
     }
 
@@ -870,6 +893,23 @@ fn is_math_block_text(text: &str) -> bool {
 fn is_footnote_definition_text(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with("[^") && trimmed.contains("]:")
+}
+
+fn is_toc_text(text: &str) -> bool {
+    text.trim().eq_ignore_ascii_case("[toc]")
+}
+
+fn callout_kind_from_text(text: &str) -> Option<String> {
+    let first = text.lines().next()?.trim_start();
+    let marker = first.strip_prefix('>')?.trim_start();
+    let label = marker.strip_prefix("[!")?;
+    let end = label.find(']')?;
+    let kind = label[..end].trim();
+    if kind.is_empty() {
+        None
+    } else {
+        Some(kind.to_ascii_lowercase())
+    }
 }
 
 fn atx_heading_depth_from_text(text: &str) -> Option<u8> {

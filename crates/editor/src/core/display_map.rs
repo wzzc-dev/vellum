@@ -774,6 +774,7 @@ impl<'a> BlockBuilder<'a> {
             }
             BlockKind::Table => Some(EmbeddedNodeKind::Table),
             BlockKind::MathBlock => Some(EmbeddedNodeKind::MathBlock),
+            BlockKind::Toc => Some(EmbeddedNodeKind::Toc),
             BlockKind::Html => Some(EmbeddedNodeKind::HtmlBlock),
             BlockKind::FootnoteDefinition | BlockKind::Footnote => {
                 Some(EmbeddedNodeKind::FootnoteDefinition)
@@ -812,6 +813,12 @@ impl<'a> BlockBuilder<'a> {
             }
             BlockKind::ThematicBreak => self.push_thematic_break(&text),
             BlockKind::MathBlock => self.push_math_block(&text),
+            BlockKind::Toc => self.push_toc(&text),
+            BlockKind::YamlFrontMatter => self.push_yaml_front_matter(&text),
+            BlockKind::FootnoteDefinition | BlockKind::Footnote => {
+                self.push_footnote_definition(&text)
+            }
+            BlockKind::Callout { .. } => self.push_callout(&text),
             _ => self.push_inline_text(
                 self.block.content_range.start,
                 &text,
@@ -1153,6 +1160,171 @@ impl<'a> BlockBuilder<'a> {
                     last,
                 );
             }
+        }
+    }
+
+    fn push_toc(&mut self, text: &str) {
+        self.push_hidden_source(self.block.content_range.clone());
+        self.push_virtual_visible(
+            RenderSpanKind::Text,
+            self.block.content_range.start,
+            "Table of Contents".to_string(),
+            RenderInlineStyle {
+                strong: true,
+                ..RenderInlineStyle::default()
+            },
+        );
+        if !text.ends_with('\n') {
+            return;
+        }
+        let newline_start = self.block.content_range.end.saturating_sub(1);
+        self.push_span(
+            RenderSpanKind::LineBreak,
+            newline_start..self.block.content_range.end,
+            "\n".to_string(),
+            "\n".to_string(),
+            false,
+            RenderInlineStyle::default(),
+            None,
+        );
+    }
+
+    fn push_yaml_front_matter(&mut self, text: &str) {
+        let mut source_offset = self.block.content_range.start;
+        for (index, segment) in split_inclusive_lines(text).into_iter().enumerate() {
+            let line = segment.trim_end_matches(['\r', '\n']);
+            let newline_len = segment.len().saturating_sub(line.len());
+            let is_delimiter = line.trim() == "---" || line.trim() == "+++";
+            let is_closing_delimiter =
+                is_delimiter && source_offset + line.len() >= self.block.content_range.end.saturating_sub(newline_len);
+            let hidden = index == 0 || is_closing_delimiter;
+
+            if hidden {
+                self.push_hidden_source(source_offset..source_offset + line.len());
+            } else {
+                self.push_inline_text(
+                    source_offset,
+                    line,
+                    RenderInlineStyle {
+                        code: true,
+                        ..RenderInlineStyle::default()
+                    },
+                );
+            }
+
+            if newline_len > 0 {
+                self.push_span(
+                    RenderSpanKind::LineBreak,
+                    source_offset + line.len()..source_offset + segment.len(),
+                    segment[line.len()..].to_string(),
+                    "\n".to_string(),
+                    false,
+                    RenderInlineStyle::default(),
+                    None,
+                );
+            }
+            source_offset += segment.len();
+        }
+    }
+
+    fn push_footnote_definition(&mut self, text: &str) {
+        let (label_end, content_start) = footnote_definition_parts(text);
+        self.push_hidden_source(
+            self.block.content_range.start..self.block.content_range.start + label_end,
+        );
+        self.push_virtual_visible(
+            RenderSpanKind::Text,
+            self.block.content_range.start,
+            "Footnote".to_string(),
+            RenderInlineStyle {
+                strong: true,
+                ..RenderInlineStyle::default()
+            },
+        );
+        self.push_virtual_visible(
+            RenderSpanKind::Text,
+            self.block.content_range.start,
+            " ".to_string(),
+            RenderInlineStyle::default(),
+        );
+        self.push_inline_text(
+            self.block.content_range.start + content_start,
+            &text[content_start..],
+            RenderInlineStyle::default(),
+        );
+    }
+
+    fn push_callout(&mut self, text: &str) {
+        let mut source_offset = self.block.content_range.start;
+        let mut first_content = true;
+        for segment in split_inclusive_lines(text) {
+            let line = segment.trim_end_matches(['\r', '\n']);
+            let newline_len = segment.len().saturating_sub(line.len());
+            let marker_len = blockquote_marker_len(line);
+            if marker_len > 0 {
+                self.push_hidden_or_visible(
+                    RenderSpanKind::HiddenSyntax,
+                    source_offset..source_offset + marker_len,
+                    &line[..marker_len],
+                );
+            }
+
+            let mut content_start = marker_len;
+            if first_content {
+                if let Some(end) = line[marker_len..].find(']') {
+                    let label_end = marker_len + end + 1;
+                    self.push_hidden_source(
+                        source_offset + marker_len..source_offset + label_end,
+                    );
+                    content_start = label_end;
+                    if line[content_start..].starts_with(' ') {
+                        self.push_hidden_source(
+                            source_offset + content_start..source_offset + content_start + 1,
+                        );
+                        content_start += 1;
+                    }
+                }
+                self.push_virtual_visible(
+                    RenderSpanKind::Text,
+                    source_offset,
+                    callout_title(&self.block.kind),
+                    RenderInlineStyle {
+                        strong: true,
+                        highlight: true,
+                        ..RenderInlineStyle::default()
+                    },
+                );
+                if content_start < line.len() {
+                    self.push_virtual_visible(
+                        RenderSpanKind::Text,
+                        source_offset,
+                        " ".to_string(),
+                        RenderInlineStyle::default(),
+                    );
+                }
+                first_content = false;
+            }
+
+            if content_start < line.len() {
+                self.push_inline_text(
+                    source_offset + content_start,
+                    &line[content_start..],
+                    RenderInlineStyle::default(),
+                );
+            }
+
+            if newline_len > 0 {
+                self.push_span(
+                    RenderSpanKind::LineBreak,
+                    source_offset + line.len()..source_offset + segment.len(),
+                    segment[line.len()..].to_string(),
+                    "\n".to_string(),
+                    false,
+                    RenderInlineStyle::default(),
+                    None,
+                );
+            }
+            source_offset += segment.len();
         }
     }
 
@@ -1652,6 +1824,29 @@ fn parse_inline_tokens_into(
             continue;
         }
 
+        if rest.starts_with("[^")
+            && let Some(close) = rest.find(']')
+        {
+            let source = &rest[..close + 1];
+            let label = &rest[2..close];
+            tokens.push(InlineToken {
+                local_range: base_offset + offset..base_offset + offset + source.len(),
+                reveal_range: Some(offset..offset + source.len()),
+                source_text: source.to_string(),
+                visible_text: format!("[{label}]"),
+                hidden: false,
+                style: RenderInlineStyle {
+                    code: true,
+                    ..style
+                },
+                meta: Some(RenderSpanMeta::ReferenceLink {
+                    label: label.to_string(),
+                }),
+            });
+            offset += source.len();
+            continue;
+        }
+
         if rest.starts_with('[')
             && let Some(close) = rest.find(']')
             && rest[close + 1..].starts_with('(')
@@ -1700,18 +1895,6 @@ fn parse_inline_tokens_into(
             continue;
         }
 
-        let next_special = rest
-            .char_indices()
-            .skip(1)
-            .find(|(_, ch)| {
-                matches!(
-                    ch,
-                    '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '=' | ':'
-                )
-            })
-            .map(|(idx, _)| idx)
-            .unwrap_or(rest.len());
-
         if rest.starts_with(':') {
             if let Some(end_pos) = rest[1..].find(':') {
                 let name = &rest[1..1 + end_pos];
@@ -1740,6 +1923,58 @@ fn parse_inline_tokens_into(
             offset += 1;
             continue;
         }
+
+        if let Some((delimiter, inner, source_len)) = parse_wrapped_inline(rest, '^') {
+            push_hidden_marker(tokens, base_offset + offset, delimiter);
+            push_text_token(
+                tokens,
+                base_offset + offset + delimiter.len(),
+                inner,
+                RenderInlineStyle {
+                    code: true,
+                    ..style
+                },
+            );
+            push_hidden_marker(
+                tokens,
+                base_offset + offset + delimiter.len() + inner.len(),
+                delimiter,
+            );
+            offset += source_len;
+            continue;
+        }
+
+        if let Some((delimiter, inner, source_len)) = parse_wrapped_inline(rest, '~') {
+            push_hidden_marker(tokens, base_offset + offset, delimiter);
+            push_text_token(
+                tokens,
+                base_offset + offset + delimiter.len(),
+                inner,
+                RenderInlineStyle {
+                    code: true,
+                    ..style
+                },
+            );
+            push_hidden_marker(
+                tokens,
+                base_offset + offset + delimiter.len() + inner.len(),
+                delimiter,
+            );
+            offset += source_len;
+            continue;
+        }
+
+        let next_special = rest
+            .char_indices()
+            .skip(1)
+            .find(|(_, ch)| {
+                matches!(
+                    ch,
+                    '\\' | '*' | '_' | '~' | '`' | '[' | '!' | '$' | '=' | ':' | '^'
+                )
+            })
+            .map(|(idx, _)| idx)
+            .unwrap_or(rest.len());
 
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
         offset += next_special;
@@ -1856,6 +2091,31 @@ fn parse_link_destination_and_title(raw: &str) -> (String, Option<String>) {
     (target, title)
 }
 
+fn footnote_definition_parts(text: &str) -> (usize, usize) {
+    let Some(close) = text.find("]:") else {
+        return (0, 0);
+    };
+    let label_end = close + 2;
+    let mut content_start = label_end;
+    while text[content_start..].starts_with([' ', '\t']) {
+        content_start += 1;
+    }
+    (label_end, content_start)
+}
+
+fn callout_title(kind: &BlockKind) -> String {
+    match kind {
+        BlockKind::Callout { kind } => {
+            let mut chars = kind.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => "Note".to_string(),
+            }
+        }
+        _ => "Note".to_string(),
+    }
+}
+
 fn standalone_image_embedded(
     block_kind: &BlockKind,
     spans: &[RenderSpan],
@@ -1893,7 +2153,12 @@ fn should_reveal_inline_source(
     reveal_range: Option<&Range<usize>>,
     builder: &BlockBuilder<'_>,
 ) -> bool {
-    matches!(meta, Some(RenderSpanMeta::Image { .. }))
+    matches!(
+        meta,
+        Some(RenderSpanMeta::Image { .. })
+            | Some(RenderSpanMeta::Math { .. })
+            | Some(RenderSpanMeta::ReferenceLink { .. })
+    )
         && builder.should_reveal_inline(range, reveal_range)
 }
 
@@ -1914,6 +2179,24 @@ fn parse_math_span(rest: &str) -> Option<(&str, &str, bool)> {
     }
     let source_end = 1 + end + 1;
     Some((&rest[..source_end], &tail[..end], false))
+}
+
+fn parse_wrapped_inline(rest: &str, delimiter: char) -> Option<(&'static str, &str, usize)> {
+    let marker = match delimiter {
+        '^' => "^",
+        '~' => "~",
+        _ => return None,
+    };
+    let tail = rest.strip_prefix(delimiter)?;
+    if tail.starts_with(delimiter) || tail.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let end = tail.find(delimiter)?;
+    let inner = &tail[..end];
+    if inner.is_empty() || inner.ends_with(char::is_whitespace) {
+        return None;
+    }
+    Some((marker, inner, marker.len() + inner.len() + marker.len()))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2131,6 +2414,55 @@ mod tests {
             map.blocks[0].embedded,
             Some(EmbeddedNodeKind::Image)
         ));
+    }
+
+    #[test]
+    fn typora_extension_blocks_have_readable_visible_text() {
+        let doc = DocumentBuffer::from_text(concat!(
+            "---\n",
+            "title: Demo\n",
+            "---\n\n",
+            "[toc]\n\n",
+            "> [!warning] Careful\n",
+            "> body\n\n",
+            "[^id]: Footnote text"
+        ));
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert!(map.visible_text.contains("title: Demo"));
+        assert!(map.visible_text.contains("Table of Contents"));
+        assert!(map.visible_text.contains("Warning Careful"));
+        assert!(map.visible_text.contains("Footnote Footnote text"));
+        assert!(map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(EmbeddedNodeKind::Toc)
+        )));
+        assert!(map.blocks.iter().any(|block| matches!(
+            block.kind,
+            BlockKind::Callout { .. }
+        )));
+    }
+
+    #[test]
+    fn footnote_reference_and_super_subscript_render_without_markers() {
+        let doc = DocumentBuffer::from_text("Use note[^a], H~2~O, and x^2^.");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "Use note[a], H2O, and x2.");
+        assert!(
+            map.blocks[0]
+                .spans
+                .iter()
+                .any(|span| matches!(span.meta, Some(RenderSpanMeta::ReferenceLink { .. })))
+        );
+        assert!(
+            map.blocks[0]
+                .spans
+                .iter()
+                .filter(|span| span.hidden && (span.source_text == "^" || span.source_text == "~"))
+                .count()
+                >= 4
+        );
     }
 
     #[test]

@@ -27,6 +27,8 @@ pub enum BlockKind {
     CodeFence { language: Option<String> },
     MathBlock,
     ThematicBreak,
+    Toc,
+    Callout { kind: String },
     Html,
     YamlFrontMatter,
     FootnoteDefinition,
@@ -455,10 +457,10 @@ fn can_merge_structured_continuation(
                 BlockKind::List | BlockKind::Unknown | BlockKind::Raw
             ) && looks_like_list_block(&next_text)
         }
-        BlockKind::Blockquote => {
+        BlockKind::Blockquote | BlockKind::Callout { .. } => {
             matches!(
                 next.kind,
-                BlockKind::Blockquote | BlockKind::Unknown | BlockKind::Raw
+                BlockKind::Blockquote | BlockKind::Callout { .. } | BlockKind::Unknown | BlockKind::Raw
             ) && looks_like_blockquote_block(&next_text)
         }
         BlockKind::Table => {
@@ -835,6 +837,34 @@ mod tests {
             doc.blocks
                 .iter()
                 .any(|block| matches!(block.kind, BlockKind::CodeFence { .. }))
+        );
+    }
+
+    #[test]
+    fn parses_typora_extension_blocks() {
+        let text = concat!(
+            "---\n",
+            "title: Demo\n",
+            "---\n\n",
+            "[toc]\n\n",
+            "> [!note] Remember\n",
+            "> body\n\n",
+            "[^id]: Footnote text\n"
+        );
+        let doc = DocumentBuffer::from_text(text);
+
+        assert_eq!(doc.blocks[0].kind, BlockKind::YamlFrontMatter);
+        assert!(doc.blocks.iter().any(|block| block.kind == BlockKind::Toc));
+        assert!(doc.blocks.iter().any(|block| {
+            matches!(
+                &block.kind,
+                BlockKind::Callout { kind } if kind == "note"
+            )
+        }));
+        assert!(
+            doc.blocks
+                .iter()
+                .any(|block| block.kind == BlockKind::FootnoteDefinition)
         );
     }
 

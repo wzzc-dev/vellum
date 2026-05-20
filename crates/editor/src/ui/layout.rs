@@ -117,6 +117,10 @@ mod tests {
             BlockKind::List,
             BlockKind::Table,
             BlockKind::ThematicBreak,
+            BlockKind::Toc,
+            BlockKind::Callout {
+                kind: String::new(),
+            },
             BlockKind::Html,
             BlockKind::Footnote,
             BlockKind::Unknown,

@@ -2209,6 +2209,7 @@ fn supports_boundary_backspace_target_kind(kind: &BlockKind) -> bool {
             | BlockKind::Heading { .. }
             | BlockKind::List
             | BlockKind::Blockquote
+            | BlockKind::Callout { .. }
     )
 }
 

@@ -381,6 +381,7 @@ pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
             | BlockKind::Heading { .. }
             | BlockKind::List
             | BlockKind::Blockquote
+            | BlockKind::Callout { .. }
             | BlockKind::CodeFence { .. }
             | BlockKind::ThematicBreak
     )
@@ -405,7 +406,9 @@ pub(crate) fn semantic_enter_transform(
             Some(heading_enter_transform(&edited.text, edited.cursor_offset))
         }
         BlockKind::List => list_enter_transform(&edited.text, edited.cursor_offset),
-        BlockKind::Blockquote => blockquote_enter_transform(&edited.text, edited.cursor_offset),
+        BlockKind::Blockquote | BlockKind::Callout { .. } => {
+            blockquote_enter_transform(&edited.text, edited.cursor_offset)
+        }
         BlockKind::CodeFence { .. } => {
             code_fence_enter_transform(&edited.text, edited.cursor_offset)
         }
