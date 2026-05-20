@@ -31,6 +31,7 @@ pub(crate) enum PaletteCommand {
     FindPanel,
     FindReplace,
     ExportHtml,
+    OpenPreferences,
     Undo,
     Redo,
     ThemeDefault,
@@ -215,6 +216,12 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         keywords: &["export", "html", "导出"],
         description: "Export the current Markdown document as HTML",
         command: PaletteCommand::ExportHtml,
+    },
+    CommandItem {
+        label: "Preferences",
+        keywords: &["preferences", "settings", "config", "偏好", "设置"],
+        description: "Open Vellum preferences",
+        command: PaletteCommand::OpenPreferences,
     },
     CommandItem {
         label: "Undo",

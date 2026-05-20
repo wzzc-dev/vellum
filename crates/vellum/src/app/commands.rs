@@ -143,6 +143,15 @@ impl VellumApp {
         self.export_html_dialog(window, cx);
     }
 
+    pub(super) fn on_open_preferences(
+        &mut self,
+        _: &OpenPreferences,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_preferences_file(cx);
+    }
+
     pub(super) fn on_toggle_sidebar(
         &mut self,
         _: &ToggleSidebar,
@@ -323,6 +332,9 @@ impl VellumApp {
             }
             PaletteCommand::ExportHtml => {
                 self.export_html_dialog(window, cx);
+            }
+            PaletteCommand::OpenPreferences => {
+                self.open_preferences_file(cx);
             }
             PaletteCommand::ThemeDefault => {
                 self.set_syntax_theme(editor::SyntaxTheme::Default);

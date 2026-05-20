@@ -50,6 +50,7 @@ actions!(
         SaveNow,
         SaveAs,
         ExportHtml,
+        OpenPreferences,
         Quit,
         ToggleSidebar,
         ToggleStatusBar,
@@ -240,6 +241,12 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
         });
     });
     let window = main_window;
+    cx.on_action(move |_: &OpenPreferences, cx| {
+        update_vellum_app_from_menu(window, cx, |this, _, cx| {
+            this.open_preferences_file(cx);
+        });
+    });
+    let window = main_window;
     cx.on_action(move |_: &CloseTab, cx| {
         update_vellum_app_from_menu(window, cx, |this, window, cx| {
             this.on_close_tab(&CloseTab, window, cx);
@@ -262,6 +269,8 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
             name: "Vellum".into(),
             items: vec![
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Preferences...", OpenPreferences),
                 MenuItem::separator(),
                 MenuItem::action("Quit Vellum", Quit),
             ],

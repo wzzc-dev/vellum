@@ -266,32 +266,60 @@ impl VellumApp {
         Ok(())
     }
 
-    pub(super) fn export_html_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let mut dialog = FileDialog::new().add_filter("HTML", &["html", "htm"]);
-        if let Some(dir) = self.current_document_dir() {
-            dialog = dialog.set_directory(dir);
-        }
-
+    pub(super) fn export_html_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current_dir = self.current_document_dir();
         let default_name = self.default_html_export_name();
-        dialog = dialog.set_file_name(&default_name);
+        let document_text = self.editor_snapshot.document_text.clone();
+        let display_name = self.editor_snapshot.display_name.clone();
+        let view = cx.entity();
 
-        let Some(path) = dialog.save_file() else {
-            return;
-        };
+        window
+            .spawn(cx, async move |cx| {
+                let mut dialog = FileDialog::new()
+                    .add_filter("HTML", &["html", "htm"])
+                    .set_file_name(&default_name);
+                if let Some(dir) = current_dir {
+                    dialog = dialog.set_directory(dir);
+                }
 
-        match super::export::export_markdown_to_html(
-            &self.editor_snapshot.document_text,
-            &self.editor_snapshot.display_name,
-        )
-        .and_then(|html| {
-            fs::write(&path, html).with_context(|| format!("failed to write {}", path.display()))
-        }) {
-            Ok(()) => {
-                self.set_status(format!("Exported HTML to {}", path.display()));
+                let Some(path) = dialog.save_file() else {
+                    return;
+                };
+
+                let result = super::export::export_markdown_to_html(&document_text, &display_name)
+                    .and_then(|html| {
+                        fs::write(&path, html)
+                            .with_context(|| format!("failed to write {}", path.display()))
+                    });
+
+                let _ = cx.update_window_entity(&view, |this, _, cx| {
+                    match result {
+                        Ok(()) => {
+                            this.set_status(format!("Exported HTML to {}", path.display()));
+                        }
+                        Err(err) => {
+                            this.set_status(format!("Export failed: {err}"));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+    }
+
+    pub(super) fn open_preferences_file(&mut self, cx: &mut Context<Self>) {
+        match super::preferences::ensure_preferences_file(&self.preferences) {
+            Ok(path) => {
+                if let Err(err) = open_path_with_system(&path) {
+                    self.set_status(format!(
+                        "Preferences saved at {} but could not be opened: {err}",
+                        path.display()
+                    ));
+                } else {
+                    self.set_status(format!("Opened preferences at {}", path.display()));
+                }
             }
-            Err(err) => {
-                self.set_status(format!("Export failed: {err}"));
-            }
+            Err(err) => self.set_status(format!("Failed to open preferences: {err}")),
         }
         cx.notify();
     }
@@ -388,6 +416,18 @@ impl VellumApp {
             self.refresh_tree(cx);
         }
     }
+}
+
+fn open_path_with_system(path: &std::path::Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("notepad");
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command.arg(path).spawn()?;
+    Ok(())
 }
 
 fn map_workspace_event_for_editor(event: &WorkspaceEvent) -> FileSyncEvent {
