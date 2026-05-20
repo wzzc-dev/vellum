@@ -53,32 +53,6 @@ impl VellumApp {
             .detach();
     }
 
-    pub(super) fn install_dev_extension(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = cx.entity();
-        window
-            .spawn(cx, async move |cx| {
-                let Some(folder) = FileDialog::new().pick_folder() else {
-                    return;
-                };
-                let _ = cx.update_window_entity(&view, |this, _window, cx| {
-                    match this.extension_host.install_dev_extension(folder.clone()) {
-                        Ok(id) => {
-                            this.set_status(format!("Installed dev extension {id}"));
-                            this.open_right_panel(RightPanelView::Plugins, cx);
-                        }
-                        Err(err) => {
-                            this.set_status(format!(
-                                "Failed to install dev extension {}: {err}",
-                                folder.display()
-                            ));
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-    }
-
     fn apply_open_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         if !self.set_workspace_root(Some(folder.clone()), cx) {
             return;
@@ -145,18 +119,6 @@ impl VellumApp {
                 let _ = write_last_opened_path(&path);
                 self.recent_files = crate::path::add_recent_file(&path);
                 self.clear_status();
-                let snapshot = self.editor_snapshot.clone();
-                let event_path = snapshot
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string());
-                self.extension_host.dispatch_event(
-                    "document.opened",
-                    event_path.as_deref().unwrap_or_default(),
-                    &snapshot.document_text,
-                    event_path.as_deref(),
-                );
-                self.drain_extension_outputs(Some(window), cx);
                 cx.notify();
             }
             Err(err) => {
@@ -194,18 +156,6 @@ impl VellumApp {
                 let _ = write_last_opened_path(&path);
                 self.clear_status();
                 self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
-                let snapshot = self.editor_snapshot.clone();
-                let event_path = snapshot
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string());
-                self.extension_host.dispatch_event(
-                    "document.opened",
-                    event_path.as_deref().unwrap_or_default(),
-                    &snapshot.document_text,
-                    event_path.as_deref(),
-                );
-                self.drain_extension_outputs(Some(window), cx);
                 cx.notify();
             }
             Err(err) => {

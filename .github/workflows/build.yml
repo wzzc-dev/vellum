@@ -49,7 +49,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }},wasm32-unknown-unknown
+          targets: ${{ matrix.target }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -67,9 +67,6 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
-
-      - name: Build WASM plugin
-        run: cargo build -p vellum-markdown-lint --target wasm32-unknown-unknown --release
 
       - name: Build Vellum
         run: cargo build --release --target ${{ matrix.target }}

@@ -5,11 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-dirs = "6"
 editor = { path = "../editor" }
 gpui = "0.2.2"
-gpui-component = { version = "0.5.1", features = ["webview"] }
+gpui-component = "0.5.1"
 regex = "1"
 rfd = "0.15"
-vellum-extension = { path = "../extension" }
 workspace = { path = "../workspace" }

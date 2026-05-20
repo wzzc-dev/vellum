@@ -1,12 +1,11 @@
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use anyhow::Result;
 use editor::{
-    BoldSelection, DemoteBlock, EditorDecoration, EditorEvent, EditorSnapshot, ExitBlockEdit,
+    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit,
     FocusNextBlock, FocusPrevBlock, InsertCodeFence, InsertHorizontalRule, InsertTable,
     ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
     ToggleBlockquote, ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3,
@@ -31,10 +30,7 @@ use gpui_component::{
     tree::TreeState,
 };
 use rfd::FileDialog;
-use vellum_extension::ExtensionHost;
 use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
-
-use webview::WebViewManager;
 
 mod command_palette;
 mod commands;
@@ -42,7 +38,6 @@ mod document_io;
 mod frame;
 mod layout;
 mod render;
-mod webview;
 
 actions!(
     vellum,
@@ -54,7 +49,6 @@ actions!(
         SaveAs,
         Quit,
         ToggleSidebar,
-        ToggleRightPanel,
         ToggleStatusBar,
         ToggleFocusMode,
         OpenFindPanel,
@@ -67,8 +61,6 @@ actions!(
         CloseTab,
         PreviousTab,
         NextTab,
-        ManagePlugins,
-        InstallDevExtension,
         OpenCommandPalette,
     ]
 );
@@ -88,13 +80,6 @@ enum SidebarView {
     #[default]
     Files,
     Outline,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-enum RightPanelView {
-    #[default]
-    Plugins,
-    Plugin(String),
 }
 
 /// A single find match: byte offset range in the source document.
@@ -117,11 +102,6 @@ struct VellumApp {
     editor_snapshot: EditorSnapshot,
     sidebar_visible: bool,
     sidebar_view: SidebarView,
-    right_panel_visible: bool,
-    right_panel_view: RightPanelView,
-    right_panel_toggle_visible: bool,
-    right_panel_toggle_hovered: bool,
-    right_panel_toggle_hide_generation: u64,
     status_bar_pinned: bool,
     status_bar_visible: bool,
     status_bar_hovered: bool,
@@ -148,13 +128,9 @@ struct VellumApp {
     // --- file tree rename state ---
     renaming_path: Option<PathBuf>,
     rename_input: Option<Entity<InputState>>,
-    // --- extension system ---
-    extension_host: ExtensionHost,
     // --- pending file opens from drag-drop ---
     pending_file_opens: Vec<PathBuf>,
     recent_files: Vec<PathBuf>,
-    disclosure_state: HashMap<String, bool>,
-    webview_manager: WebViewManager,
     focus_mode: bool,
     command_palette: command_palette::CommandPaletteState,
 }
@@ -175,7 +151,6 @@ pub fn run() -> Result<()> {
                 window.set_window_title("Vellum");
                 let view = cx.new(|cx| VellumApp::new(window, cx));
                 VellumApp::start_background_tasks(&view, window, cx);
-                VellumApp::start_timer_tick_loop(&view, window, cx);
                 cx.new(|cx| Root::new(view, window, cx))
             })
             .expect("failed to open main window");
@@ -204,7 +179,6 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-w", CloseTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-alt-\\", ToggleRightPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
@@ -263,18 +237,6 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     cx.on_action(move |_: &NextTab, cx| {
         update_vellum_app_from_menu(window, cx, |this, window, cx| {
             this.on_next_tab(&NextTab, window, cx);
-        });
-    });
-    let window = main_window;
-    cx.on_action(move |_: &ManagePlugins, cx| {
-        update_vellum_app_from_menu(window, cx, |this, _window, cx| {
-            this.open_right_panel(RightPanelView::Plugins, cx);
-        });
-    });
-    let window = main_window;
-    cx.on_action(move |_: &InstallDevExtension, cx| {
-        update_vellum_app_from_menu(window, cx, |this, window, cx| {
-            this.install_dev_extension(window, cx);
         });
     });
     cx.set_menus(vec![
@@ -367,15 +329,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Toggle Source Mode", ToggleSourceMode),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
-                MenuItem::action("Toggle Right Panel", ToggleRightPanel),
                 MenuItem::action("Toggle Status Bar", ToggleStatusBar),
-            ],
-        },
-        Menu {
-            name: "Plugins".into(),
-            items: vec![
-                MenuItem::action("Manage Plugins...", ManagePlugins),
-                MenuItem::action("Install Dev Extension...", InstallDevExtension),
             ],
         },
     ]);
@@ -471,11 +425,6 @@ impl VellumApp {
             editor_snapshot,
             sidebar_visible: true,
             sidebar_view: SidebarView::Files,
-            right_panel_visible: false,
-            right_panel_view: RightPanelView::Plugins,
-            right_panel_toggle_visible: false,
-            right_panel_toggle_hovered: false,
-            right_panel_toggle_hide_generation: 0,
             status_bar_pinned: false,
             status_bar_visible: true,
             status_bar_hovered: false,
@@ -513,48 +462,12 @@ impl VellumApp {
             ],
             renaming_path: None,
             rename_input: None,
-            extension_host: ExtensionHost::new().unwrap_or_else(|e| {
-                eprintln!("failed to initialize extension host: {}", e);
-                ExtensionHost::new().unwrap()
-            }),
             pending_file_opens: Vec::new(),
             recent_files: crate::path::read_recent_files(),
-            disclosure_state: HashMap::new(),
-            webview_manager: WebViewManager::new(),
             focus_mode: false,
             command_palette: palette_state,
         };
         window.focus(&this.focus_handle);
-
-        // Discover dev extensions registered via Plugins > Install Dev Extension.
-        if let Ok(discovered) = this.extension_host.load_dev_extensions() {
-            for id in &discovered {
-                eprintln!("discovered dev extension: {}", id);
-            }
-        }
-
-        // Discover extensions in ~/.vellum/extensions/
-        if let Some(ext_dir) = dirs::home_dir().map(|d| d.join(".vellum").join("extensions")) {
-            if let Ok(discovered) = this.extension_host.discover_in_dir(&ext_dir) {
-                for id in &discovered {
-                    eprintln!("discovered extension: {}", id);
-                }
-            }
-        }
-
-        // Discover extensions in app bundle directory
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let local_ext_dir = exe_dir.join("extensions");
-                if local_ext_dir.exists() {
-                    if let Ok(discovered) = this.extension_host.discover_in_dir(&local_ext_dir) {
-                        for id in &discovered {
-                            eprintln!("discovered extension: {}", id);
-                        }
-                    }
-                }
-            }
-        }
 
         this.restore_last_opened_document(window, cx);
 
@@ -661,26 +574,6 @@ impl VellumApp {
                         }
                         this.refresh_find_matches();
 
-                        let text = snapshot.document_text.clone();
-                        let path = snapshot
-                            .path
-                            .as_ref()
-                            .map(|p| p.to_string_lossy().to_string());
-                        this.extension_host
-                            .update_document(text.clone(), path.clone());
-                        this.extension_host.dispatch_event(
-                            "document.changed",
-                            snapshot
-                                .path
-                                .as_ref()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default()
-                                .as_str(),
-                            &text,
-                            path.as_deref(),
-                        );
-                        this.drain_extension_outputs(None, cx);
-
                         cx.notify();
                     }
                     EditorEvent::OpenFile(path) => {
@@ -701,34 +594,6 @@ impl VellumApp {
                     if cx
                         .update_window_entity(&view, |this, window, cx| {
                             this.poll_workspace(window, cx);
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-            .detach();
-    }
-
-    fn start_timer_tick_loop(view: &Entity<Self>, window: &mut Window, cx: &mut App) {
-        let view = view.clone();
-        window
-            .spawn(cx, async move |cx| {
-                loop {
-                    Timer::after(std::time::Duration::from_secs(1)).await;
-                    if cx
-                        .update_window_entity(&view, |this, window, cx| {
-                            if !this.extension_host.has_active_timers() {
-                                return;
-                            }
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64;
-                            this.extension_host.dispatch_timer_ticks(now_ms);
-                            this.drain_extension_outputs(Some(window), cx);
-                            cx.notify();
                         })
                         .is_err()
                     {
