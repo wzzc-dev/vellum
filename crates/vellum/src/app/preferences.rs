@@ -51,6 +51,19 @@ pub(super) fn save_preferences(preferences: &AppPreferences) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn ensure_preferences_file(preferences: &AppPreferences) -> Result<std::path::PathBuf> {
+    let Some(path) = preferences_file_path() else {
+        anyhow::bail!("could not resolve application support directory");
+    };
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, serialize_preferences(preferences))?;
+    }
+    Ok(path)
+}
+
 fn parse_preferences(raw: &str) -> AppPreferences {
     let mut preferences = AppPreferences::default();
     for line in raw.lines() {
