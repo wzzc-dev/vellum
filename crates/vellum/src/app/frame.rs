@@ -62,6 +62,8 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.status_bar_pinned = pinned;
+        self.preferences.status_bar_pinned = pinned;
+        self.save_preferences();
         if pinned {
             self.reveal_status_bar(cx);
         } else {
@@ -162,6 +164,8 @@ impl VellumApp {
 
     pub(super) fn toggle_sidebar_visibility(&mut self, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
+        self.preferences.sidebar_visible = self.sidebar_visible;
+        self.save_preferences();
         cx.notify();
     }
 

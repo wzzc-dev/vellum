@@ -168,6 +168,8 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.focus_mode = !self.focus_mode;
+        self.preferences.focus_mode = self.focus_mode;
+        self.save_preferences();
         cx.notify();
     }
 
@@ -301,6 +303,8 @@ impl VellumApp {
             }
             PaletteCommand::ToggleFocusMode => {
                 self.focus_mode = !self.focus_mode;
+                self.preferences.focus_mode = self.focus_mode;
+                self.save_preferences();
             }
             PaletteCommand::ToggleTypewriterMode => {
                 window.dispatch_action(Box::new(editor::ToggleTypewriterMode), cx);
@@ -321,16 +325,16 @@ impl VellumApp {
                 self.export_html_dialog(window, cx);
             }
             PaletteCommand::ThemeDefault => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Default);
+                self.set_syntax_theme(editor::SyntaxTheme::Default);
             }
             PaletteCommand::ThemeDracula => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Dracula);
+                self.set_syntax_theme(editor::SyntaxTheme::Dracula);
             }
             PaletteCommand::ThemeSolarized => {
-                editor::set_syntax_theme(editor::SyntaxTheme::Solarized);
+                self.set_syntax_theme(editor::SyntaxTheme::Solarized);
             }
             PaletteCommand::ThemeGitHub => {
-                editor::set_syntax_theme(editor::SyntaxTheme::GitHub);
+                self.set_syntax_theme(editor::SyntaxTheme::GitHub);
             }
             PaletteCommand::MathBlock => {
                 window.dispatch_action(Box::new(editor::InsertMathBlock), cx);
@@ -340,6 +344,12 @@ impl VellumApp {
         let editor = self.active_editor_entity();
         editor.update(cx, |_, cx| cx.notify());
         cx.notify();
+    }
+
+    fn set_syntax_theme(&mut self, theme: editor::SyntaxTheme) {
+        editor::set_syntax_theme(theme);
+        self.preferences.syntax_theme = theme;
+        self.save_preferences();
     }
 
     pub(super) fn on_palette_enter(
