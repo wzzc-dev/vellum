@@ -362,6 +362,10 @@ impl VellumApp {
             ("Saved", IconName::CircleCheck, cx.theme().success)
         };
         let find_status = self.active_find_status();
+        let active_editor = self.active_editor_entity();
+        let active_editor_state = active_editor.read(cx);
+        let typewriter_enabled = active_editor_state.typewriter_mode();
+        let focus_highlight_enabled = active_editor_state.focus_highlight_mode();
 
         div()
             .id("status-bar")
@@ -401,6 +405,40 @@ impl VellumApp {
                                 .child(find_status),
                         )
                     })
+                    .child(
+                        Button::new("status-typewriter-mode")
+                            .label("Typewriter")
+                            .ghost()
+                            .compact()
+                            .selected(typewriter_enabled)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.active_editor_entity().update(cx, |editor, cx| {
+                                            editor.toggle_typewriter_mode(window, cx);
+                                        });
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("status-focus-highlight")
+                            .label("Focus")
+                            .ghost()
+                            .compact()
+                            .selected(focus_highlight_enabled)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.active_editor_entity().update(cx, |editor, cx| {
+                                            editor.toggle_focus_highlight_mode(cx);
+                                        });
+                                    });
+                                }
+                            }),
+                    )
                     .child(
                         ButtonGroup::new("editor-view-mode-status")
                             .compact()

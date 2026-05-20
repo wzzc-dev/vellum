@@ -140,6 +140,21 @@ impl MarkdownEditor {
         cx.notify();
     }
 
+    pub fn typewriter_mode(&self) -> bool {
+        self.typewriter_mode
+    }
+
+    pub fn focus_highlight_mode(&self) -> bool {
+        self.focus_highlight_mode
+    }
+
+    pub fn goto_line(&mut self, line_number: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let offset = byte_offset_for_line(&self.snapshot.document_text, line_number);
+        let effects = self.controller.select_source_offset(offset);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
     pub fn set_typewriter_mode(
         &mut self,
         enabled: bool,
@@ -970,6 +985,25 @@ impl MarkdownEditor {
     }
 }
 
+fn byte_offset_for_line(text: &str, line_number: usize) -> usize {
+    let target_line = line_number.max(1);
+    if target_line == 1 {
+        return 0;
+    }
+
+    let mut current_line = 1;
+    for (offset, ch) in text.char_indices() {
+        if ch == '\n' {
+            current_line += 1;
+            if current_line == target_line {
+                return offset + ch.len_utf8();
+            }
+        }
+    }
+
+    text.len()
+}
+
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
     let range = snapshot.selection.range();
     snapshot.display_map.blocks.iter().any(|block| {
@@ -1226,6 +1260,17 @@ mod tests {
         text_content_x_offset,
     };
     use crate::{BlockKind, RenderSpanKind, SelectionAffinity};
+
+    #[test]
+    fn byte_offset_for_line_clamps_and_preserves_utf8_boundaries() {
+        let text = "一行\nsecond\n三";
+
+        assert_eq!(byte_offset_for_line(text, 0), 0);
+        assert_eq!(byte_offset_for_line(text, 1), 0);
+        assert_eq!(byte_offset_for_line(text, 2), "一行\n".len());
+        assert_eq!(byte_offset_for_line(text, 3), "一行\nsecond\n".len());
+        assert_eq!(byte_offset_for_line(text, 99), text.len());
+    }
 
     #[test]
     fn heading_enter_shows_single_caret_in_empty_following_block() {

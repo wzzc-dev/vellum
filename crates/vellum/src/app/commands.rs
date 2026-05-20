@@ -30,10 +30,21 @@ impl VellumApp {
         if self.command_palette.is_visible() {
             self.command_palette.hide();
             window.focus(&self.focus_handle);
+        } else if self.goto_line_visible {
+            self.close_goto_line(window, cx);
         } else {
             self.close_find_panel();
         }
         cx.notify();
+    }
+
+    pub(super) fn on_open_goto_line(
+        &mut self,
+        _: &OpenGotoLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_goto_line(window, cx);
     }
 
     pub(super) fn on_find_next_match(
@@ -282,6 +293,15 @@ impl VellumApp {
             PaletteCommand::ToggleFocusMode => {
                 self.focus_mode = !self.focus_mode;
             }
+            PaletteCommand::ToggleTypewriterMode => {
+                window.dispatch_action(Box::new(editor::ToggleTypewriterMode), cx);
+            }
+            PaletteCommand::ToggleFocusHighlightMode => {
+                window.dispatch_action(Box::new(editor::ToggleFocusHighlightMode), cx);
+            }
+            PaletteCommand::GotoLine => {
+                self.open_goto_line(window, cx);
+            }
             PaletteCommand::FindPanel => {
                 self.open_find_panel();
             }
@@ -338,6 +358,42 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.select_next();
+        cx.notify();
+    }
+
+    pub(super) fn open_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette.hide();
+        self.goto_line_visible = true;
+        self.goto_line_query.clear();
+        self.goto_line_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
+        let focus = self.goto_line_input.focus_handle(cx);
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    pub(super) fn close_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.goto_line_visible = false;
+        self.goto_line_query.clear();
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    pub(super) fn apply_goto_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.goto_line_query.trim();
+        let Ok(line_number) = query.parse::<usize>() else {
+            self.set_status("Enter a line number".to_string());
+            cx.notify();
+            return;
+        };
+
+        self.goto_line_visible = false;
+        self.goto_line_query.clear();
+        self.active_editor_entity().update(cx, |editor, cx| {
+            editor.goto_line(line_number, window, cx);
+        });
+        self.set_status(format!("Moved to line {line_number}"));
         cx.notify();
     }
 }
