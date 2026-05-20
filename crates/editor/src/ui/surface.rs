@@ -103,6 +103,8 @@ struct RenderPalette {
     code_background: Hsla,
     border_color: Hsla,
     blockquote_bar: Hsla,
+    callout_bar: Hsla,
+    callout_background: Hsla,
     code_surface_background: Hsla,
     find_match_color: Hsla,
     find_active_match_color: Hsla,
@@ -667,6 +669,8 @@ pub(super) fn render_document_surface(
         code_background: fg.opacity(0.08),
         border_color: fg.opacity(0.12),
         blockquote_bar: fg.opacity(0.18),
+        callout_bar: syntax_theme.link_color(is_dark).opacity(0.55),
+        callout_background: syntax_theme.link_color(is_dark).opacity(0.08),
         code_surface_background: fg.opacity(0.04),
         find_match_color: fg.opacity(0.12),
         find_active_match_color: fg.opacity(0.30),
@@ -1004,6 +1008,24 @@ fn render_display_block(
                     .w(px(BLOCKQUOTE_BAR_WIDTH))
                     .min_h(px(presentation.line_height))
                     .bg(palette.blockquote_bar),
+            )
+            .child(text_area)
+            .into_any_element(),
+        BlockKind::Callout { .. } => div()
+            .w_full()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(palette.callout_bar.opacity(0.35))
+            .bg(palette.callout_background)
+            .px_3()
+            .py_2()
+            .flex()
+            .gap(px(DECORATION_GAP_X))
+            .child(
+                div()
+                    .w(px(BLOCKQUOTE_BAR_WIDTH))
+                    .min_h(px(presentation.line_height))
+                    .bg(palette.callout_bar),
             )
             .child(text_area)
             .into_any_element(),
