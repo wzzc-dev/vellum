@@ -7,6 +7,7 @@ use anyhow::Result;
 
 const APP_STATE_DIR_NAME: &str = "Vellum";
 const LAST_OPENED_FILE_NAME: &str = "last-opened.txt";
+const PREFERENCES_FILE_NAME: &str = "preferences.conf";
 const RECENT_FILES_NAME: &str = "recent-files.txt";
 const MAX_RECENT_FILES: usize = 20;
 
@@ -64,6 +65,10 @@ pub(crate) fn app_state_dir() -> Option<PathBuf> {
 
 pub(crate) fn last_opened_file_path() -> Option<PathBuf> {
     app_state_dir().map(|dir| dir.join(LAST_OPENED_FILE_NAME))
+}
+
+pub(crate) fn preferences_file_path() -> Option<PathBuf> {
+    app_state_dir().map(|dir| dir.join(PREFERENCES_FILE_NAME))
 }
 
 pub(crate) fn read_recent_files() -> Vec<PathBuf> {

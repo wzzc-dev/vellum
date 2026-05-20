@@ -38,6 +38,7 @@ mod document_io;
 mod export;
 mod frame;
 mod layout;
+mod preferences;
 mod render;
 
 actions!(
@@ -139,6 +140,7 @@ struct VellumApp {
     recent_files: Vec<PathBuf>,
     focus_mode: bool,
     command_palette: command_palette::CommandPaletteState,
+    preferences: preferences::AppPreferences,
 }
 
 pub fn run() -> Result<()> {
@@ -379,7 +381,13 @@ fn install_app_menus(_: &mut App, _: WindowHandle<Root>) {}
 impl VellumApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree_state = cx.new(|cx| TreeState::new(cx));
+        let preferences = preferences::load_preferences();
+        editor::set_syntax_theme(preferences.syntax_theme);
         let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        editor.update(cx, |editor, cx| {
+            editor.set_typewriter_mode(preferences.typewriter_mode, window, cx);
+            editor.set_focus_highlight_mode(preferences.focus_highlight_mode, cx);
+        });
         let focus_handle = cx.focus_handle();
         let editor_snapshot = editor.read(cx).snapshot();
         let find_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
@@ -401,6 +409,14 @@ impl VellumApp {
                 EditorEvent::OpenFile(path) => {
                     this.pending_file_opens.push(path.clone());
                     cx.notify();
+                }
+                EditorEvent::ViewSettingsChanged {
+                    typewriter_mode,
+                    focus_highlight_mode,
+                } => {
+                    this.preferences.typewriter_mode = *typewriter_mode;
+                    this.preferences.focus_highlight_mode = *focus_highlight_mode;
+                    this.save_preferences();
                 }
             });
 
@@ -457,10 +473,10 @@ impl VellumApp {
             active_tab_index: 0,
             focus_handle,
             editor_snapshot,
-            sidebar_visible: true,
+            sidebar_visible: preferences.sidebar_visible,
             sidebar_view: SidebarView::Files,
-            status_bar_pinned: false,
-            status_bar_visible: true,
+            status_bar_pinned: preferences.status_bar_pinned,
+            status_bar_visible: preferences.status_bar_pinned,
             status_bar_hovered: false,
             status_bar_edge_hovered: false,
             status_bar_hide_generation: 0,
@@ -502,8 +518,9 @@ impl VellumApp {
             rename_input: None,
             pending_file_opens: Vec::new(),
             recent_files: crate::path::read_recent_files(),
-            focus_mode: false,
+            focus_mode: preferences.focus_mode,
             command_palette: palette_state,
+            preferences,
         };
         window.focus(&this.focus_handle);
 
@@ -518,6 +535,28 @@ impl VellumApp {
 
     fn active_editor_entity(&self) -> Entity<MarkdownEditor> {
         self.tabs[self.active_tab_index].editor.clone()
+    }
+
+    fn new_configured_editor(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<MarkdownEditor> {
+        let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        self.apply_editor_preferences(&editor, window, cx);
+        editor
+    }
+
+    fn apply_editor_preferences(
+        &self,
+        editor: &Entity<MarkdownEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        editor.update(cx, |editor, cx| {
+            editor.set_typewriter_mode(self.preferences.typewriter_mode, window, cx);
+            editor.set_focus_highlight_mode(self.preferences.focus_highlight_mode, cx);
+        });
     }
 
     fn active_editor_mut(&mut self) -> Option<&mut Entity<MarkdownEditor>> {
@@ -618,8 +657,22 @@ impl VellumApp {
                         this.pending_file_opens.push(path.clone());
                         cx.notify();
                     }
+                    EditorEvent::ViewSettingsChanged {
+                        typewriter_mode,
+                        focus_highlight_mode,
+                    } => {
+                        this.preferences.typewriter_mode = *typewriter_mode;
+                        this.preferences.focus_highlight_mode = *focus_highlight_mode;
+                        this.save_preferences();
+                    }
                 });
             self.find_input_subscriptions.push(subscription);
+        }
+    }
+
+    fn save_preferences(&mut self) {
+        if let Err(err) = preferences::save_preferences(&self.preferences) {
+            self.set_status(format!("Failed to save preferences: {err}"));
         }
     }
 

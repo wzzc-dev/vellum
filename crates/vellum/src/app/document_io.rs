@@ -100,7 +100,7 @@ impl VellumApp {
             }
         }
 
-        let new_editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        let new_editor = self.new_configured_editor(window, cx);
         let open_result =
             new_editor.update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
         match open_result {
@@ -174,7 +174,7 @@ impl VellumApp {
             .as_ref()
             .map(|root| next_untitled_path(root));
 
-        let new_editor = cx.new(|cx| MarkdownEditor::new(window, cx));
+        let new_editor = self.new_configured_editor(window, cx);
         new_editor.update(cx, |editor, cx| {
             editor.new_untitled(suggested_path.clone(), window, cx);
         });
@@ -533,7 +533,7 @@ impl VellumApp {
                 }
                 // Ensure at least one tab exists
                 if self.tabs.is_empty() {
-                    let new_editor = cx.new(|cx| MarkdownEditor::new(_window, cx));
+                    let new_editor = self.new_configured_editor(_window, cx);
                     self.tabs.push(EditorTab { editor: new_editor });
                     self.active_tab_index = 0;
                     self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();

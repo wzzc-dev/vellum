@@ -36,6 +36,10 @@ use super::{
 pub enum EditorEvent {
     Changed(EditorSnapshot),
     OpenFile(std::path::PathBuf),
+    ViewSettingsChanged {
+        typewriter_mode: bool,
+        focus_highlight_mode: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,11 +136,13 @@ impl MarkdownEditor {
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
+        self.emit_view_settings_changed(cx);
         cx.notify();
     }
 
     pub fn toggle_focus_highlight_mode(&mut self, cx: &mut Context<Self>) {
         self.focus_highlight_mode = !self.focus_highlight_mode;
+        self.emit_view_settings_changed(cx);
         cx.notify();
     }
 
@@ -165,6 +171,11 @@ impl MarkdownEditor {
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
+        cx.notify();
+    }
+
+    pub fn set_focus_highlight_mode(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.focus_highlight_mode = enabled;
         cx.notify();
     }
 
@@ -210,6 +221,13 @@ impl MarkdownEditor {
         let snapshot = self.snapshot();
         cx.emit(EditorEvent::Changed(snapshot));
         cx.notify();
+    }
+
+    fn emit_view_settings_changed(&mut self, cx: &mut Context<Self>) {
+        cx.emit(EditorEvent::ViewSettingsChanged {
+            typewriter_mode: self.typewriter_mode,
+            focus_highlight_mode: self.focus_highlight_mode,
+        });
     }
 
     pub(super) fn check_slash_command(&mut self) {
