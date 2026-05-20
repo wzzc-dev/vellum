@@ -11,19 +11,18 @@ use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Entity, FontStyle, FontWeight, Hsla,
     InteractiveElement, IntoElement, IsZero, MouseButton, MouseMoveEvent, ObjectFit, PaintQuad,
     ParentElement, ScrollHandle, SharedString, StatefulInteractiveElement, StrikethroughStyle,
-    Styled, StyledImage, StyledText, TextRun, TextStyle, UnderlineStyle, WhiteSpace, Window,
+    Styled, StyledImage, StyledText, TextStyle, UnderlineStyle, WhiteSpace, Window,
     canvas, div, fill, img, point, px, size,
 };
 use gpui_component::{
     ActiveTheme,
     button::{Button, ButtonVariants as _},
     menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
-    tooltip::Tooltip,
 };
 
 use crate::{
-    BlockKind, EditCommand, EditorDecoration, RenderBlock, RenderSpan, RenderSpanKind,
-    RenderSpanMeta, SelectionState,
+    BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, RenderSpanMeta,
+    SelectionState,
     core::{
         controller::EditorSnapshot,
         table::{TABLE_COLUMN_GAP, TableModel, char_display_width, str_display_width},
@@ -127,7 +126,6 @@ struct RenderPalette {
 
 #[derive(Clone)]
 struct BlockOverlay {
-    extension_decoration_quads: Vec<PaintQuad>,
     find_highlight_quads: Vec<PaintQuad>,
     selection_quads: Vec<PaintQuad>,
     caret_quad: Option<PaintQuad>,
@@ -639,7 +637,6 @@ pub(super) fn render_document_surface(
     scroll_handle: ScrollHandle,
     floating_panel_block_id: Option<u64>,
     mut floating_panel: Option<AnyElement>,
-    extension_decorations: Vec<EditorDecoration>,
     math_render_cache: Rc<RefCell<crate::core::math_render::MathRenderCache>>,
     window: &mut Window,
     cx: &mut Context<MarkdownEditor>,
@@ -850,7 +847,6 @@ pub(super) fn render_document_surface(
                 } else {
                     None
                 },
-                &extension_decorations,
                 math_render_cache.clone(),
                 window,
             ));
@@ -875,7 +871,6 @@ fn render_display_block(
     palette: RenderPalette,
     block_opacity: f32,
     floating_panel: Option<AnyElement>,
-    extension_decorations: &[EditorDecoration],
     math_render_cache: Rc<RefCell<crate::core::math_render::MathRenderCache>>,
     window: &mut Window,
 ) -> AnyElement {
@@ -905,22 +900,6 @@ fn render_display_block(
             }
         })
         .collect();
-    let visible_extension_ranges: Vec<std::ops::Range<usize>> = extension_decorations
-        .iter()
-        .filter_map(|decoration| {
-            let visible_start = display_map.source_to_visible(decoration.start);
-            let visible_end = display_map.source_to_visible(decoration.end);
-            (visible_start < visible_end).then_some(visible_start..visible_end)
-        })
-        .collect();
-    let block_visible_end_for_tooltip = rendered_visible_end(block);
-    let extension_tooltip = extension_decorations.iter().find_map(|decoration| {
-        let tooltip = decoration.tooltip.as_ref()?;
-        let visible_start = display_map.source_to_visible(decoration.start);
-        let visible_end = display_map.source_to_visible(decoration.end);
-        (visible_start < block_visible_end_for_tooltip && visible_end > block.visible_range.start)
-            .then(|| tooltip.clone())
-    });
     let block_id = block.id;
     let block_clone = block.clone();
     let overlay_block = block.clone();
@@ -951,7 +930,7 @@ fn render_display_block(
                 window,
             ),
             BlockKind::ThematicBreak => render_thematic_break(palette),
-            BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &visible_extension_ranges, &math_render_cache),
+            BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
@@ -967,17 +946,12 @@ fn render_display_block(
                     ),
                     |this| this.font_family(MONOSPACE_FONT_FAMILY),
                 )
-                .child(styled_text_for_block(
-                    &block_clone,
-                    palette,
-                    window,
-                    &visible_extension_ranges,
-                ))
+                .child(styled_text_for_block(&block_clone, palette, window))
                 .into_any_element(),
         }
     };
 
-    let text_area_el = div()
+    let text_area = div()
         .relative()
         .min_w(px(0.))
         .w_full()
@@ -997,14 +971,10 @@ fn render_display_block(
                         bounds,
                         palette,
                         &visible_find_ranges,
-                        &visible_extension_ranges,
                         window,
                     )
                 },
                 move |_, overlay, window, _| {
-                    for quad in overlay.extension_decoration_quads {
-                        window.paint_quad(quad);
-                    }
                     for quad in overlay.find_highlight_quads {
                         window.paint_quad(quad);
                     }
@@ -1021,14 +991,8 @@ fn render_display_block(
             .left(px(0.))
             .right(px(0.))
             .bottom(px(0.)),
-        );
-    let text_area = match extension_tooltip {
-        Some(tooltip) => text_area_el
-            .id(("extension-decoration-tooltip", block_id))
-            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-            .into_any_element(),
-        None => text_area_el.into_any_element(),
-    };
+        )
+        .into_any_element();
 
     let content = match &block.kind {
         BlockKind::Blockquote => div()
@@ -1273,18 +1237,8 @@ fn build_block_overlay(
     bounds: Bounds<gpui::Pixels>,
     palette: RenderPalette,
     visible_find_ranges: &[(std::ops::Range<usize>, bool)],
-    visible_extension_ranges: &[std::ops::Range<usize>],
     window: &mut Window,
 ) -> BlockOverlay {
-    let extension_decoration_quads = extension_decoration_quads_for_block(
-        blocks,
-        block_index,
-        block,
-        visible_extension_ranges,
-        bounds,
-        palette,
-        window,
-    );
     let find_highlight_quads = find_highlight_quads_for_block(
         blocks,
         block_index,
@@ -1316,44 +1270,10 @@ fn build_block_overlay(
     };
 
     BlockOverlay {
-        extension_decoration_quads,
         find_highlight_quads,
         selection_quads,
         caret_quad,
     }
-}
-
-fn extension_decoration_quads_for_block(
-    blocks: &[RenderBlock],
-    block_index: usize,
-    block: &RenderBlock,
-    visible_ranges: &[std::ops::Range<usize>],
-    bounds: Bounds<gpui::Pixels>,
-    palette: RenderPalette,
-    window: &mut Window,
-) -> Vec<PaintQuad> {
-    let block_visible_end = rendered_visible_end(block);
-    let color = palette.text_color.opacity(0.12);
-    let mut quads = Vec::new();
-    for visible_range in visible_ranges {
-        let start = visible_range.start.max(block.visible_range.start);
-        let end = visible_range.end.min(block_visible_end);
-        if start >= end {
-            continue;
-        }
-        let local_range = start.saturating_sub(block.visible_range.start)
-            ..end.saturating_sub(block.visible_range.start);
-        quads.extend(highlight_quads_for_block_range(
-            blocks,
-            block_index,
-            block,
-            local_range,
-            bounds,
-            color,
-            window,
-        ));
-    }
-    quads
 }
 
 fn find_highlight_quads_for_block(
@@ -1738,7 +1658,6 @@ fn styled_text_for_block(
     block: &RenderBlock,
     palette: RenderPalette,
     window: &Window,
-    visible_extension_ranges: &[Range<usize>],
 ) -> StyledText {
     let text = rendered_text_for_block(block);
     if text.is_empty() {
@@ -1757,78 +1676,10 @@ fn styled_text_for_block(
             span.meta.as_ref(),
             palette,
         );
-        push_fragment_runs_with_extension_decorations(
-            &mut runs,
-            &span.visible_text,
-            span.visible_range.clone(),
-            &style,
-            visible_extension_ranges,
-            palette,
-        );
+        runs.push(style.to_run(span.visible_text.len()));
     }
 
     StyledText::new(text).with_runs(runs)
-}
-
-fn push_fragment_runs_with_extension_decorations(
-    runs: &mut Vec<TextRun>,
-    text: &str,
-    visible_range: Range<usize>,
-    base_style: &TextStyle,
-    decoration_ranges: &[Range<usize>],
-    palette: RenderPalette,
-) {
-    if decoration_ranges.is_empty() {
-        runs.push(base_style.clone().to_run(text.len()));
-        return;
-    }
-
-    let mut cuts = vec![0, text.len()];
-    for range in decoration_ranges {
-        let start = range.start.max(visible_range.start);
-        let end = range.end.min(visible_range.end);
-        if start < end {
-            cuts.push(start.saturating_sub(visible_range.start));
-            cuts.push(end.saturating_sub(visible_range.start));
-        }
-    }
-    cuts.sort_unstable();
-    cuts.dedup();
-
-    for pair in cuts.windows(2) {
-        let start = pair[0];
-        let end = pair[1];
-        if start >= end {
-            continue;
-        }
-
-        let segment = (visible_range.start + start)..(visible_range.start + end);
-        let mut style = base_style.clone();
-        if decoration_ranges
-            .iter()
-            .any(|range| range.start < segment.end && range.end > segment.start)
-        {
-            style.underline = Some(UnderlineStyle {
-                thickness: px(1.5),
-                color: Some(extension_underline_color(palette)),
-                wavy: true,
-            });
-        }
-        runs.push(style.to_run(end - start));
-    }
-}
-
-fn extension_underline_color(palette: RenderPalette) -> Hsla {
-    Hsla {
-        h: 0.0,
-        s: 0.75,
-        l: if palette.text_color.l > 0.5 {
-            0.45
-        } else {
-            0.62
-        },
-        a: 1.0,
-    }
 }
 
 fn render_image_block(
@@ -1953,7 +1804,7 @@ fn render_table_block(
                 .text_size(px(BODY_FONT_SIZE))
                 .line_height(px(BODY_LINE_HEIGHT))
                 .font_family(MONOSPACE_FONT_FAMILY)
-                .child(styled_text_for_block(block, palette, window, &[])),
+                .child(styled_text_for_block(block, palette, window)),
         )
         .into_any_element()
 }
@@ -2488,7 +2339,6 @@ fn render_math_block(
     block: &RenderBlock,
     palette: RenderPalette,
     window: &Window,
-    _visible_extension_ranges: &[Range<usize>],
     math_render_cache: &Rc<RefCell<crate::core::math_render::MathRenderCache>>,
 ) -> AnyElement {
     let source = block

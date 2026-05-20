@@ -132,15 +132,6 @@ impl VellumApp {
         self.toggle_sidebar_visibility(cx);
     }
 
-    pub(super) fn on_toggle_right_panel(
-        &mut self,
-        _: &ToggleRightPanel,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_right_panel_visibility(cx);
-    }
-
     pub(super) fn on_toggle_status_bar(
         &mut self,
         _: &ToggleStatusBar,
@@ -190,24 +181,6 @@ impl VellumApp {
             let index = (self.active_tab_index + 1) % self.tabs.len();
             self.switch_to_tab(index, window, cx);
         }
-    }
-
-    pub(super) fn on_manage_plugins(
-        &mut self,
-        _: &ManagePlugins,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_right_panel(RightPanelView::Plugins, cx);
-    }
-
-    pub(super) fn on_install_dev_extension(
-        &mut self,
-        _: &InstallDevExtension,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.install_dev_extension(window, cx);
     }
 
     pub(super) fn on_open_command_palette(

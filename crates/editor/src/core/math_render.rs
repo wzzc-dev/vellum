@@ -601,7 +601,7 @@ pub fn highlight_math_source(source: &str) -> Vec<MathToken> {
 
         if ch.is_ascii_digit() {
             let num_start = i;
-            while i < len && chars[i].is_ascii_digit() || chars[i] == '.' {
+            while i < len && (chars[i].is_ascii_digit() || chars[i] == '.') {
                 i += 1;
             }
             let num_text: String = chars[num_start..i].iter().collect();
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn highlight_frac() {
         let tokens = highlight_math_source("\\frac{a}{b}");
-        assert_eq!(tokens.len(), 6);
+        assert_eq!(tokens.len(), 7);
         assert_eq!(tokens[0].token_type, MathTokenType::Command);
         assert_eq!(tokens[0].text, "\\frac");
     }

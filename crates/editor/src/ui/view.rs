@@ -38,13 +38,6 @@ pub enum EditorEvent {
     OpenFile(std::path::PathBuf),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditorDecoration {
-    pub start: usize,
-    pub end: usize,
-    pub tooltip: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SurfaceSelectionAnchor {
     pub(super) source_offset: usize,
@@ -72,7 +65,6 @@ pub struct MarkdownEditor {
     pub(super) math_completion_panel: MathCompletionPanel,
     scroll_target: Option<gpui::Point<gpui::Pixels>>,
     scroll_animation_generation: u64,
-    pub(super) extension_decorations: Vec<EditorDecoration>,
     pub(super) math_render_cache: Rc<RefCell<MathRenderCache>>,
 }
 
@@ -127,7 +119,6 @@ impl MarkdownEditor {
             math_completion_panel: MathCompletionPanel::new(),
             scroll_target: None,
             scroll_animation_generation: 0,
-            extension_decorations: Vec::new(),
             math_render_cache: Rc::new(RefCell::new(MathRenderCache::new())),
         }
     }
@@ -159,15 +150,6 @@ impl MarkdownEditor {
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
-        cx.notify();
-    }
-
-    pub fn set_extension_decorations(
-        &mut self,
-        decorations: Vec<EditorDecoration>,
-        cx: &mut Context<Self>,
-    ) {
-        self.extension_decorations = decorations;
         cx.notify();
     }
 
@@ -1214,7 +1196,6 @@ impl Render for MarkdownEditor {
                                                     );
                                                     slash_panel.or(math_panel)
                                                 },
-                                                self.extension_decorations.clone(),
                                                 self.math_render_cache.clone(),
                                                 window,
                                                 cx,

@@ -48,5 +48,5 @@ pub use core::{
     RenderSpan, RenderSpanKind, RenderSpanMeta, SelectionAffinity, SelectionModel, SelectionState,
     SyncPolicy, SyncState, Transaction,
 };
-pub use ui::{EditorDecoration, EditorEvent, MarkdownEditor, bind_keys};
+pub use ui::{EditorEvent, MarkdownEditor, bind_keys};
 pub use ui::theme::{SyntaxTheme, get_syntax_theme, set_syntax_theme};

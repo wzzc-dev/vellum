@@ -9,7 +9,7 @@ pub mod theme;
 mod view;
 
 pub use commands::bind_keys;
-pub use view::{EditorDecoration, EditorEvent, MarkdownEditor};
+pub use view::{EditorEvent, MarkdownEditor};
 
 pub(crate) const EDITOR_CONTEXT: &str = "MarkdownEditor";
 pub(crate) const MAX_EDITOR_WIDTH: f32 = 780.;
