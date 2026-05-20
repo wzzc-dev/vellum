@@ -10,7 +10,8 @@ use editor::{
     ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
     ToggleBlockquote, ToggleBulletList, ToggleHeading1, ToggleHeading2, ToggleHeading3,
     ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleOrderedList, ToggleParagraph,
-    ToggleSourceMode, UndoEdit, bind_keys as bind_editor_keys,
+    ToggleFocusHighlightMode, ToggleSourceMode, ToggleTypewriterMode, UndoEdit,
+    bind_keys as bind_editor_keys,
 };
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -51,6 +52,7 @@ actions!(
         ToggleSidebar,
         ToggleStatusBar,
         ToggleFocusMode,
+        OpenGotoLine,
         OpenFindPanel,
         CloseFindPanel,
         FindNextMatch,
@@ -122,6 +124,9 @@ struct VellumApp {
     find_query_input: Entity<InputState>,
     replace_query_input: Entity<InputState>,
     outline_filter_input: Entity<InputState>,
+    goto_line_visible: bool,
+    goto_line_query: String,
+    goto_line_input: Entity<InputState>,
     /// Kept alive to keep subscriptions active.
     #[allow(dead_code)]
     find_input_subscriptions: Vec<Subscription>,
@@ -180,6 +185,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-l", OpenGotoLine, None),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
 
@@ -196,6 +202,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-l", OpenGotoLine, None),
         KeyBinding::new("ctrl-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
 }
@@ -321,12 +328,18 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Find and Replace", OpenFindReplacePanel),
                 MenuItem::action("Find Next", FindNextMatch),
                 MenuItem::action("Find Previous", FindPreviousMatch),
+                MenuItem::separator(),
+                MenuItem::action("Go to Line", OpenGotoLine),
             ],
         },
         Menu {
             name: "View".into(),
             items: vec![
                 MenuItem::action("Toggle Source Mode", ToggleSourceMode),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Focus Mode", ToggleFocusMode),
+                MenuItem::action("Toggle Typewriter Mode", ToggleTypewriterMode),
+                MenuItem::action("Toggle Focus Highlight", ToggleFocusHighlightMode),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Status Bar", ToggleStatusBar),
@@ -363,6 +376,7 @@ impl VellumApp {
         let replace_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Replace"));
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
+        let goto_line_input = cx.new(|cx| InputState::new(window, cx).placeholder("Go to line"));
 
         let editor_subscription =
             cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
@@ -411,6 +425,16 @@ impl VellumApp {
             },
         );
 
+        let goto_line_input_subscription = cx.subscribe(
+            &goto_line_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.goto_line_query = this.goto_line_input.read(cx).value().to_string();
+                    cx.notify();
+                }
+            },
+        );
+
         let palette_state = command_palette::CommandPaletteState::new(
             cx.new(|cx| InputState::new(window, cx).placeholder("Search commands...")),
         );
@@ -444,11 +468,15 @@ impl VellumApp {
             find_query_input,
             replace_query_input,
             outline_filter_input,
+            goto_line_visible: false,
+            goto_line_query: String::new(),
+            goto_line_input,
             find_input_subscriptions: vec![
                 editor_subscription,
                 find_input_subscription,
                 replace_input_subscription,
                 outline_input_subscription,
+                goto_line_input_subscription,
                 cx.subscribe(
                     &palette_state.input,
                     |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {

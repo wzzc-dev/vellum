@@ -131,10 +131,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-enter", SecondaryEnter, Some(EDITOR_CONTEXT)),
         KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(EDITOR_CONTEXT)),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-l", GotoLine, Some(EDITOR_CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-l", GotoLine, Some(EDITOR_CONTEXT)),
-        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", BoldSelection, Some(GPUI_COMPONENT_INPUT_CONTEXT)),

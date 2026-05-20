@@ -25,6 +25,9 @@ pub(crate) enum PaletteCommand {
     ToggleSidebar,
     ToggleStatusBar,
     ToggleFocusMode,
+    ToggleTypewriterMode,
+    ToggleFocusHighlightMode,
+    GotoLine,
     FindPanel,
     FindReplace,
     Undo,
@@ -173,8 +176,26 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
     CommandItem {
         label: "Toggle Focus Mode",
         keywords: &["focus", "专注"],
-        description: "Toggle focus mode",
+        description: "Hide chrome for distraction-free writing",
         command: PaletteCommand::ToggleFocusMode,
+    },
+    CommandItem {
+        label: "Toggle Typewriter Mode",
+        keywords: &["typewriter", "typing", "打字机"],
+        description: "Keep the active line near the vertical center",
+        command: PaletteCommand::ToggleTypewriterMode,
+    },
+    CommandItem {
+        label: "Toggle Focus Highlight",
+        keywords: &["focus", "highlight", "sentence", "paragraph", "高亮"],
+        description: "Dim surrounding blocks while writing",
+        command: PaletteCommand::ToggleFocusHighlightMode,
+    },
+    CommandItem {
+        label: "Go to Line",
+        keywords: &["goto", "line", "jump", "跳转", "行"],
+        description: "Jump to a source line number",
+        command: PaletteCommand::GotoLine,
     },
     CommandItem {
         label: "Find",

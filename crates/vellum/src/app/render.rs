@@ -560,6 +560,83 @@ impl VellumApp {
             .into_any_element()
     }
 
+    pub(super) fn render_goto_line_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let view = cx.entity();
+        let input = self.goto_line_input.clone();
+        let line_count = self.editor_snapshot.document_text.lines().count().max(1);
+
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border.opacity(0.18))
+            .bg(cx.theme().background)
+            .on_action(cx.listener(
+                |this, _: &gpui_component::input::Enter, window, cx| {
+                    this.apply_goto_line(window, cx);
+                },
+            ))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Go to line"),
+            )
+            .child(Input::new(&input).w(px(160.)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("1-{line_count}")),
+            )
+            .child(
+                div()
+                    .id("goto-line-submit-btn")
+                    .px_2()
+                    .py(px(2.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().foreground)
+                    .text_xs()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.apply_goto_line(window, cx);
+                            });
+                        }
+                    })
+                    .child("Go"),
+            )
+            .child(
+                div()
+                    .id("goto-line-close-btn")
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .text_color(cx.theme().muted_foreground)
+                    .text_sm()
+                    .hover(|style| style.bg(cx.theme().secondary.opacity(0.12)))
+                    .on_click(move |_, window, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.close_goto_line(window, cx);
+                        });
+                    })
+                    .child("✕"),
+            )
+            .into_any_element()
+    }
+
     fn render_sidebar(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let body = match self.sidebar_view {
@@ -632,6 +709,9 @@ impl Render for VellumApp {
             .when(self.find_panel_visible, |this| {
                 this.child(self.render_find_bar(cx))
             })
+            .when(self.goto_line_visible, |this| {
+                this.child(self.render_goto_line_bar(cx))
+            })
             .child(
                 div()
                     .flex_1()
@@ -683,6 +763,7 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_toggle_status_bar))
             .on_action(cx.listener(Self::on_toggle_focus_mode))
+            .on_action(cx.listener(Self::on_open_goto_line))
             .on_action(cx.listener(Self::on_open_find_panel))
             .on_action(cx.listener(Self::on_close_find_panel))
             .on_action(cx.listener(Self::on_find_next_match))
