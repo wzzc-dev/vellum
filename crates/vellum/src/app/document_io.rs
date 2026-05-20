@@ -418,14 +418,25 @@ impl VellumApp {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn open_path_with_system(path: &std::path::Path) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "windows")]
-    let mut command = std::process::Command::new("notepad");
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let mut command = std::process::Command::new("xdg-open");
+    std::process::Command::new("open")
+        .arg("-t")
+        .arg(path)
+        .spawn()?;
+    Ok(())
+}
 
+#[cfg(target_os = "windows")]
+fn open_path_with_system(path: &std::path::Path) -> Result<()> {
+    let mut command = std::process::Command::new("notepad");
+    command.arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn open_path_with_system(path: &std::path::Path) -> Result<()> {
+    let mut command = std::process::Command::new("xdg-open");
     command.arg(path).spawn()?;
     Ok(())
 }
