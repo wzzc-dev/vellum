@@ -5,6 +5,8 @@ pub(crate) mod document;
 pub(crate) mod markdown_highlight;
 pub(crate) mod math_completion;
 pub(crate) mod math_render;
+#[cfg(test)]
+mod quality;
 pub(crate) mod syntax;
 pub(crate) mod table;
 pub mod text_ops;
