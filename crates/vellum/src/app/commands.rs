@@ -134,6 +134,15 @@ impl VellumApp {
         }
     }
 
+    pub(super) fn on_export_html(
+        &mut self,
+        _: &ExportHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_html_dialog(window, cx);
+    }
+
     pub(super) fn on_toggle_sidebar(
         &mut self,
         _: &ToggleSidebar,
@@ -307,6 +316,9 @@ impl VellumApp {
             }
             PaletteCommand::FindReplace => {
                 self.open_find_replace_panel();
+            }
+            PaletteCommand::ExportHtml => {
+                self.export_html_dialog(window, cx);
             }
             PaletteCommand::ThemeDefault => {
                 editor::set_syntax_theme(editor::SyntaxTheme::Default);

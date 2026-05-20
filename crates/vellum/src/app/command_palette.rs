@@ -30,6 +30,7 @@ pub(crate) enum PaletteCommand {
     GotoLine,
     FindPanel,
     FindReplace,
+    ExportHtml,
     Undo,
     Redo,
     ThemeDefault,
@@ -208,6 +209,12 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         keywords: &["replace", "查找替换"],
         description: "Open find and replace panel",
         command: PaletteCommand::FindReplace,
+    },
+    CommandItem {
+        label: "Export HTML",
+        keywords: &["export", "html", "导出"],
+        description: "Export the current Markdown document as HTML",
+        command: PaletteCommand::ExportHtml,
     },
     CommandItem {
         label: "Undo",
