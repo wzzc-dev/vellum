@@ -25,6 +25,7 @@ struct ListLineInfo {
     indent_len: usize,
     current_prefix_end: usize,
     continuation_prefix: String,
+    ordered_marker: Option<OrderedListMarker>,
     is_empty: bool,
     is_task: bool,
     marker_needs_space: bool,
@@ -1078,7 +1079,16 @@ fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnte
     let current_line = &line[..local_split];
     let moved_suffix = &line[local_split..];
     let before = &text[..line_start];
-    let after = &text[line_end..];
+    let after = if let Some(marker) = info.ordered_marker {
+        renumber_ordered_list_tail(
+            &text[line_end..],
+            &line[..info.indent_len],
+            marker.delimiter,
+            marker.number.saturating_add(2),
+        )
+    } else {
+        text[line_end..].to_string()
+    };
     let replacement = format!(
         "{before}{current_line}\n{}{}{after}",
         info.continuation_prefix, moved_suffix
@@ -1166,7 +1176,19 @@ fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<Semant
         let current_line = &line[..local_split];
         let moved_suffix = &line[local_split..];
         let before = &text[..line_start];
-        let after = &text[line_end..];
+        let after = if let Some(marker) = list_info.ordered_marker {
+            let nested_indent = &line[info.current_prefix_end
+                ..info.current_prefix_end + list_info.indent_len];
+            renumber_prefixed_ordered_list_tail(
+                &text[line_end..],
+                &info.continuation_prefix,
+                nested_indent,
+                marker.delimiter,
+                marker.number.saturating_add(2),
+            )
+        } else {
+            text[line_end..].to_string()
+        };
         let replacement = format!(
             "{before}{current_line}\n{}{}{}{after}",
             info.continuation_prefix, list_info.continuation_prefix, moved_suffix
@@ -1267,6 +1289,163 @@ fn exit_indented_empty_list_line(
     }
 }
 
+fn renumber_ordered_list_tail(
+    tail: &str,
+    indent: &str,
+    delimiter: char,
+    first_number: usize,
+) -> String {
+    if tail.is_empty() {
+        return String::new();
+    }
+
+    let mut next_number = first_number;
+    let mut rebuilt = String::with_capacity(tail.len());
+    let mut offset = 0usize;
+    for segment in split_inclusive_lines(tail) {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        let line_ending = &segment[line.len()..];
+        if offset == 0 && line.is_empty() {
+            rebuilt.push_str(segment);
+            offset += segment.len();
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(indent) else {
+            if line_indents_deeper_than(line, indent) {
+                rebuilt.push_str(segment);
+                offset += segment.len();
+                continue;
+            }
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        };
+        let Some(marker) = ordered_list_marker(rest) else {
+            if rest_indents_deeper_than(rest, "") {
+                rebuilt.push_str(segment);
+                offset += segment.len();
+                continue;
+            }
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        };
+        if marker.delimiter != delimiter {
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        }
+
+        rebuilt.push_str(indent);
+        rebuilt.push_str(&next_number.to_string());
+        rebuilt.push(delimiter);
+        rebuilt.push(' ');
+        rebuilt.push_str(&rest[marker.prefix_len..]);
+        rebuilt.push_str(line_ending);
+        next_number = next_number.saturating_add(1);
+        offset += segment.len();
+    }
+
+    rebuilt
+}
+
+fn renumber_prefixed_ordered_list_tail(
+    tail: &str,
+    line_prefix: &str,
+    list_indent: &str,
+    delimiter: char,
+    first_number: usize,
+) -> String {
+    if tail.is_empty() {
+        return String::new();
+    }
+
+    let mut next_number = first_number;
+    let mut rebuilt = String::with_capacity(tail.len());
+    let mut offset = 0usize;
+    for segment in split_inclusive_lines(tail) {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        let line_ending = &segment[line.len()..];
+        if offset == 0 && line.is_empty() {
+            rebuilt.push_str(segment);
+            offset += segment.len();
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(line_prefix) else {
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        };
+        let Some(rest) = rest.strip_prefix(list_indent) else {
+            if rest_indents_deeper_than(rest, list_indent) {
+                rebuilt.push_str(segment);
+                offset += segment.len();
+                continue;
+            }
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        };
+        let Some(marker) = ordered_list_marker(rest) else {
+            if rest_indents_deeper_than(rest, "") {
+                rebuilt.push_str(segment);
+                offset += segment.len();
+                continue;
+            }
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        };
+        if marker.delimiter != delimiter {
+            rebuilt.push_str(&tail[offset..]);
+            return rebuilt;
+        }
+
+        rebuilt.push_str(line_prefix);
+        rebuilt.push_str(list_indent);
+        rebuilt.push_str(&next_number.to_string());
+        rebuilt.push(delimiter);
+        rebuilt.push(' ');
+        rebuilt.push_str(&rest[marker.prefix_len..]);
+        rebuilt.push_str(line_ending);
+        next_number = next_number.saturating_add(1);
+        offset += segment.len();
+    }
+
+    rebuilt
+}
+
+fn line_indents_deeper_than(line: &str, indent: &str) -> bool {
+    let line_indent = leading_horizontal_whitespace(line);
+    line_indent.len() > indent.len() && line_indent.starts_with(indent)
+}
+
+fn rest_indents_deeper_than(rest: &str, indent: &str) -> bool {
+    let rest_indent = leading_horizontal_whitespace(rest);
+    rest_indent.len() > indent.len() && rest_indent.starts_with(indent)
+}
+
+fn leading_horizontal_whitespace(text: &str) -> &str {
+    let len = text
+        .bytes()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    &text[..len]
+}
+
+fn split_inclusive_lines(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    for (index, ch) in text.char_indices() {
+        if ch == '\n' {
+            lines.push(&text[start..index + 1]);
+            start = index + 1;
+        }
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
+}
+
 fn apply_selection(
     text: &str,
     selection: Option<Range<usize>>,
@@ -1330,6 +1509,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
                 indent_len: indent_end,
                 current_prefix_end,
                 continuation_prefix,
+                ordered_marker: None,
                 is_empty,
                 is_task: true,
                 marker_needs_space: false,
@@ -1346,6 +1526,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
                 indent_len: indent_end,
                 current_prefix_end,
                 continuation_prefix,
+                ordered_marker: None,
                 is_empty: true,
                 is_task: true,
                 marker_needs_space: true,
@@ -1362,6 +1543,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
                 indent_len: indent_end,
                 current_prefix_end,
                 continuation_prefix,
+                ordered_marker: None,
                 is_empty,
                 is_task: false,
                 marker_needs_space: false,
@@ -1378,6 +1560,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
             indent_len: indent_end,
             current_prefix_end,
             continuation_prefix,
+            ordered_marker: Some(marker),
             is_empty,
             is_task: false,
             marker_needs_space: false,
@@ -1685,6 +1868,37 @@ mod tests {
     }
 
     #[test]
+    fn ordered_list_enter_renumbers_following_sibling_items() {
+        let transform = semantic_enter_transform(
+            &BlockKind::List,
+            "1. one\n2. two\n3. three",
+            None,
+            "1. one".len(),
+        )
+        .unwrap();
+
+        assert_eq!(transform.replacement, "1. one\n2. \n3. two\n4. three");
+        assert_eq!(transform.cursor_offset, "1. one\n2. ".len());
+    }
+
+    #[test]
+    fn ordered_list_enter_skips_nested_items_while_renumbering_siblings() {
+        let transform = semantic_enter_transform(
+            &BlockKind::List,
+            "1. one\n2. two\n   1. child\n3. three",
+            None,
+            "1. one".len(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.replacement,
+            "1. one\n2. \n3. two\n   1. child\n4. three"
+        );
+        assert_eq!(transform.cursor_offset, "1. one\n2. ".len());
+    }
+
+    #[test]
     fn exits_empty_task_list_item() {
         let transform =
             semantic_enter_transform(&BlockKind::List, "- one\n- [ ] ", None, 11).unwrap();
@@ -1749,6 +1963,44 @@ mod tests {
         .unwrap();
 
         assert_eq!(transform.replacement, "> 1. first\n> 2. ");
+        assert_eq!(transform.cursor_offset, "> 1. first\n> 2. ".len());
+    }
+
+    #[test]
+    fn ordered_list_enter_inside_callout_renumbers_following_siblings() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Callout {
+                kind: "note".to_string(),
+            },
+            "> 1. first\n> 2. second\n> 3. third",
+            None,
+            "> 1. first".len(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.replacement,
+            "> 1. first\n> 2. \n> 3. second\n> 4. third"
+        );
+        assert_eq!(transform.cursor_offset, "> 1. first\n> 2. ".len());
+    }
+
+    #[test]
+    fn ordered_list_enter_inside_callout_skips_nested_items() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Callout {
+                kind: "note".to_string(),
+            },
+            "> 1. first\n> 2. second\n>    1. child\n> 3. third",
+            None,
+            "> 1. first".len(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.replacement,
+            "> 1. first\n> 2. \n> 3. second\n>    1. child\n> 4. third"
+        );
         assert_eq!(transform.cursor_offset, "> 1. first\n> 2. ".len());
     }
 

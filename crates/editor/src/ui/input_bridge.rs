@@ -87,6 +87,11 @@ fn detect_wrap_selection_opportunity(
     if let Some((before, after)) = wrap_pair_for_opener(inserted) {
         return Some((before, after));
     }
+    if range.start == old_selection.range().end {
+        if let Some((before, after)) = wrap_pair_for_closer(inserted) {
+            return Some((before, after));
+        }
+    }
 
     MARKUP_WRAP_CHARS
         .iter()
@@ -106,6 +111,16 @@ fn wrap_pair_for_opener(c: char) -> Option<(&'static str, &'static str)> {
     }
 }
 
+fn wrap_pair_for_closer(c: char) -> Option<(&'static str, &'static str)> {
+    match c {
+        ')' => Some(("(", ")")),
+        ']' => Some(("[", "]")),
+        '}' => Some(("{", "}")),
+        '>' => Some(("<", ">")),
+        _ => None,
+    }
+}
+
 fn detect_link_paste_opportunity(
     old_visible: &str,
     new_visible: &str,
@@ -120,11 +135,11 @@ fn detect_link_paste_opportunity(
         return None;
     }
 
-    if replacement.trim() != replacement || !is_url_like(&replacement) {
+    let Some(destination) = normalized_pasted_url(&replacement) else {
         return None;
-    }
+    };
 
-    Some(replacement.to_string())
+    Some(destination.to_string())
 }
 
 fn detect_image_paste_opportunity(
@@ -141,11 +156,11 @@ fn detect_image_paste_opportunity(
         return None;
     }
 
-    if !looks_like_image_path(&replacement) {
+    let Some(destination) = normalized_pasted_image_path(&replacement) else {
         return None;
-    }
+    };
 
-    Some(replacement.to_string())
+    Some(destination.to_string())
 }
 
 fn is_url_like(text: &str) -> bool {
@@ -158,6 +173,28 @@ fn is_url_like(text: &str) -> bool {
         && text
             .chars()
             .all(|ch| !ch.is_whitespace() && !ch.is_control())
+}
+
+fn normalized_pasted_url(text: &str) -> Option<&str> {
+    if text.trim() != text {
+        return None;
+    }
+
+    if is_url_like(text) {
+        return Some(text);
+    }
+
+    let autolink = text.strip_prefix('<')?.strip_suffix('>')?;
+    is_url_like(autolink).then_some(autolink)
+}
+
+fn normalized_pasted_image_path(text: &str) -> Option<&str> {
+    if looks_like_image_path(text) {
+        return Some(text);
+    }
+
+    let autolink = normalized_pasted_url(text)?;
+    looks_like_image_path(autolink).then_some(autolink)
 }
 
 fn markdown_link(label: &str, destination: &str) -> String {
@@ -174,6 +211,147 @@ fn markdown_image(alt: &str, destination: &str) -> String {
         escape_link_label(alt),
         escape_link_destination(destination)
     )
+}
+
+fn replace_selected_link_destination(
+    snapshot: &EditorSnapshot,
+    destination: &str,
+) -> Option<(String, SelectionState)> {
+    let selected_label_range = snapshot.selection.range();
+    if selected_label_range.is_empty() {
+        return None;
+    }
+
+    let link_span = snapshot
+        .display_map
+        .blocks
+        .iter()
+        .flat_map(|block| block.spans.iter())
+        .find(|span| {
+            matches!(span.meta, Some(crate::RenderSpanMeta::Link { .. }))
+                && span.source_range.start <= selected_label_range.start
+                && selected_label_range.end <= span.source_range.end
+        })?;
+
+    let label_end = link_span.source_range.end;
+    let text = &snapshot.document_text;
+    let target_start = label_end.checked_add(2)?;
+    if text.as_bytes().get(link_span.source_range.start.checked_sub(1)?) != Some(&b'[')
+        || text.as_bytes().get(label_end) != Some(&b']')
+        || text.as_bytes().get(label_end + 1) != Some(&b'(')
+        || target_start > text.len()
+    {
+        return None;
+    }
+
+    let target_len = link_target_source_len(&text[target_start..])?;
+    let target_end = target_start.checked_add(target_len)?;
+    if target_end > text.len() {
+        return None;
+    }
+
+    let escaped_destination = escape_link_destination(destination);
+    let mut updated = String::with_capacity(text.len() + escaped_destination.len() - target_len);
+    updated.push_str(&text[..target_start]);
+    updated.push_str(&escaped_destination);
+    updated.push_str(&text[target_end..]);
+
+    let cursor_after_destination = target_start + escaped_destination.len();
+    let selection = if updated[cursor_after_destination..].starts_with(char::is_whitespace) {
+        SelectionState::collapsed(cursor_after_destination)
+    } else {
+        SelectionState::collapsed(cursor_after_destination + 1)
+    };
+    Some((updated, selection))
+}
+
+fn replace_selected_image_source(
+    snapshot: &EditorSnapshot,
+    destination: &str,
+) -> Option<(String, SelectionState)> {
+    let selected_alt_range = snapshot.selection.range();
+    if selected_alt_range.is_empty() {
+        return None;
+    }
+
+    let image_span = snapshot
+        .display_map
+        .blocks
+        .iter()
+        .flat_map(|block| block.spans.iter())
+        .find(|span| {
+            let Some(alt_end) = image_alt_source_end(&snapshot.document_text, span) else {
+                return false;
+            };
+            matches!(span.meta, Some(crate::RenderSpanMeta::Image { .. }))
+                && span.source_range.start + 2 <= selected_alt_range.start
+                && selected_alt_range.end <= alt_end
+        })?;
+
+    let alt_end = image_alt_source_end(&snapshot.document_text, image_span)?;
+    let text = &snapshot.document_text;
+    let source_start = alt_end.checked_add(2)?;
+    if text.as_bytes().get(image_span.source_range.start) != Some(&b'!')
+        || text.as_bytes().get(image_span.source_range.start + 1) != Some(&b'[')
+        || text.as_bytes().get(alt_end) != Some(&b']')
+        || text.as_bytes().get(alt_end + 1) != Some(&b'(')
+        || source_start > text.len()
+    {
+        return None;
+    }
+
+    let source_len = link_target_source_len(&text[source_start..])?;
+    let source_end = source_start.checked_add(source_len)?;
+    if source_end > text.len() {
+        return None;
+    }
+
+    let escaped_destination = escape_link_destination(destination);
+    let mut updated = String::with_capacity(text.len() + escaped_destination.len() - source_len);
+    updated.push_str(&text[..source_start]);
+    updated.push_str(&escaped_destination);
+    updated.push_str(&text[source_end..]);
+
+    let cursor_after_source = source_start + escaped_destination.len();
+    let selection = if updated[cursor_after_source..].starts_with(char::is_whitespace) {
+        SelectionState::collapsed(cursor_after_source)
+    } else {
+        SelectionState::collapsed(cursor_after_source + 1)
+    };
+    Some((updated, selection))
+}
+
+fn image_alt_source_end(text: &str, image_span: &crate::RenderSpan) -> Option<usize> {
+    let alt_start = image_span.source_range.start.checked_add(2)?;
+    text[alt_start..]
+        .find(']')
+        .map(|close| alt_start + close)
+        .filter(|alt_end| *alt_end <= image_span.source_range.end)
+}
+
+fn link_target_source_len(rest: &str) -> Option<usize> {
+    if let Some(after_open) = rest.strip_prefix('<') {
+        return after_open.char_indices().find_map(|(index, ch)| {
+            (ch == '>' && !is_escaped_byte(after_open, index)).then_some(index + 2)
+        });
+    }
+
+    rest.char_indices()
+        .find_map(|(index, ch)| {
+            ((ch == ')' && !is_escaped_byte(rest, index)) || ch.is_whitespace()).then_some(index)
+        })
+        .filter(|len| *len > 0)
+}
+
+fn is_escaped_byte(text: &str, index: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut slash_count = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slash_count += 1;
+        cursor -= 1;
+    }
+    slash_count % 2 == 1
 }
 
 fn looks_like_image_path(text: &str) -> bool {
@@ -382,14 +560,22 @@ impl MarkdownEditor {
                 });
                 self.syncing_input = false;
 
-                let selected_text = self
-                    .snapshot
-                    .document_text
-                    .get(self.snapshot.selection.range())
-                    .unwrap_or("");
-                let replacement = markdown_image(selected_text, &path);
-                self.controller
-                    .dispatch(EditCommand::ReplaceSelection { text: replacement })
+                if let Some((text, selection)) = replace_selected_image_source(
+                    &self.snapshot,
+                    &path,
+                ) {
+                    self.controller
+                        .dispatch(EditCommand::SyncDocumentState { text, selection })
+                } else {
+                    let selected_text = self
+                        .snapshot
+                        .document_text
+                        .get(self.snapshot.selection.range())
+                        .unwrap_or("");
+                    let replacement = markdown_image(selected_text, &path);
+                    self.controller
+                        .dispatch(EditCommand::ReplaceSelection { text: replacement })
+                }
             } else if let Some(url) = link_paste_opportunity {
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
@@ -397,14 +583,21 @@ impl MarkdownEditor {
                 });
                 self.syncing_input = false;
 
-                let selected_text = self
-                    .snapshot
-                    .document_text
-                    .get(self.snapshot.selection.range())
-                    .unwrap_or("");
-                let replacement = markdown_link(selected_text, &url);
-                self.controller
-                    .dispatch(EditCommand::ReplaceSelection { text: replacement })
+                if let Some((text, selection)) =
+                    replace_selected_link_destination(&self.snapshot, &url)
+                {
+                    self.controller
+                        .dispatch(EditCommand::SyncDocumentState { text, selection })
+                } else {
+                    let selected_text = self
+                        .snapshot
+                        .document_text
+                        .get(self.snapshot.selection.range())
+                        .unwrap_or("");
+                    let replacement = markdown_link(selected_text, &url);
+                    self.controller
+                        .dispatch(EditCommand::ReplaceSelection { text: replacement })
+                }
             } else if let Some((before, after)) = wrap_opportunity {
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
@@ -1862,6 +2055,256 @@ mod tests {
     }
 
     #[test]
+    fn detects_markdown_autolink_paste_over_selection() {
+        let old_visible = "Read docs";
+        let new_visible = "Read <https://example.com/guide>";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("https://example.com/guide".to_string())
+        );
+    }
+
+    #[test]
+    fn replaces_selected_link_destination_when_pasting_url_over_label() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](https://old.example)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) = replace_selected_link_destination(
+            &snapshot,
+            "https://new.example/guide",
+        )
+        .expect("selected link label should update destination");
+
+        assert_eq!(updated, "Read [docs](https://new.example/guide)");
+        assert_eq!(selection.cursor(), updated.len());
+    }
+
+    #[test]
+    fn replacing_link_destination_preserves_title() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](https://old.example \"Docs\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_link_destination(&snapshot, "https://new.example/guide")
+                .expect("selected link label should update destination");
+
+        assert_eq!(updated, "Read [docs](https://new.example/guide \"Docs\")");
+        assert_eq!(selection.cursor(), "Read [docs](https://new.example/guide".len());
+    }
+
+    #[test]
+    fn replacing_link_destination_handles_escaped_closing_parens() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](https://old.example/a\\)b \"Docs\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_link_destination(&snapshot, "https://new.example/guide")
+                .expect("selected link label should update destination");
+
+        assert_eq!(updated, "Read [docs](https://new.example/guide \"Docs\")");
+        assert_eq!(selection.cursor(), "Read [docs](https://new.example/guide".len());
+    }
+
+    #[test]
+    fn replacing_link_destination_handles_escaped_angle_target_close() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](<https://old.example/a\\>b> \"Docs\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_link_destination(&snapshot, "https://new.example/guide")
+                .expect("selected link label should update destination");
+
+        assert_eq!(updated, "Read [docs](https://new.example/guide \"Docs\")");
+        assert_eq!(selection.cursor(), "Read [docs](https://new.example/guide".len());
+    }
+
+    #[test]
+    fn replaces_selected_image_source_when_pasting_image_path_over_alt() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](./assets/old.png)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_image_source(&snapshot, "./assets/new image(1).png")
+                .expect("selected image alt should update source");
+
+        assert_eq!(updated, r"See ![diagram](./assets/new image(1\).png)");
+        assert_eq!(selection.cursor(), updated.len());
+    }
+
+    #[test]
+    fn replacing_image_source_preserves_title() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](./assets/old.png \"Diagram\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_image_source(&snapshot, "./assets/new.png")
+                .expect("selected image alt should update source");
+
+        assert_eq!(updated, "See ![diagram](./assets/new.png \"Diagram\")");
+        assert_eq!(selection.cursor(), "See ![diagram](./assets/new.png".len());
+    }
+
+    #[test]
+    fn replacing_image_source_handles_escaped_closing_parens() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](./assets/old\\)name.png \"Diagram\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) =
+            replace_selected_image_source(&snapshot, "./assets/new.png")
+                .expect("selected image alt should update source");
+
+        assert_eq!(updated, "See ![diagram](./assets/new.png \"Diagram\")");
+        assert_eq!(selection.cursor(), "See ![diagram](./assets/new.png".len());
+    }
+
+    #[test]
+    fn replacing_image_source_handles_escaped_angle_target_close() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](<./assets/old\\>name.png> \"Diagram\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) = replace_selected_image_source(&snapshot, "./assets/new.png")
+            .expect("selected image alt should update source");
+
+        assert_eq!(updated, "See ![diagram](./assets/new.png \"Diagram\")");
+        assert_eq!(selection.cursor(), "See ![diagram](./assets/new.png".len());
+    }
+
+    #[test]
     fn detects_image_path_paste_over_selection() {
         let old_visible = "See diagram";
         let new_visible = "See ./assets/diagram.png";
@@ -1882,6 +2325,23 @@ mod tests {
     fn detects_image_url_paste_over_selection() {
         let old_visible = "See diagram";
         let new_visible = "See https://example.com/diagram.svg";
+        let selection = SelectionState {
+            anchor_byte: 4,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_image_paste_opportunity(old_visible, new_visible, &selection),
+            Some("https://example.com/diagram.svg".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_markdown_autolink_image_url_paste_over_selection() {
+        let old_visible = "See diagram";
+        let new_visible = "See <https://example.com/diagram.svg>";
         let selection = SelectionState {
             anchor_byte: 4,
             head_byte: 11,
@@ -2044,6 +2504,40 @@ mod tests {
     }
 
     #[test]
+    fn detects_closer_wrap_over_selection() {
+        let old_visible = "Call docs";
+        let new_visible = "Call docs)";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("(", ")"))
+        );
+    }
+
+    #[test]
+    fn ignores_closer_inserted_before_selection_start_for_wrap() {
+        let old_visible = "Call docs";
+        let new_visible = "Call )docs";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            None
+        );
+    }
+
+    #[test]
     fn detects_markdown_inline_delimiter_auto_pairs() {
         let old_visible = "Formula ";
         let selection = SelectionState::collapsed(old_visible.len());
@@ -2131,6 +2625,10 @@ mod tests {
         assert_eq!(
             markdown_link(r"a\]b", r"https://example.com/a\)b"),
             r"[a\\\]b](https://example.com/a\\\)b)"
+        );
+        assert_eq!(
+            markdown_link("docs", "https://example.com/guide"),
+            "[docs](https://example.com/guide)"
         );
     }
 

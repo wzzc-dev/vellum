@@ -3122,6 +3122,111 @@ mod tests {
     }
 
     #[gpui::test]
+    fn typing_quote_over_selection_wraps_visible_text(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "Read docs");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: "Read ".len(),
+                    head_byte: "Read docs".len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_value("Read \"docs".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "Read \"docs\"");
+        assert_eq!(snapshot.display_map.visible_text, "Read \"docs\"");
+        assert!(snapshot.selection.is_collapsed());
+        let input_selection = cx.update_window_entity(&input, |input, window, cx| {
+            input
+                .selected_text_range(true, window, cx)
+                .map(|selection| selection.range)
+        });
+        assert!(input_selection
+            .as_ref()
+            .map(std::ops::Range::is_empty)
+            .unwrap_or(true));
+    }
+
+    #[gpui::test]
+    fn typing_dollar_over_selection_wraps_inline_math(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "Formula x + y");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: "Formula ".len(),
+                    head_byte: "Formula x + y".len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_value("Formula $x + y".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "Formula $x + y$");
+        assert_eq!(snapshot.display_map.visible_text, "Formula x + y");
+        assert!(snapshot.selection.is_collapsed());
+        assert!(snapshot.display_map.blocks.iter().any(|block| {
+            block
+                .spans
+                .iter()
+                .any(|span| matches!(span.meta, Some(crate::RenderSpanMeta::Math { .. })))
+        }));
+    }
+
+    #[gpui::test]
+    fn typing_closing_paren_over_selection_wraps_visible_text(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "Call docs");
+        let input = document_input(&view, cx);
+        cx.focus(&input);
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: "Call ".len(),
+                    head_byte: "Call docs".len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_value("Call docs)".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "Call (docs)");
+        assert_eq!(snapshot.display_map.visible_text, "Call (docs)");
+        assert!(snapshot.selection.is_collapsed());
+    }
+
+    #[gpui::test]
     fn empty_document_double_enter_matches_typora_blank_line_count(cx: &mut TestAppContext) {
         let (view, cx) = build_editor_window(cx);
         load_document(cx, &view, "");
