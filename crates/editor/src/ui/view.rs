@@ -551,6 +551,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut snippets = Vec::new();
         for path in paths.paths() {
             let ext = path
                 .extension()
@@ -568,7 +569,10 @@ impl MarkdownEditor {
             } else {
                 continue;
             };
+            snippets.push(markdown);
+        }
 
+        if let Some(markdown) = join_dropped_markdown(&snippets) {
             let effects = self
                 .controller
                 .dispatch(EditCommand::ReplaceSelection { text: markdown });
@@ -1155,6 +1159,13 @@ fn image_alt_text_for_path(path: &Path) -> &str {
         .unwrap_or("image")
 }
 
+fn join_dropped_markdown(snippets: &[String]) -> Option<String> {
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(snippets.join("\n"))
+}
+
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
     let range = snapshot.selection.range();
     snapshot.display_map.blocks.iter().any(|block| {
@@ -1465,6 +1476,20 @@ mod tests {
     fn image_alt_text_uses_file_stem() {
         assert_eq!(image_alt_text_for_path(Path::new("/tmp/diagram.png")), "diagram");
         assert_eq!(image_alt_text_for_path(Path::new(r"/tmp/a\]b.png")), r"a\]b");
+    }
+
+    #[test]
+    fn dropped_markdown_snippets_are_joined_on_separate_lines() {
+        let snippets = vec![
+            "![one](./one.png)".to_string(),
+            "[doc](./doc.md)".to_string(),
+        ];
+
+        assert_eq!(
+            join_dropped_markdown(&snippets),
+            Some("![one](./one.png)\n[doc](./doc.md)".to_string())
+        );
+        assert_eq!(join_dropped_markdown(&[]), None);
     }
 
     #[test]
