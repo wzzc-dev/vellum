@@ -1609,7 +1609,8 @@ impl EditorController {
             .selection
             .cursor()
             .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        let new_cursor = block.content_range.start
+            + remap_heading_cursor_after_markup_change(&current, &updated, relative_cursor);
         self.apply_edit(
             block.content_range,
             updated,
@@ -1633,7 +1634,8 @@ impl EditorController {
             .selection
             .cursor()
             .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        let new_cursor = block.content_range.start
+            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
         self.apply_edit(
             block.content_range,
             updated,
@@ -1656,7 +1658,8 @@ impl EditorController {
             .selection
             .cursor()
             .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        let new_cursor = block.content_range.start
+            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
         self.apply_edit(
             block.content_range,
             updated,
@@ -1679,7 +1682,8 @@ impl EditorController {
             .selection
             .cursor()
             .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        let new_cursor = block.content_range.start
+            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
         self.apply_edit(
             block.content_range,
             updated,
@@ -2751,6 +2755,114 @@ fn heading_title(text: &str) -> String {
     without_prefix.trim_end_matches('#').trim().to_string()
 }
 
+fn remap_heading_cursor_after_markup_change(
+    before: &str,
+    after: &str,
+    cursor_offset: usize,
+) -> usize {
+    let before_first_line_end = before.find('\n').unwrap_or(before.len());
+    if cursor_offset > before_first_line_end {
+        let after_first_line_end = after.find('\n').unwrap_or(after.len());
+        let delta = after_first_line_end as isize - before_first_line_end as isize;
+        return cursor_offset
+            .saturating_add_signed(delta)
+            .min(after.len());
+    }
+
+    let before_content_start = heading_content_start(before);
+    let after_content_start = heading_content_start(after);
+    let content_offset = cursor_offset.saturating_sub(before_content_start);
+    (after_content_start + content_offset).min(after.len())
+}
+
+fn heading_content_start(text: &str) -> usize {
+    let first_line_end = text.find('\n').unwrap_or(text.len());
+    let first = &text[..first_line_end];
+    let trimmed = first.trim_start();
+    let indent_len = first.len().saturating_sub(trimmed.len());
+
+    let Some(space_ix) = trimmed.find(' ') else {
+        return indent_len;
+    };
+    let marker = &trimmed[..space_ix];
+    if marker.chars().all(|ch| ch == '#') && !marker.is_empty() {
+        indent_len + space_ix + 1
+    } else {
+        indent_len
+    }
+}
+
+fn remap_list_cursor_after_markup_change(before: &str, after: &str, cursor_offset: usize) -> usize {
+    let (before_line_start, before_line_end) = line_bounds_in_text(before, cursor_offset);
+    let line_index = before[..before_line_start].bytes().filter(|byte| *byte == b'\n').count();
+    let before_content_start = list_content_start(
+        &before[before_line_start..before_line_end],
+        before_line_start,
+    );
+    let content_offset = cursor_offset.saturating_sub(before_content_start);
+
+    let Some((after_line_start, after_line_end)) = nth_line_bounds(after, line_index) else {
+        return after.len();
+    };
+    let after_content_start = list_content_start(
+        &after[after_line_start..after_line_end],
+        after_line_start,
+    );
+    (after_content_start + content_offset).min(after_line_end)
+}
+
+fn list_content_start(line: &str, line_start: usize) -> usize {
+    let trimmed = line.trim_start();
+    let indent_len = line.len().saturating_sub(trimmed.len());
+    let content_start = task_or_list_marker_len(trimmed)
+        .or_else(|| ordered_marker_len(trimmed))
+        .unwrap_or(0);
+    line_start + indent_len + content_start
+}
+
+fn task_or_list_marker_len(trimmed: &str) -> Option<usize> {
+    for marker in ["> ", ">", "- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ", "+ [ ] ", "+ [x] ", "+ [X] ", "- ", "* ", "+ "] {
+        if trimmed.starts_with(marker) {
+            return Some(marker.len());
+        }
+    }
+    None
+}
+
+fn ordered_marker_len(trimmed: &str) -> Option<usize> {
+    let bytes = trimmed.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    if index == 0
+        || index + 1 >= bytes.len()
+        || !matches!(bytes[index], b'.' | b')')
+        || !bytes[index + 1].is_ascii_whitespace()
+    {
+        return None;
+    }
+    Some(index + 2)
+}
+
+fn nth_line_bounds(text: &str, target_line: usize) -> Option<(usize, usize)> {
+    let mut line_start = 0usize;
+    for line_index in 0..=target_line {
+        if line_start > text.len() {
+            return None;
+        }
+        let line_end = text[line_start..]
+            .find('\n')
+            .map(|ix| line_start + ix)
+            .unwrap_or(text.len());
+        if line_index == target_line {
+            return Some((line_start, line_end));
+        }
+        line_start = line_end + 1;
+    }
+    None
+}
+
 fn boundary_cursor_offset(text: &str, direction: isize, preferred_column: usize) -> usize {
     let target_line = if direction >= 0 {
         0
@@ -3192,7 +3304,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "- [ ] todo");
-        assert_eq!(snapshot.selection, SelectionState::collapsed(4));
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] todo".len()));
     }
 
     #[test]
@@ -3582,11 +3694,33 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "## Title");
-        assert_eq!(snapshot.selection, SelectionState::collapsed(2));
+        assert_eq!(snapshot.selection, SelectionState::collapsed("## Ti".len()));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Heading { depth: 2 }
         ));
+    }
+
+    #[test]
+    fn toggle_heading_preserves_cursor_position_in_visible_title_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Ti".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleHeading { depth: 2 });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "## Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("## Ti".len()));
     }
 
     #[test]
@@ -3608,11 +3742,33 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Title");
-        assert_eq!(snapshot.selection, SelectionState::collapsed(2));
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Paragraph
         ));
+    }
+
+    #[test]
+    fn toggle_heading_to_paragraph_preserves_cursor_position_in_visible_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "## Title".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("## Ti".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleHeading { depth: 2 });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Title");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Ti".len()));
     }
 
     #[test]
@@ -3634,7 +3790,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "### Title");
-        assert_eq!(snapshot.selection, SelectionState::collapsed(1));
+        assert_eq!(snapshot.selection, SelectionState::collapsed("### ".len()));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Heading { depth: 3 }
@@ -3660,10 +3816,33 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "> Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("> He".len()));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Blockquote
         ));
+    }
+
+    #[test]
+    fn toggle_blockquote_preserves_cursor_position_in_visible_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("He".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleBlockquote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("> He".len()));
     }
 
     #[test]
@@ -3685,10 +3864,33 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Paragraph
         ));
+    }
+
+    #[test]
+    fn toggle_blockquote_to_paragraph_preserves_cursor_position_in_visible_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("> He".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleBlockquote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("He".len()));
     }
 
     #[test]
@@ -3710,6 +3912,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "- Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- He".len()));
         assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::List));
     }
 
@@ -3732,10 +3935,33 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
         assert!(matches!(
             snapshot.blocks[0].kind,
             crate::BlockKind::Paragraph
         ));
+    }
+
+    #[test]
+    fn toggle_bullet_list_preserves_cursor_position_in_visible_item_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("He".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleBulletList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- He".len()));
     }
 
     #[test]
@@ -3757,7 +3983,30 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "1. Hello");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("1. He".len()));
         assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::List));
+    }
+
+    #[test]
+    fn toggle_task_list_preserves_cursor_position_in_visible_item_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "todo".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("to".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] todo");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] to".len()));
     }
 
     #[test]
