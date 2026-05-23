@@ -2155,14 +2155,18 @@ impl EditorController {
 
     fn insert_front_matter(&mut self) -> EditorEffects {
         let text = self.document.text();
-        let template = "---\ntitle: Untitled\ndate: \ntags: []\n---\n\n";
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range);
+        let title = selected_text.trim();
+        let title = if title.is_empty() { "Untitled" } else { title };
+        let template = format!("---\ntitle: {title}\ndate: \ntags: []\n---\n\n");
         let title_start = "---\ntitle: ".len();
-        let title_end = title_start + "Untitled".len();
+        let title_end = title_start + title.len();
 
         if text.trim().is_empty() {
             return self.apply_edit(
                 0..text.len(),
-                template.to_string(),
+                template,
                 SelectionState {
                     anchor_byte: title_end,
                     head_byte: title_start,
@@ -2179,7 +2183,7 @@ impl EditorController {
 
         self.apply_edit(
             0..0,
-            template.to_string(),
+            template,
             SelectionState {
                 anchor_byte: title_end,
                 head_byte: title_start,
@@ -6404,6 +6408,43 @@ mod tests {
             "---\ntitle: Untitled\ndate: \ntags: []\n---\n\n# Draft"
         ));
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Untitled");
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::YamlFrontMatter));
+    }
+
+    #[test]
+    fn insert_front_matter_uses_selected_text_as_title() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Draft Title\n\nBody".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "# ".len(),
+                head_byte: "# Draft Title".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertFrontMatter);
+
+        let snapshot = controller.snapshot();
+        assert!(snapshot.document_text.starts_with(
+            "---\ntitle: Draft Title\ndate: \ntags: []\n---\n\n# Draft Title"
+        ));
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "Draft Title"
+        );
         assert!(snapshot
             .display_map
             .blocks
