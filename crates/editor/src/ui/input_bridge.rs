@@ -14,7 +14,15 @@ use crate::{
 };
 
 const AUTO_PAIR_OPENERS: &[(char, char)] =
-    &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')];
+    &[
+        ('(', ')'),
+        ('[', ']'),
+        ('{', '}'),
+        ('"', '"'),
+        ('\'', '\''),
+        ('`', '`'),
+        ('$', '$'),
+    ];
 
 fn closing_char_for_opener(c: char) -> Option<char> {
     AUTO_PAIR_OPENERS
@@ -49,6 +57,8 @@ const MARKUP_WRAP_CHARS: &[(char, &str, &str)] = &[
     ('*', "**", "**"),
     ('`', "`", "`"),
     ('~', "~~", "~~"),
+    ('=', "==", "=="),
+    ('^', "^", "^"),
     ('$', "$", "$"),
 ];
 
@@ -67,10 +77,25 @@ fn detect_wrap_selection_opportunity(
     }
 
     let inserted = replacement.chars().next()?;
+    if let Some((before, after)) = wrap_pair_for_opener(inserted) {
+        return Some((before, after));
+    }
+
     MARKUP_WRAP_CHARS
         .iter()
         .find(|(c, _, _)| *c == inserted)
         .map(|(_, before, after)| (*before, *after))
+}
+
+fn wrap_pair_for_opener(c: char) -> Option<(&'static str, &'static str)> {
+    match c {
+        '(' => Some(("(", ")")),
+        '[' => Some(("[", "]")),
+        '{' => Some(("{", "}")),
+        '"' => Some(("\"", "\"")),
+        '\'' => Some(("'", "'")),
+        _ => None,
+    }
 }
 
 fn detect_link_paste_opportunity(
@@ -1766,6 +1791,97 @@ mod tests {
             detect_link_paste_opportunity(old_visible, new_visible, &selection),
             None
         );
+    }
+
+    #[test]
+    fn detects_typora_highlight_wrap_over_selection() {
+        let old_visible = "Mark text";
+        let new_visible = "Mark =text";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("==", "=="))
+        );
+    }
+
+    #[test]
+    fn detects_typora_superscript_wrap_over_selection() {
+        let old_visible = "x 2";
+        let new_visible = "x ^2";
+        let selection = SelectionState {
+            anchor_byte: 2,
+            head_byte: 3,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("^", "^"))
+        );
+    }
+
+    #[test]
+    fn detects_parenthesis_wrap_over_selection() {
+        let old_visible = "Call arg";
+        let new_visible = "Call (arg";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 8,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("(", ")"))
+        );
+    }
+
+    #[test]
+    fn detects_quote_wrap_over_selection() {
+        let old_visible = "Say hi";
+        let new_visible = "Say \"hi";
+        let selection = SelectionState {
+            anchor_byte: 4,
+            head_byte: 6,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("\"", "\""))
+        );
+    }
+
+    #[test]
+    fn detects_markdown_inline_delimiter_auto_pairs() {
+        let old_visible = "Formula ";
+        let selection = SelectionState::collapsed(old_visible.len());
+
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula $", &selection),
+            Some('$')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula `", &selection),
+            Some('`')
+        );
+    }
+
+    #[test]
+    fn detects_markdown_inline_delimiter_overclose() {
+        let old_visible = "$x$";
+        let selection = SelectionState::collapsed(2);
+
+        assert!(detect_overclose_opportunity(old_visible, "$x$$", &selection));
     }
 
     #[test]

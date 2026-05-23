@@ -26,6 +26,15 @@ struct ListLineInfo {
     current_prefix_end: usize,
     continuation_prefix: String,
     is_empty: bool,
+    is_task: bool,
+    marker_needs_space: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OrderedListMarker {
+    number: usize,
+    delimiter: char,
+    prefix_len: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -99,10 +108,7 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     if list_markers
         .iter()
         .any(|marker| trimmed.starts_with(marker))
-        || trimmed
-            .split_once(". ")
-            .map(|(n, _)| n.chars().all(|ch| ch.is_ascii_digit()))
-            .unwrap_or(false)
+        || ordered_list_marker(trimmed).is_some()
     {
         let updated_indent = if deepen {
             format!("{indent}  ")
@@ -456,10 +462,7 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
         .iter()
         .chain(list_markers_unordered.iter())
         .any(|m| trimmed.starts_with(m));
-    let is_ordered = trimmed
-        .split_once(". ")
-        .map(|(n, _)| n.chars().all(|ch| ch.is_ascii_digit()))
-        .unwrap_or(false);
+    let is_ordered = ordered_list_marker(trimmed).is_some();
 
     // Toggle off if already the requested kind.
     if (ordered && is_ordered) || (!ordered && is_unordered) {
@@ -470,10 +473,8 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
                 let t = line.trim_start();
                 let ind = &line[..line.len().saturating_sub(t.len())];
                 // strip ordered
-                if let Some((n, rest)) = t.split_once(". ") {
-                    if n.chars().all(|ch| ch.is_ascii_digit()) {
-                        return format!("{ind}{rest}");
-                    }
+                if let Some(marker) = ordered_list_marker(t) {
+                    return format!("{ind}{}", &t[marker.prefix_len..]);
                 }
                 // strip unordered / task
                 for marker in task_markers.iter().chain(list_markers_unordered.iter()) {
@@ -497,10 +498,8 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
             let ind = &line[..line.len().saturating_sub(t.len())];
             // bare content after stripping any existing marker
             let content = 'strip: {
-                if let Some((n, rest)) = t.split_once(". ") {
-                    if n.chars().all(|ch| ch.is_ascii_digit()) {
-                        break 'strip rest;
-                    }
+                if let Some(marker) = ordered_list_marker(t) {
+                    break 'strip &t[marker.prefix_len..];
                 }
                 for marker in task_markers.iter().chain(list_markers_unordered.iter()) {
                     if let Some(rest) = t.strip_prefix(marker) {
@@ -530,9 +529,6 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
 
     let trimmed = first.trim_start();
     let indent = &first[..first.len().saturating_sub(trimmed.len())];
-    let task_markers = [
-        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
-    ];
     let unordered_markers = ["- ", "* ", "+ "];
     let rest = if text.contains('\n') {
         text[first.len()..].to_string()
@@ -541,10 +537,8 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
     };
 
     let content = 'strip: {
-        for marker in task_markers {
-            if let Some(rest) = trimmed.strip_prefix(marker) {
-                break 'strip rest;
-            }
+        if let Some(rest) = strip_task_marker(trimmed) {
+            break 'strip rest;
         }
         for marker in unordered_markers {
             if let Some(rest) = trimmed.strip_prefix(marker) {
@@ -555,6 +549,40 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
     };
 
     format!("{indent}- [ ] {content}{rest}")
+}
+
+fn strip_task_marker(trimmed: &str) -> Option<&str> {
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 5 {
+        return None;
+    }
+    if !matches!(bytes[0], b'-' | b'*' | b'+')
+        || bytes[1] != b' '
+        || bytes[2] != b'['
+        || !matches!(bytes[3], b' ' | b'x' | b'X')
+        || bytes[4] != b']'
+    {
+        return None;
+    }
+
+    if bytes.len() == 5 {
+        return Some("");
+    }
+    if bytes.get(5).is_some_and(|byte| byte.is_ascii_whitespace()) {
+        return Some(trimmed[6..].trim_start_matches([' ', '\t']));
+    }
+
+    None
+}
+
+fn looks_like_incomplete_task_marker(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    bytes.len() >= 5
+        && matches!(bytes[0], b'-' | b'*' | b'+')
+        && bytes[1] == b' '
+        && bytes[2] == b'['
+        && matches!(bytes[3], b' ' | b'x' | b'X')
+        && bytes[4] == b']'
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -607,30 +635,25 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
         }
     }
 
-    if text.trim_start().starts_with("> ") {
+    let line_start = text.trim_start();
+    if line_start.starts_with('>') {
         return Some(AutoFormatAction::Blockquote);
     }
 
-    if [
-        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
-    ]
-    .iter()
-    .any(|marker| text.trim_start().starts_with(marker))
-    {
+    if strip_task_marker(line_start).is_some() {
         return Some(AutoFormatAction::TaskList);
     }
+    if looks_like_incomplete_task_marker(line_start) {
+        return None;
+    }
 
-    let line_start = text.trim_start();
     if line_start.starts_with("- ") || line_start.starts_with("* ") || line_start.starts_with("+ ")
     {
         return Some(AutoFormatAction::BulletList);
     }
 
-    if let Some((num, rest)) = line_start.split_once(". ") {
-        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-            let _ = rest;
-            return Some(AutoFormatAction::OrderedList);
-        }
+    if ordered_list_marker(line_start).is_some() {
+        return Some(AutoFormatAction::OrderedList);
     }
 
     None
@@ -669,7 +692,13 @@ pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
             | BlockKind::Blockquote
             | BlockKind::Callout { .. }
             | BlockKind::CodeFence { .. }
+            | BlockKind::MathBlock
             | BlockKind::ThematicBreak
+            | BlockKind::Toc
+            | BlockKind::FootnoteDefinition
+            | BlockKind::LinkReferenceDefinition
+            | BlockKind::YamlFrontMatter
+            | BlockKind::Html
     )
 }
 
@@ -698,7 +727,16 @@ pub(crate) fn semantic_enter_transform(
         BlockKind::CodeFence { .. } => {
             code_fence_enter_transform(&edited.text, edited.cursor_offset)
         }
+        BlockKind::MathBlock => math_block_enter_transform(&edited.text, edited.cursor_offset),
         BlockKind::ThematicBreak => Some(thematic_break_enter_transform(
+            &edited.text,
+            edited.cursor_offset,
+        )),
+        BlockKind::Toc => Some(toc_enter_transform(&edited.text, edited.cursor_offset)),
+        BlockKind::FootnoteDefinition
+        | BlockKind::LinkReferenceDefinition
+        | BlockKind::YamlFrontMatter
+        | BlockKind::Html => Some(structural_block_enter_transform(
             &edited.text,
             edited.cursor_offset,
         )),
@@ -726,24 +764,53 @@ pub(crate) fn pipe_table_enter_transform(
     if cursor_offset != text.len() {
         return None;
     }
-    if text.contains(['\n', '\r']) || !text.starts_with('|') || !text.ends_with('|') {
+    if text.contains(['\n', '\r']) {
         return None;
     }
 
-    let cells = pipe_row_cell_count(text);
+    let header = normalized_pipe_table_header(text)?;
+    let cells = pipe_row_cell_count(&header);
     if cells < 2 {
         return None;
     }
 
     let delimiter = pipe_table_delimiter_row(cells);
     let empty_row = pipe_table_empty_row(cells);
-    let replacement = format!("{text}\n{delimiter}\n{empty_row}");
-    let cursor_offset = text.len() + 1 + delimiter.len() + 1 + 1;
+    let replacement = format!("{header}\n{delimiter}\n{empty_row}");
+    let cursor_offset = header.len() + 1 + delimiter.len() + 1 + 1;
 
     Some(SemanticEnterTransform {
         replacement,
         cursor_offset,
     })
+}
+
+fn normalized_pipe_table_header(text: &str) -> Option<String> {
+    if text.starts_with('|') && text.ends_with('|') {
+        return Some(text.to_string());
+    }
+
+    let trimmed = text.trim();
+    if trimmed.starts_with('|') || trimmed.ends_with('|') || unescaped_pipe_count(trimmed) == 0 {
+        return None;
+    }
+
+    Some(format!("| {trimmed} |"))
+}
+
+fn unescaped_pipe_count(text: &str) -> usize {
+    let mut count = 0usize;
+    let mut previous_was_backslash = false;
+    for ch in text.chars() {
+        if ch == '|' && !previous_was_backslash {
+            count += 1;
+        }
+        previous_was_backslash = ch == '\\' && !previous_was_backslash;
+        if ch != '\\' {
+            previous_was_backslash = false;
+        }
+    }
+    count
 }
 
 pub fn byte_offset_for_line_column(text: &str, target_line: usize, target_column: usize) -> usize {
@@ -851,6 +918,33 @@ fn thematic_break_enter_transform(text: &str, cursor_offset: usize) -> SemanticE
     }
 }
 
+fn toc_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
+    structural_block_enter_transform(text, cursor_offset)
+}
+
+fn structural_block_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    if cursor_offset < text.len() {
+        return split_block_transform(text, cursor_offset);
+    }
+    SemanticEnterTransform {
+        replacement: format!("{text}\n\n"),
+        cursor_offset: text.len() + 2,
+    }
+}
+
+fn math_block_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    if cursor_offset < text.len() {
+        return None;
+    }
+
+    Some(SemanticEnterTransform {
+        replacement: format!("{text}\n\n"),
+        cursor_offset: text.len() + 2,
+    })
+}
+
 fn heading_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
     if let Some((content, marker)) = setext_heading_parts(text) {
         if content.trim().is_empty() {
@@ -930,6 +1024,18 @@ fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnte
     let info = parse_list_line(line)?;
 
     if info.is_empty {
+        if info.is_task && line_start == 0 && line_end == text.len() {
+            let current_line = if info.marker_needs_space {
+                format!("{line} ")
+            } else {
+                line.to_string()
+            };
+            let replacement = format!("{current_line}\n{}", info.continuation_prefix);
+            return Some(SemanticEnterTransform {
+                cursor_offset: replacement.len(),
+                replacement,
+            });
+        }
         return Some(exit_structured_line(text, line_start, line_end));
     }
 
@@ -1044,12 +1150,25 @@ fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<Semant
     }
 
     if info.is_empty {
+        if line_start == 0 && line_end == text.len() {
+            let replacement = format!("{}\n\n", info.continuation_prefix);
+            let cursor_offset = info.continuation_prefix.len() + 1;
+            return Some(SemanticEnterTransform {
+                replacement,
+                cursor_offset,
+            });
+        }
         return Some(exit_structured_line(text, line_start, line_end));
     }
 
     let split_offset = cursor_offset.max(line_start + info.current_prefix_end);
     let local_split = split_offset - line_start;
-    let current_line = &line[..local_split];
+    let mut current_line = line[..local_split].to_string();
+    if info.current_prefix_end == 1
+        && line.as_bytes().get(1).is_some_and(|byte| !byte.is_ascii_whitespace())
+    {
+        current_line.insert(1, ' ');
+    }
     let moved_suffix = &line[local_split..];
     let before = &text[..line_start];
     let after = &text[line_end..];
@@ -1146,6 +1265,24 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
                 current_prefix_end,
                 continuation_prefix,
                 is_empty,
+                is_task: true,
+                marker_needs_space: false,
+            });
+        }
+    }
+
+    for marker in ["- [ ]", "* [ ]", "+ [ ]", "- [x]", "* [x]", "+ [x]", "- [X]", "* [X]", "+ [X]"] {
+        if trimmed == marker {
+            let bullet = &marker[..1];
+            let current_prefix_end = indent_end + marker.len();
+            let continuation_prefix = format!("{indent}{bullet} [ ] ");
+            return Some(ListLineInfo {
+                indent_len: indent_end,
+                current_prefix_end,
+                continuation_prefix,
+                is_empty: true,
+                is_task: true,
+                marker_needs_space: true,
             });
         }
     }
@@ -1160,27 +1297,55 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
                 current_prefix_end,
                 continuation_prefix,
                 is_empty,
+                is_task: false,
+                marker_needs_space: false,
             });
         }
     }
 
-    if let Some((number, _)) = trimmed.split_once(". ")
-        && !number.is_empty()
-        && number.chars().all(|ch| ch.is_ascii_digit())
-    {
-        let current_prefix_end = indent_end + number.len() + 2;
-        let next_number = number.parse::<usize>().unwrap_or(1).saturating_add(1);
-        let continuation_prefix = format!("{indent}{next_number}. ");
+    if let Some(marker) = ordered_list_marker(trimmed) {
+        let current_prefix_end = indent_end + marker.prefix_len;
+        let next_number = marker.number.saturating_add(1);
+        let continuation_prefix = format!("{indent}{next_number}{} ", marker.delimiter);
         let is_empty = line[current_prefix_end..].trim().is_empty();
         return Some(ListLineInfo {
             indent_len: indent_end,
             current_prefix_end,
             continuation_prefix,
             is_empty,
+            is_task: false,
+            marker_needs_space: false,
         });
     }
 
     None
+}
+
+fn ordered_list_marker(line_start: &str) -> Option<OrderedListMarker> {
+    let bytes = line_start.as_bytes();
+    let mut ix = 0usize;
+    while ix < bytes.len() && bytes[ix].is_ascii_digit() {
+        ix += 1;
+    }
+
+    if ix == 0 || ix + 1 >= bytes.len() {
+        return None;
+    }
+
+    let delimiter = bytes[ix];
+    if delimiter != b'.' && delimiter != b')' {
+        return None;
+    }
+    if !bytes[ix + 1].is_ascii_whitespace() {
+        return None;
+    }
+
+    let number = line_start[..ix].parse::<usize>().ok()?;
+    Some(OrderedListMarker {
+        number,
+        delimiter: delimiter as char,
+        prefix_len: ix + 2,
+    })
 }
 
 fn parse_blockquote_line(line: &str) -> Option<QuoteLineInfo> {
@@ -1446,12 +1611,28 @@ mod tests {
     }
 
     #[test]
+    fn continues_parenthesized_ordered_list_item() {
+        let transform = semantic_enter_transform(&BlockKind::List, "1) item", None, 7).unwrap();
+
+        assert_eq!(transform.replacement, "1) item\n2) ");
+        assert_eq!(transform.cursor_offset, "1) item\n2) ".len());
+    }
+
+    #[test]
     fn exits_empty_task_list_item() {
         let transform =
             semantic_enter_transform(&BlockKind::List, "- one\n- [ ] ", None, 11).unwrap();
 
         assert_eq!(transform.replacement, "- one\n\n");
         assert_eq!(transform.cursor_offset, 7);
+    }
+
+    #[test]
+    fn bare_task_marker_enter_creates_editable_task_item() {
+        let transform = semantic_enter_transform(&BlockKind::List, "- [ ]", None, 5).unwrap();
+
+        assert_eq!(transform.replacement, "- [ ] \n- [ ] ");
+        assert_eq!(transform.cursor_offset, "- [ ] \n- [ ] ".len());
     }
 
     #[test]
@@ -1549,9 +1730,17 @@ mod tests {
     }
 
     #[test]
+    fn pipe_table_enter_accepts_header_without_outer_pipes() {
+        let transform = pipe_table_enter_transform(&BlockKind::Paragraph, "a | b", None, 5).unwrap();
+
+        assert_eq!(transform.replacement, "| a | b |\n| --- | --- |\n|  |  |");
+        assert_eq!(transform.cursor_offset, "| a | b |\n| --- | --- |\n|".len());
+    }
+
+    #[test]
     fn pipe_table_enter_does_not_trigger_for_invalid_shapes() {
         assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a |", None, 5).is_none());
-        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "a | b |", None, 7).is_none());
+        assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "a \\| b", None, 6).is_none());
         assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a | b ", None, 8).is_none());
         assert!(
             pipe_table_enter_transform(&BlockKind::Paragraph, "| a |\n| b |", None, 11).is_none()
@@ -1700,11 +1889,13 @@ mod tests {
     #[test]
     fn set_list_markup_strips_ordered_on_toggle() {
         assert_eq!(set_list_markup("1. Hello", true), "Hello");
+        assert_eq!(set_list_markup("1) Hello", true), "Hello");
     }
 
     #[test]
     fn set_list_markup_converts_ordered_to_bullet() {
         assert_eq!(set_list_markup("1. Hello", false), "- Hello");
+        assert_eq!(set_list_markup("1) Hello", false), "- Hello");
     }
 
     #[test]
@@ -1715,7 +1906,9 @@ mod tests {
     #[test]
     fn set_task_list_markup_converts_typed_marker_to_task() {
         assert_eq!(set_task_list_markup("- [ ] task"), "- [ ] task");
+        assert_eq!(set_task_list_markup("- [ ]"), "- [ ] ");
         assert_eq!(set_task_list_markup("* [x] done"), "- [ ] done");
+        assert_eq!(set_task_list_markup("+ [X]"), "- [ ] ");
         assert_eq!(set_task_list_markup("+ todo"), "- [ ] todo");
     }
 
@@ -1745,6 +1938,14 @@ mod tests {
             detect_auto_format(&BlockKind::Paragraph, "> Hello"),
             Some(AutoFormatAction::Blockquote)
         );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, ">"),
+            Some(AutoFormatAction::Blockquote)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, ">Hello"),
+            Some(AutoFormatAction::Blockquote)
+        );
     }
 
     #[test]
@@ -1765,6 +1966,10 @@ mod tests {
             detect_auto_format(&BlockKind::Paragraph, "1. Hello"),
             Some(AutoFormatAction::OrderedList)
         );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "1) Hello"),
+            Some(AutoFormatAction::OrderedList)
+        );
     }
 
     #[test]
@@ -1781,6 +1986,15 @@ mod tests {
             detect_auto_format(&BlockKind::Paragraph, "+ [X] done"),
             Some(AutoFormatAction::TaskList)
         );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- [ ]"),
+            Some(AutoFormatAction::TaskList)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- [x]"),
+            Some(AutoFormatAction::TaskList)
+        );
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, "- [ ]todo"), None);
     }
 
     #[test]
@@ -1858,5 +2072,66 @@ mod tests {
             semantic_enter_transform(&BlockKind::ThematicBreak, "---", None, 3).unwrap();
         assert_eq!(transform.replacement, "---\n\n");
         assert_eq!(transform.cursor_offset, 5);
+    }
+
+    #[test]
+    fn toc_enter_creates_following_paragraph() {
+        let transform = semantic_enter_transform(&BlockKind::Toc, "[toc]", None, 5).unwrap();
+        assert_eq!(transform.replacement, "[toc]\n\n");
+        assert_eq!(transform.cursor_offset, 7);
+    }
+
+    #[test]
+    fn footnote_definition_enter_creates_following_paragraph() {
+        let transform =
+            semantic_enter_transform(&BlockKind::FootnoteDefinition, "[^1]: Note", None, 10)
+                .unwrap();
+        assert_eq!(transform.replacement, "[^1]: Note\n\n");
+        assert_eq!(transform.cursor_offset, 12);
+    }
+
+    #[test]
+    fn link_reference_definition_enter_creates_following_paragraph() {
+        let transform = semantic_enter_transform(
+            &BlockKind::LinkReferenceDefinition,
+            "[docs]: https://example.com",
+            None,
+            "[docs]: https://example.com".len(),
+        )
+        .unwrap();
+        assert_eq!(transform.replacement, "[docs]: https://example.com\n\n");
+        assert_eq!(transform.cursor_offset, "[docs]: https://example.com\n\n".len());
+    }
+
+    #[test]
+    fn yaml_front_matter_enter_creates_following_paragraph() {
+        let text = "---\ntitle: Draft\n---";
+        let transform =
+            semantic_enter_transform(&BlockKind::YamlFrontMatter, text, None, text.len()).unwrap();
+        assert_eq!(transform.replacement, "---\ntitle: Draft\n---\n\n");
+        assert_eq!(transform.cursor_offset, "---\ntitle: Draft\n---\n\n".len());
+    }
+
+    #[test]
+    fn html_block_enter_creates_following_paragraph() {
+        let text = "<div>Note</div>";
+        let transform = semantic_enter_transform(&BlockKind::Html, text, None, text.len()).unwrap();
+        assert_eq!(transform.replacement, "<div>Note</div>\n\n");
+        assert_eq!(transform.cursor_offset, "<div>Note</div>\n\n".len());
+    }
+
+    #[test]
+    fn math_block_enter_after_closing_delimiter_creates_following_paragraph() {
+        let text = "$$\nx + y\n$$";
+        let transform =
+            semantic_enter_transform(&BlockKind::MathBlock, text, None, text.len()).unwrap();
+        assert_eq!(transform.replacement, "$$\nx + y\n$$\n\n");
+        assert_eq!(transform.cursor_offset, "$$\nx + y\n$$\n\n".len());
+    }
+
+    #[test]
+    fn math_block_enter_inside_body_uses_plain_line_break() {
+        let text = "$$\nx + y\n$$";
+        assert!(semantic_enter_transform(&BlockKind::MathBlock, text, None, 6).is_none());
     }
 }

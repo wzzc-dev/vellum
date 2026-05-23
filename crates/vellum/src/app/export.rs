@@ -39,15 +39,17 @@ fn replace_mermaid_fences(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len());
     let mut mermaid_block = String::new();
     let mut in_mermaid_block = false;
+    let mut mermaid_marker: Option<FenceMarker> = None;
 
     for segment in markdown.split_inclusive('\n') {
         let line = segment.trim_end_matches(['\r', '\n']);
         let newline = &segment[line.len()..];
         if in_mermaid_block {
-            if is_fence_close(line) {
+            if mermaid_marker.is_some_and(|marker| marker.closes(line)) {
                 out.push_str(&render_mermaid_block(&mermaid_block));
                 mermaid_block.clear();
                 in_mermaid_block = false;
+                mermaid_marker = None;
             } else {
                 mermaid_block.push_str(line);
                 mermaid_block.push_str(newline);
@@ -55,8 +57,9 @@ fn replace_mermaid_fences(markdown: &str) -> String {
             continue;
         }
 
-        if is_mermaid_fence_open(line) {
+        if let Some(marker) = mermaid_fence_open(line) {
             in_mermaid_block = true;
+            mermaid_marker = Some(marker);
             continue;
         }
 
@@ -71,24 +74,47 @@ fn replace_mermaid_fences(markdown: &str) -> String {
     out
 }
 
-fn is_mermaid_fence_open(line: &str) -> bool {
+fn mermaid_fence_open(line: &str) -> Option<FenceMarker> {
     let trimmed = line.trim_start();
-    let Some(rest) = trimmed
-        .strip_prefix("```")
-        .or_else(|| trimmed.strip_prefix("~~~"))
-    else {
-        return false;
-    };
+    let marker = FenceMarker::opening(trimmed)?;
+    let rest = &trimmed[marker.len..];
     let info = rest.trim_start();
     let Some(rest) = info.strip_prefix("mermaid") else {
-        return false;
+        return None;
     };
-    rest.is_empty() || rest.starts_with(char::is_whitespace)
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(marker)
+    } else {
+        None
+    }
 }
 
-fn is_fence_close(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FenceMarker {
+    ch: char,
+    len: usize,
+}
+
+impl FenceMarker {
+    fn opening(trimmed: &str) -> Option<Self> {
+        let ch = trimmed.chars().next()?;
+        if ch != '`' && ch != '~' {
+            return None;
+        }
+        let len = trimmed.chars().take_while(|candidate| *candidate == ch).count();
+        if len < 3 {
+            return None;
+        }
+        Some(Self { ch, len })
+    }
+
+    fn closes(self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+        let Some(marker) = Self::opening(trimmed) else {
+            return false;
+        };
+        marker.ch == self.ch && marker.len >= self.len
+    }
 }
 
 fn strip_front_matter(markdown: &str) -> &str {
@@ -165,20 +191,23 @@ fn trim_quoted_scalar(value: &str) -> &str {
 
 fn replace_typora_math_and_inline_markup(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len());
-    let mut in_fence = false;
+    let mut fence_marker: Option<FenceMarker> = None;
     let mut math_block = String::new();
     let mut in_math_block = false;
     for segment in markdown.split_inclusive('\n') {
         let line = segment.trim_end_matches(['\r', '\n']);
         let newline = &segment[line.len()..];
-        let is_fence = line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~");
-        if is_fence {
+        if let Some(marker) = fence_marker {
             out.push_str(segment);
-            in_fence = !in_fence;
+            if marker.closes(line) {
+                fence_marker = None;
+            }
             continue;
         }
-        if in_fence {
+
+        if let Some(marker) = FenceMarker::opening(line.trim_start()) {
             out.push_str(segment);
+            fence_marker = Some(marker);
             continue;
         }
         if line.trim() == "$$" {
@@ -308,16 +337,20 @@ fn collect_headings(markdown: &str) -> Vec<Heading> {
     let mut headings = Vec::new();
     let mut slug_counts = HashMap::new();
     let mut previous_line: Option<&str> = None;
-    let mut in_fence = false;
+    let mut fence_marker: Option<FenceMarker> = None;
 
     for line in markdown.lines() {
-        if is_fence_close(line) {
-            in_fence = !in_fence;
+        if let Some(marker) = fence_marker {
+            if marker.closes(line) {
+                fence_marker = None;
+            }
             previous_line = None;
             continue;
         }
 
-        if in_fence {
+        if let Some(marker) = FenceMarker::opening(line.trim_start()) {
+            fence_marker = Some(marker);
+            previous_line = None;
             continue;
         }
 
@@ -513,13 +546,19 @@ fn parse_setext_heading_title(line: &str) -> Option<&str> {
 fn replace_toc(markdown: &str, headings: &[Heading]) -> String {
     let toc = render_toc_markdown(headings);
     let mut out = String::new();
-    let mut in_fence = false;
+    let mut fence_marker: Option<FenceMarker> = None;
     for line in markdown.lines() {
-        if is_fence_close(line) {
-            in_fence = !in_fence;
+        if let Some(marker) = fence_marker {
             out.push_str(line);
             out.push('\n');
-        } else if !in_fence && line.trim().eq_ignore_ascii_case("[toc]") {
+            if marker.closes(line) {
+                fence_marker = None;
+            }
+        } else if let Some(marker) = FenceMarker::opening(line.trim_start()) {
+            fence_marker = Some(marker);
+            out.push_str(line);
+            out.push('\n');
+        } else if line.trim().eq_ignore_ascii_case("[toc]") {
             out.push_str(&toc);
             out.push('\n');
         } else {
@@ -670,17 +709,20 @@ fn decode_html_entities(value: &str) -> String {
 fn replace_callouts(markdown: &str) -> String {
     let mut out = String::new();
     let mut lines = markdown.lines().peekable();
-    let mut in_fence = false;
+    let mut fence_marker: Option<FenceMarker> = None;
 
     while let Some(line) = lines.next() {
-        if is_fence_close(line) {
-            in_fence = !in_fence;
+        if let Some(marker) = fence_marker {
             out.push_str(line);
             out.push('\n');
+            if marker.closes(line) {
+                fence_marker = None;
+            }
             continue;
         }
 
-        if in_fence {
+        if let Some(marker) = FenceMarker::opening(line.trim_start()) {
+            fence_marker = Some(marker);
             out.push_str(line);
             out.push('\n');
             continue;
@@ -1077,6 +1119,18 @@ mod tests {
     }
 
     #[test]
+    fn toc_marker_inside_longer_code_fence_stays_literal() {
+        let html = export_markdown_to_html(
+            "````markdown\n```\n[toc]\n```\n````\n\n# Visible",
+            "TOC",
+        )
+        .unwrap();
+
+        assert!(html.contains("[toc]"));
+        assert!(!html.contains("<a href=\"#visible\">Visible</a>"));
+    }
+
+    #[test]
     fn exports_callouts_as_styled_blocks() {
         let html =
             export_markdown_to_html("> [!warning] Careful\n> Read this first.", "Callout").unwrap();
@@ -1120,12 +1174,33 @@ mod tests {
     }
 
     #[test]
+    fn callout_marker_inside_longer_code_fence_stays_literal() {
+        let html = export_markdown_to_html(
+            "````markdown\n```\n> [!note] Literal\n```\n````",
+            "Callout",
+        )
+        .unwrap();
+
+        assert!(html.contains("&gt; [!note] Literal"));
+        assert!(!html.contains("callout callout-note"));
+    }
+
+    #[test]
     fn exports_typora_inline_extensions() {
         let html = export_markdown_to_html("==mark== H~2~O x^2^ `==code==`", "Inline").unwrap();
         assert!(html.contains("<mark>mark</mark>"));
         assert!(html.contains("H<sub>2</sub>O"));
         assert!(html.contains("x<sup>2</sup>"));
         assert!(html.contains("<code>==code==</code>"));
+    }
+
+    #[test]
+    fn inline_extensions_skip_longer_code_fence_contents() {
+        let html = export_markdown_to_html("````markdown\n```\n==literal==\n```\n````", "Inline")
+            .unwrap();
+
+        assert!(html.contains("==literal=="));
+        assert!(!html.contains("<mark>literal</mark>"));
     }
 
     #[test]

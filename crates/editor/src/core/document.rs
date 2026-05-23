@@ -32,6 +32,7 @@ pub enum BlockKind {
     Html,
     YamlFrontMatter,
     FootnoteDefinition,
+    LinkReferenceDefinition,
     Footnote,
     SourceCode,
     Unknown,
@@ -866,6 +867,20 @@ mod tests {
                 .iter()
                 .any(|block| block.kind == BlockKind::FootnoteDefinition)
         );
+    }
+
+    #[test]
+    fn parses_link_reference_definition_separately_from_footnote() {
+        let doc = DocumentBuffer::from_text("[docs]: https://example.com\n\n[^1]: Note");
+
+        assert!(doc
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::LinkReferenceDefinition));
+        assert!(doc
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::FootnoteDefinition));
     }
 
     #[test]

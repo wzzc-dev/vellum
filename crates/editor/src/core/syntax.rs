@@ -308,11 +308,15 @@ fn block_seed_from_node(node: Node<'_>, source: &Rope) -> Option<BlockSeed> {
         "minus_metadata" | "plus_metadata" => {
             (BlockKind::YamlFrontMatter, CursorAnchorPolicy::Clamp, false)
         }
-        "link_reference_definition" => (
-            BlockKind::FootnoteDefinition,
-            CursorAnchorPolicy::Clamp,
-            false,
-        ),
+        "link_reference_definition" => {
+            let text = source_text(source, start_byte..content_end);
+            let kind = if is_footnote_definition_text(&text) {
+                BlockKind::FootnoteDefinition
+            } else {
+                BlockKind::LinkReferenceDefinition
+            };
+            (kind, CursorAnchorPolicy::Clamp, false)
+        }
         _ => recover_block_shape(source, start_byte, node.end_byte()).unwrap_or((
             BlockKind::Unknown,
             CursorAnchorPolicy::Clamp,
@@ -856,6 +860,13 @@ fn recover_block_shape(
             false,
         ));
     }
+    if is_link_reference_definition_text(&text) {
+        return Some((
+            BlockKind::LinkReferenceDefinition,
+            CursorAnchorPolicy::Clamp,
+            false,
+        ));
+    }
     if is_toc_text(&text) {
         return Some((BlockKind::Toc, CursorAnchorPolicy::Clamp, false));
     }
@@ -893,6 +904,11 @@ fn is_math_block_text(text: &str) -> bool {
 fn is_footnote_definition_text(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with("[^") && trimmed.contains("]:")
+}
+
+fn is_link_reference_definition_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with('[') && !trimmed.starts_with("[^") && trimmed.contains("]:")
 }
 
 fn is_toc_text(text: &str) -> bool {

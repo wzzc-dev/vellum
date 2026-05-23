@@ -822,6 +822,7 @@ impl<'a> BlockBuilder<'a> {
             BlockKind::FootnoteDefinition | BlockKind::Footnote => {
                 self.push_footnote_definition(&text)
             }
+            BlockKind::LinkReferenceDefinition => self.push_link_reference_definition(&text),
             BlockKind::Callout { .. } => self.push_callout(&text),
             _ => self.push_inline_text(
                 self.block.content_range.start,
@@ -1240,6 +1241,33 @@ impl<'a> BlockBuilder<'a> {
             RenderSpanKind::Text,
             self.block.content_range.start,
             "Footnote".to_string(),
+            RenderInlineStyle {
+                strong: true,
+                ..RenderInlineStyle::default()
+            },
+        );
+        self.push_virtual_visible(
+            RenderSpanKind::Text,
+            self.block.content_range.start,
+            " ".to_string(),
+            RenderInlineStyle::default(),
+        );
+        self.push_inline_text(
+            self.block.content_range.start + content_start,
+            &text[content_start..],
+            RenderInlineStyle::default(),
+        );
+    }
+
+    fn push_link_reference_definition(&mut self, text: &str) {
+        let (label_end, content_start) = footnote_definition_parts(text);
+        self.push_hidden_source(
+            self.block.content_range.start..self.block.content_range.start + label_end,
+        );
+        self.push_virtual_visible(
+            RenderSpanKind::Text,
+            self.block.content_range.start,
+            "Reference".to_string(),
             RenderInlineStyle {
                 strong: true,
                 ..RenderInlineStyle::default()
@@ -2447,6 +2475,17 @@ mod tests {
             block.kind,
             BlockKind::Callout { .. }
         )));
+    }
+
+    #[test]
+    fn link_reference_definition_renders_as_reference_not_footnote() {
+        let doc = DocumentBuffer::from_text("[docs]: https://example.com");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.blocks[0].kind, BlockKind::LinkReferenceDefinition);
+        assert_eq!(map.blocks[0].embedded, None);
+        assert!(map.visible_text.contains("Reference https://example.com"));
+        assert!(!map.visible_text.contains("Footnote"));
     }
 
     #[test]

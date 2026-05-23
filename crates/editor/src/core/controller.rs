@@ -2104,6 +2104,9 @@ impl EditorController {
         if let Some(effect) = self.delete_backward_structural() {
             return effect;
         }
+        if let Some(effect) = self.delete_backward_empty_pair() {
+            return effect;
+        }
 
         let text = self.document.text();
         let cursor = self.selection.cursor();
@@ -2142,6 +2145,9 @@ impl EditorController {
         if let Some(effect) = self.delete_forward_structural() {
             return effect;
         }
+        if let Some(effect) = self.delete_forward_empty_pair() {
+            return effect;
+        }
 
         let text = self.document.text();
         let cursor = self.selection.cursor();
@@ -2171,6 +2177,44 @@ impl EditorController {
             SelectionState::collapsed(start),
             "Deleted auto-pair",
         )
+    }
+
+    fn delete_backward_empty_pair(&mut self) -> Option<EditorEffects> {
+        let text = self.document.text();
+        let cursor = self.selection.cursor();
+        if cursor == 0 || cursor >= text.len() {
+            return None;
+        }
+
+        let before_start = previous_char_boundary(&text, cursor);
+        let before = text[before_start..cursor].chars().next()?;
+        let after_end = next_char_boundary(&text, cursor);
+        let after = text[cursor..after_end].chars().next()?;
+
+        if auto_pair_closer_for(before) != Some(after) {
+            return None;
+        }
+
+        Some(self.delete_surrounding_pair(cursor - before_start, after_end - cursor))
+    }
+
+    fn delete_forward_empty_pair(&mut self) -> Option<EditorEffects> {
+        let text = self.document.text();
+        let cursor = self.selection.cursor();
+        if cursor >= text.len() {
+            return None;
+        }
+
+        let opener_end = next_char_boundary(&text, cursor);
+        let opener = text[cursor..opener_end].chars().next()?;
+        let closer_end = next_char_boundary(&text, opener_end);
+        let closer = text[opener_end..closer_end].chars().next()?;
+
+        if auto_pair_closer_for(opener) != Some(closer) {
+            return None;
+        }
+
+        Some(self.delete_surrounding_pair(0, closer_end - cursor))
     }
 
     fn delete_backward_in_table(&mut self) -> Option<EditorEffects> {
@@ -2753,6 +2797,19 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
     cursor.min(text.len())
 }
 
+fn auto_pair_closer_for(opener: char) -> Option<char> {
+    match opener {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '`' => Some('`'),
+        '$' => Some('$'),
+        _ => None,
+    }
+}
+
 fn line_bounds_in_text(text: &str, cursor_offset: usize) -> (usize, usize) {
     let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
     let line_start = text[..cursor_offset]
@@ -2991,6 +3048,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_bare_task_marker_creates_editable_task_item() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- [ ]".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- [ ]".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] \n- [ ] ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] \n- [ ] ".len()));
+    }
+
+    #[test]
     fn toggle_task_list_command_converts_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -3124,6 +3203,116 @@ mod tests {
         assert_eq!(snapshot.document_text, "> quote");
         assert_eq!(snapshot.selection, SelectionState::collapsed(7));
         assert_eq!(snapshot.blocks.len(), 1);
+    }
+
+    #[test]
+    fn delete_backward_between_empty_auto_pair_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Call ()".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Call (".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Call ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Call ".len()));
+    }
+
+    #[test]
+    fn delete_backward_between_empty_markdown_inline_auto_pair_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Formula $$".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Formula $".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Formula ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Formula ".len()));
+    }
+
+    #[test]
+    fn delete_backward_inside_nonempty_auto_pair_removes_only_previous_char() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Call (x)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Call (x".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Call ()");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Call (".len()));
+    }
+
+    #[test]
+    fn delete_forward_before_empty_auto_pair_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Call ()".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Call ".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Call ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Call ".len()));
+    }
+
+    #[test]
+    fn delete_forward_before_nonempty_auto_pair_removes_only_opener() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Call (x)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Call ".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Call x)");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Call ".len()));
     }
 
     #[test]
@@ -3424,6 +3613,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_typed_parenthesized_ordered_marker_continues_numbering() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "1) Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("1) Hello".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "1) Hello\n2) ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("1) Hello\n2) ".len()));
+    }
+
+    #[test]
     fn indent_only_adjusts_current_list_item() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -3674,6 +3885,50 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_typed_bare_blockquote_marker_creates_empty_quote_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: ">".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(1),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> \n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(3));
+    }
+
+    #[test]
+    fn enter_after_typed_blockquote_without_space_preserves_quote_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: ">quote".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(">quote".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> quote\n> ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("> quote\n> ".len()));
+    }
+
+    #[test]
     fn enter_continues_list_inside_blockquote() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -3902,6 +4157,40 @@ mod tests {
         );
         let table =
             crate::core::table::TableModel::parse("| Name | Role |\n| --- | --- |\n|  |  |");
+        let first_body_cell = table
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 0,
+            })
+            .expect("first body cell");
+        assert_eq!(snapshot.selection.cursor(), first_body_cell.start);
+    }
+
+    #[test]
+    fn enter_on_loose_pipe_row_builds_table_with_outer_pipes() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Name | Role".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Name | Role".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "| Name | Role |\n| --- | --- |\n|  |  |"
+        );
+        let table = crate::core::table::TableModel::parse(
+            "| Name | Role |\n| --- | --- |\n|  |  |",
+        );
         let first_body_cell = table
             .cell_source_range(crate::core::table::TableCellRef {
                 visible_row: 1,
@@ -4732,6 +5021,52 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_math_block_closing_delimiter_creates_following_paragraph() {
+        let source = "$$\nx + y\n$$";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(source.len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "$$\nx + y\n$$\n\n");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
+    fn enter_inside_math_block_preserves_multiline_math_editing() {
+        let source = "$$\nx + y\n$$";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("$$\nx".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "$$\nx\n + y\n$$");
+        assert_eq!(snapshot.selection.cursor(), "$$\nx\n".len());
+    }
+
+    #[test]
     fn insert_mermaid_diagram_creates_diagram_block_and_selects_body() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4890,6 +5225,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_typed_toc_marker_creates_following_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "[toc]".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("[toc]".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "[toc]\n\n");
+        assert_eq!(snapshot.selection.cursor(), "[toc]\n\n".len());
+    }
+
+    #[test]
     fn insert_footnote_adds_reference_and_selects_definition_text() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4920,6 +5277,56 @@ mod tests {
             .blocks
             .iter()
             .any(|block| block.kind == BlockKind::FootnoteDefinition));
+    }
+
+    #[test]
+    fn enter_after_typed_footnote_definition_creates_following_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "[^1]: Note".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("[^1]: Note".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "[^1]: Note\n\n");
+        assert_eq!(snapshot.selection.cursor(), "[^1]: Note\n\n".len());
+    }
+
+    #[test]
+    fn enter_after_typed_link_reference_definition_creates_following_paragraph() {
+        let source = "[docs]: https://example.com";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(source.len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "[docs]: https://example.com\n\n");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::LinkReferenceDefinition));
     }
 
     #[test]
@@ -4988,5 +5395,51 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, source);
         assert_eq!(snapshot.selection, SelectionState::collapsed(0));
+    }
+
+    #[test]
+    fn enter_after_typed_front_matter_creates_following_paragraph() {
+        let source = "---\ntitle: Draft\n---";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(source.len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "---\ntitle: Draft\n---\n\n");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
+    fn enter_after_typed_html_block_creates_following_paragraph() {
+        let source = "<div>Note</div>";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(source.len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "<div>Note</div>\n\n");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
     }
 }
