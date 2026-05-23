@@ -2098,6 +2098,22 @@ mod tests {
     }
 
     #[test]
+    fn detects_markdown_emphasis_delimiter_overclose() {
+        let old_visible = "*x*";
+        let selection = SelectionState::collapsed(2);
+
+        assert!(detect_overclose_opportunity(old_visible, "*x**", &selection));
+    }
+
+    #[test]
+    fn detects_typora_highlight_delimiter_overclose() {
+        let old_visible = "=x=";
+        let selection = SelectionState::collapsed(2);
+
+        assert!(detect_overclose_opportunity(old_visible, "=x==", &selection));
+    }
+
+    #[test]
     fn detects_angle_bracket_overclose() {
         let old_visible = "<url>";
         let selection = SelectionState::collapsed(4);

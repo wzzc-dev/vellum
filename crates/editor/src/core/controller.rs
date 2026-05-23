@@ -3680,6 +3680,28 @@ mod tests {
     }
 
     #[test]
+    fn delete_backward_between_empty_typora_highlight_pair_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Mark ==".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Mark =".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Mark ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Mark ".len()));
+    }
+
+    #[test]
     fn delete_backward_between_empty_angle_brackets_removes_both_sides() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
