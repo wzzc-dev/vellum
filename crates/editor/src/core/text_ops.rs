@@ -536,8 +536,10 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
         String::new()
     };
 
+    let mut checked = false;
     let content = 'strip: {
         if let Some(rest) = strip_task_marker(trimmed) {
+            checked = task_marker_is_checked(trimmed).unwrap_or(false);
             break 'strip rest;
         }
         for marker in unordered_markers {
@@ -548,7 +550,26 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
         trimmed
     };
 
-    format!("{indent}- [ ] {content}{rest}")
+    let marker = if checked { "- [x]" } else { "- [ ]" };
+    format!("{indent}{marker} {content}{rest}")
+}
+
+fn task_marker_is_checked(trimmed: &str) -> Option<bool> {
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 5
+        || !matches!(bytes[0], b'-' | b'*' | b'+')
+        || bytes[1] != b' '
+        || bytes[2] != b'['
+        || bytes[4] != b']'
+    {
+        return None;
+    }
+
+    match bytes[3] {
+        b' ' => Some(false),
+        b'x' | b'X' => Some(true),
+        _ => None,
+    }
 }
 
 fn strip_task_marker(trimmed: &str) -> Option<&str> {
@@ -1907,8 +1928,9 @@ mod tests {
     fn set_task_list_markup_converts_typed_marker_to_task() {
         assert_eq!(set_task_list_markup("- [ ] task"), "- [ ] task");
         assert_eq!(set_task_list_markup("- [ ]"), "- [ ] ");
-        assert_eq!(set_task_list_markup("* [x] done"), "- [ ] done");
-        assert_eq!(set_task_list_markup("+ [X]"), "- [ ] ");
+        assert_eq!(set_task_list_markup("* [x] done"), "- [x] done");
+        assert_eq!(set_task_list_markup("+ [X] done"), "- [x] done");
+        assert_eq!(set_task_list_markup("+ [X]"), "- [x] ");
         assert_eq!(set_task_list_markup("+ todo"), "- [ ] todo");
     }
 

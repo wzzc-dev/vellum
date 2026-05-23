@@ -3102,6 +3102,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_typed_checked_task_marker_preserves_checked_state() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "* [x] done".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("* [x] done".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "* [x] done\n* [ ] ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(17));
+    }
+
+    #[test]
     fn enter_after_bare_task_marker_creates_editable_task_item() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
