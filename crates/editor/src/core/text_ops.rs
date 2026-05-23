@@ -1062,6 +1062,14 @@ fn list_enter_transform(text: &str, cursor_offset: usize) -> Option<SemanticEnte
                 replacement,
             });
         }
+        if info.indent_len > 0 {
+            return Some(exit_indented_empty_list_line(
+                text,
+                line_start,
+                line_end,
+                info.indent_len,
+            ));
+        }
         return Some(exit_structured_line(text, line_start, line_end));
     }
 
@@ -1219,6 +1227,38 @@ fn exit_structured_line(text: &str, line_start: usize, line_end: usize) -> Seman
         (true, false) => (after.to_string(), 0),
         (false, true) => (format!("{before}\n\n"), before.len() + 2),
         (false, false) => (format!("{before}\n\n{after}"), before.len() + 2),
+    };
+
+    SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    }
+}
+
+fn exit_indented_empty_list_line(
+    text: &str,
+    line_start: usize,
+    line_end: usize,
+    indent_len: usize,
+) -> SemanticEnterTransform {
+    let before = trim_trailing_newlines(&text[..line_start]);
+    let after = trim_leading_newlines(&text[line_end..]);
+    let indent_end = (line_start + indent_len).min(line_end);
+    let indent = &text[line_start..indent_end];
+
+    let (replacement, cursor_offset) = match (before.is_empty(), after.is_empty()) {
+        (true, true) => (indent.to_string(), indent.len()),
+        (true, false) => (format!("{indent}\n\n{after}"), indent.len()),
+        (false, true) => {
+            let replacement = format!("{before}\n\n{indent}");
+            let cursor_offset = before.len() + 2 + indent.len();
+            (replacement, cursor_offset)
+        }
+        (false, false) => {
+            let replacement = format!("{before}\n\n{indent}\n\n{after}");
+            let cursor_offset = before.len() + 2 + indent.len();
+            (replacement, cursor_offset)
+        }
     };
 
     SemanticEnterTransform {
@@ -1651,6 +1691,14 @@ mod tests {
 
         assert_eq!(transform.replacement, "- one\n\n");
         assert_eq!(transform.cursor_offset, 7);
+    }
+
+    #[test]
+    fn exits_indented_empty_list_item_after_indent() {
+        let transform = semantic_enter_transform(&BlockKind::List, "  - ", None, 4).unwrap();
+
+        assert_eq!(transform.replacement, "  ");
+        assert_eq!(transform.cursor_offset, 2);
     }
 
     #[test]

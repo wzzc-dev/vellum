@@ -496,6 +496,10 @@ impl EditorController {
         else {
             return EditorEffects::default();
         };
+        let offset_in_cell = table
+            .cell_source_range(current_cell)
+            .map(|range| local_cursor.saturating_sub(range.start))
+            .unwrap_or(0);
 
         let Some(replacement) = table.rebuild_markdown_without_row(current_cell.visible_row) else {
             return EditorEffects::default();
@@ -509,7 +513,8 @@ impl EditorController {
                 .column
                 .min(rebuilt.column_count().saturating_sub(1)),
         };
-        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let selection_after =
+            table_cell_selection_with_offset(&block, &rebuilt, target_cell, offset_in_cell);
         let trailing = self.document.block_trailing_text(&block);
         self.apply_edit(
             block.byte_range.clone(),
@@ -635,6 +640,10 @@ impl EditorController {
         else {
             return EditorEffects::default();
         };
+        let offset_in_cell = table
+            .cell_source_range(current_cell)
+            .map(|range| local_cursor.saturating_sub(range.start))
+            .unwrap_or(0);
 
         let Some(replacement) = table.rebuild_markdown_without_column(current_cell.column) else {
             return EditorEffects::default();
@@ -648,7 +657,8 @@ impl EditorController {
                 .column
                 .min(rebuilt.column_count().saturating_sub(1)),
         };
-        let selection_after = table_cell_selection(&block, &rebuilt, target_cell);
+        let selection_after =
+            table_cell_selection_with_offset(&block, &rebuilt, target_cell, offset_in_cell);
         let trailing = self.document.block_trailing_text(&block);
         self.apply_edit(
             block.byte_range.clone(),
@@ -1357,11 +1367,35 @@ impl EditorController {
                 }
             }
             AutoFormatAction::CodeFence { marker, info } => {
-                self.insert_code_fence_template(marker, info)
+                let Some(block) = self.current_block().cloned() else {
+                    return EditorEffects::default();
+                };
+                let opening = if info.is_empty() {
+                    marker.clone()
+                } else {
+                    format!("{marker}{info}")
+                };
+                let template = format!("{opening}\n\n{marker}");
+                let cursor = block.content_range.start + opening.len() + 1;
+                self.apply_edit(
+                    block.content_range,
+                    template,
+                    SelectionState::collapsed(cursor),
+                    "Inserted code fence",
+                )
             }
             AutoFormatAction::MathBlock => {
-                let effects = self.insert_math_block();
-                effects
+                let Some(block) = self.current_block().cloned() else {
+                    return EditorEffects::default();
+                };
+                let template = "$$\n$$\n\n";
+                let cursor = block.content_range.start + 3;
+                self.apply_edit(
+                    block.content_range,
+                    template.to_string(),
+                    SelectionState::collapsed(cursor),
+                    "Inserted math block",
+                )
             }
         }
     }
@@ -5649,6 +5683,97 @@ mod tests {
     }
 
     #[test]
+    fn delete_table_row_preserves_cursor_offset_in_following_row() {
+        let source = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Engineer |\n",
+            "| Bob | Designer |\n",
+            "| Cat | Reviewer |"
+        );
+        let expected = concat!(
+            "| Name | Role |\n",
+            "| --- | --- |\n",
+            "| Ada | Engineer |\n",
+            "| Cat | Reviewer |"
+        );
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let current_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 1,
+            })
+            .expect("current row second cell");
+        let offset_in_cell = "Des".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(current_cell.start + offset_in_cell),
+        });
+
+        let effects = controller.delete_table_row();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, expected);
+        let target_cell = crate::core::table::TableModel::parse(expected)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 2,
+                column: 1,
+            })
+            .expect("same column in following row");
+        assert_eq!(snapshot.selection.cursor(), target_cell.start + offset_in_cell);
+    }
+
+    #[test]
+    fn delete_table_column_preserves_cursor_offset_in_adjacent_column() {
+        let source = concat!(
+            "| Name | Role | Note |\n",
+            "| --- | --- | --- |\n",
+            "| Ada | Engineer | Remote |"
+        );
+        let expected = concat!("| Name | Note |\n", "| --- | --- |\n", "| Ada | Remote |");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let current_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("current row middle cell");
+        let offset_in_cell = "Eng".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(current_cell.start + offset_in_cell),
+        });
+
+        let effects = controller.delete_table_column();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, expected);
+        let target_cell = crate::core::table::TableModel::parse(expected)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("adjacent cell after removed column");
+        assert_eq!(snapshot.selection.cursor(), target_cell.start + offset_in_cell);
+    }
+
+    #[test]
     fn insert_horizontal_rule_replaces_empty_paragraph_and_creates_following_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5789,6 +5914,31 @@ mod tests {
             snapshot.blocks[0].kind,
             crate::BlockKind::CodeFence { ref language } if language.as_deref() == Some("rust")
         ));
+    }
+
+    #[test]
+    fn code_fence_autoformat_replaces_marker_with_template() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "```rust".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("```rust".len()),
+        });
+
+        controller.apply_auto_format_on_enter(&AutoFormatAction::CodeFence {
+            marker: "```".to_string(),
+            info: "rust".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "```rust\n\n```");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("```rust\n".len()));
     }
 
     #[test]
@@ -6670,6 +6820,29 @@ mod tests {
         let cursor = snapshot.selection.cursor();
         let math_start = doc_text.find("$$\n$$").expect("math block in doc");
         assert_eq!(cursor, math_start + 3, "source cursor should be inside math block");
+    }
+
+    #[test]
+    fn enter_after_typed_math_marker_creates_math_block_template() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "$$".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("$$".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "$$\n$$\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("$$\n".len()));
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::MathBlock));
     }
 
     #[test]
