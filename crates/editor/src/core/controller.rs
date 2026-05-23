@@ -1418,7 +1418,7 @@ impl EditorController {
         let range = self.selection.range();
         let selected_text = self.document.text_for_range(range.clone());
         let url_placeholder = "image.png";
-        if is_url_like(&selected_text) {
+        if is_url_like(&selected_text) || looks_like_image_path(&selected_text) {
             let alt_placeholder = "alt";
             let destination = Self::escape_link_destination(&selected_text);
             let replacement = format!("![{alt_placeholder}]({destination})");
@@ -2683,6 +2683,28 @@ fn is_url_like(text: &str) -> bool {
         && text
             .chars()
             .all(|ch| !ch.is_whitespace() && !ch.is_control())
+}
+
+fn looks_like_image_path(text: &str) -> bool {
+    if text.trim() != text || text.chars().any(char::is_control) {
+        return false;
+    }
+
+    let candidate = text
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(text)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(text);
+    let Some((_, ext)) = candidate.rsplit_once('.') else {
+        return false;
+    };
+
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
+    )
 }
 
 fn file_modified_at(path: &Path) -> Option<SystemTime> {
@@ -5176,6 +5198,65 @@ mod tests {
         assert_eq!(
             snapshot.document_text,
             r"See ![alt](https://example.com/image\).png)"
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
+    }
+
+    #[test]
+    fn insert_image_with_selected_relative_image_path_uses_it_as_source() {
+        let source = "See ./assets/diagram.png";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See ![alt](./assets/diagram.png)");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
+    }
+
+    #[test]
+    fn insert_image_with_selected_spaced_image_path_escapes_destination() {
+        let source = "See ./assets/my diagram(1).PNG";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            r"See ![alt](./assets/my diagram(1\).PNG)"
         );
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
     }
