@@ -4473,6 +4473,46 @@ mod tests {
     }
 
     #[test]
+    fn insert_table_column_inherits_current_column_alignment() {
+        let source = "| Name | Score |\n| --- | ---: |\n| Ada | 42 |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let body_score_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("body score cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(body_score_cell.start),
+        });
+
+        let effects = controller.insert_table_column();
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        let expected = "| Name | Score |  |\n| --- | ---: | ---: |\n| Ada | 42 |  |";
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            crate::core::table::TableModel::parse(expected)
+                .cell_source_range(crate::core::table::TableCellRef {
+                    visible_row: 1,
+                    column: 2,
+                })
+                .expect("inserted aligned column cell")
+                .start
+        );
+    }
+
+    #[test]
     fn align_table_column_updates_current_column_delimiter() {
         let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
         let mut controller = EditorController::new(

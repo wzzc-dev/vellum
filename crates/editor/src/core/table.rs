@@ -394,7 +394,11 @@ impl TableModel {
 
             if visible_row == 0 {
                 let mut delimiter = delimiter_cells.clone();
-                delimiter.insert(column_to_insert_after + 1, "---".to_string());
+                let inserted_alignment = delimiter
+                    .get(column_to_insert_after)
+                    .cloned()
+                    .unwrap_or_else(|| "---".to_string());
+                delimiter.insert(column_to_insert_after + 1, inserted_alignment);
                 lines.push(format_pipe_row(&delimiter));
             }
         }
@@ -681,12 +685,12 @@ mod tests {
     }
 
     #[test]
-    fn inserting_column_preserves_existing_delimiter_alignment() {
+    fn inserting_column_inherits_current_delimiter_alignment() {
         let model = TableModel::parse("| H1 | H2 |\n| :--- | ---: |\n| A | B |");
 
         assert_eq!(
             model.rebuild_markdown_with_inserted_column_after(0),
-            Some("| H1 |  | H2 |\n| :--- | --- | ---: |\n| A |  | B |".to_string())
+            Some("| H1 |  | H2 |\n| :--- | :--- | ---: |\n| A |  | B |".to_string())
         );
     }
 
