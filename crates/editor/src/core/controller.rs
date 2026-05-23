@@ -1731,6 +1731,31 @@ impl EditorController {
     }
 
     fn insert_code_fence_template(&mut self, marker: &str, info: &str) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            let opening = if info.is_empty() {
+                marker.to_string()
+            } else {
+                format!("{marker}{info}")
+            };
+            let body = selected_text.trim_matches('\n');
+            let replacement = format!("{opening}\n{body}\n{marker}");
+            let body_start = range.start + opening.len() + 1;
+            let body_end = body_start + body.len();
+            return self.apply_edit(
+                range,
+                replacement,
+                SelectionState {
+                    anchor_byte: body_end,
+                    head_byte: body_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted code fence",
+            );
+        }
+
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
@@ -1765,6 +1790,44 @@ impl EditorController {
     }
 
     fn insert_mermaid_diagram(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            let document_text = self.document.text();
+            let body = selected_text.trim_matches('\n');
+            let prefix = if range.start == 0 || document_text[..range.start].ends_with("\n\n") {
+                ""
+            } else if document_text[..range.start].ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let suffix = if range.end == document_text.len()
+                || document_text[range.end..].starts_with("\n\n")
+            {
+                ""
+            } else if document_text[range.end..].starts_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let opening = "```mermaid\n";
+            let replacement = format!("{prefix}{opening}{body}\n```{suffix}");
+            let body_start = range.start + prefix.len() + opening.len();
+            let body_end = body_start + body.len();
+            return self.apply_edit(
+                range,
+                replacement,
+                SelectionState {
+                    anchor_byte: body_end,
+                    head_byte: body_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted Mermaid diagram",
+            );
+        }
+
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
@@ -1802,6 +1865,43 @@ impl EditorController {
     }
 
     fn insert_math_block(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            let document_text = self.document.text();
+            let body = selected_text.trim_matches('\n');
+            let prefix = if range.start == 0 || document_text[..range.start].ends_with("\n\n") {
+                ""
+            } else if document_text[..range.start].ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let suffix = if range.end == document_text.len()
+                || document_text[range.end..].starts_with("\n\n")
+            {
+                ""
+            } else if document_text[range.end..].starts_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let replacement = format!("{prefix}$$\n{body}\n$${suffix}");
+            let body_start = range.start + prefix.len() + 3;
+            let body_end = body_start + body.len();
+            return self.apply_edit(
+                range,
+                replacement,
+                SelectionState {
+                    anchor_byte: body_end,
+                    head_byte: body_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted math block",
+            );
+        }
+
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
@@ -1830,6 +1930,46 @@ impl EditorController {
     }
 
     fn insert_html_block(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            let document_text = self.document.text();
+            let body = selected_text.trim_matches('\n');
+            let prefix = if range.start == 0 || document_text[..range.start].ends_with("\n\n") {
+                ""
+            } else if document_text[..range.start].ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let suffix = if range.end == document_text.len()
+                || document_text[range.end..].starts_with("\n\n")
+            {
+                ""
+            } else if document_text[range.end..].starts_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let opening = "<div>\n";
+            let indent = "  ";
+            let closing = "\n</div>";
+            let replacement = format!("{prefix}{opening}{indent}{body}{closing}{suffix}");
+            let body_start = range.start + prefix.len() + opening.len() + indent.len();
+            let body_end = body_start + body.len();
+            return self.apply_edit(
+                range,
+                replacement,
+                SelectionState {
+                    anchor_byte: body_end,
+                    head_byte: body_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted HTML block",
+            );
+        }
+
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
@@ -1871,6 +2011,49 @@ impl EditorController {
     }
 
     fn insert_callout(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            let document_text = self.document.text();
+            let body = selected_text.trim_matches('\n');
+            let prefix = if range.start == 0 || document_text[..range.start].ends_with("\n\n") {
+                ""
+            } else if document_text[..range.start].ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let suffix = if range.end == document_text.len()
+                || document_text[range.end..].starts_with("\n\n")
+            {
+                ""
+            } else if document_text[range.end..].starts_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let quoted_body = body
+                .lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let header = "> [!NOTE] Title\n";
+            let replacement = format!("{prefix}{header}{quoted_body}{suffix}");
+            let body_start = range.start + prefix.len() + header.len() + 2;
+            let body_end = range.start + prefix.len() + header.len() + quoted_body.len();
+            return self.apply_edit(
+                range,
+                replacement,
+                SelectionState {
+                    anchor_byte: body_end,
+                    head_byte: body_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted callout",
+            );
+        }
+
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
@@ -5010,6 +5193,45 @@ mod tests {
     }
 
     #[test]
+    fn insert_code_fence_wraps_selected_text_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Before\nlet answer = 42;\nAfter".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let start = "Before\n".len();
+        let end = "Before\nlet answer = 42;".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertCodeFence);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Before\n```\nlet answer = 42;\n```\nAfter"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "let answer = 42;"
+        );
+        assert!(matches!(
+            snapshot.blocks[1].kind,
+            crate::BlockKind::CodeFence { .. }
+        ));
+    }
+
+    #[test]
     fn enter_after_typed_code_fence_preserves_language_info() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5635,6 +5857,36 @@ mod tests {
     }
 
     #[test]
+    fn insert_math_block_wraps_selected_text_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Before\nx + y\nAfter".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let start = "Before\n".len();
+        let end = "Before\nx + y".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertMathBlock);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Before\n\n$$\nx + y\n$$\n\nAfter");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "x + y");
+        assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::MathBlock));
+    }
+
+    #[test]
     fn enter_after_math_block_closing_delimiter_creates_following_paragraph() {
         let source = "$$\nx + y\n$$";
         let mut controller = EditorController::new(
@@ -5710,6 +5962,45 @@ mod tests {
     }
 
     #[test]
+    fn insert_mermaid_diagram_wraps_selected_text_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Before\ngraph TD\n  A --> B\nAfter".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let start = "Before\n".len();
+        let end = "Before\ngraph TD\n  A --> B".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertMermaidDiagram);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Before\n\n```mermaid\ngraph TD\n  A --> B\n```\n\nAfter"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "graph TD\n  A --> B"
+        );
+        assert!(snapshot.display_map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(crate::EmbeddedNodeKind::Diagram { ref language }) if language == "mermaid"
+        )));
+    }
+
+    #[test]
     fn insert_html_block_on_empty_line_creates_following_paragraph_and_selects_content() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5749,6 +6040,42 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello\n\n<div>\n  Content\n</div>\n\n");
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Content");
+    }
+
+    #[test]
+    fn insert_html_block_wraps_selected_text_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Before\n<p>Hi</p>\nAfter".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let start = "Before\n".len();
+        let end = "Before\n<p>Hi</p>".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertHtmlBlock);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Before\n\n<div>\n  <p>Hi</p>\n</div>\n\nAfter"
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "<p>Hi</p>");
+        assert!(snapshot.display_map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(crate::EmbeddedNodeKind::HtmlBlock)
+        )));
     }
 
     #[test]
@@ -5812,6 +6139,46 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello\n\n> [!NOTE] Title\n> ");
         assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
+    fn insert_callout_wraps_selected_text_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Before\nRemember this\nAfter".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let start = "Before\n".len();
+        let end = "Before\nRemember this".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: start,
+                head_byte: end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertCallout);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Before\n\n> [!NOTE] Title\n> Remember this\n\nAfter"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "Remember this"
+        );
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| matches!(block.kind, BlockKind::Callout { .. })));
     }
 
     #[test]
