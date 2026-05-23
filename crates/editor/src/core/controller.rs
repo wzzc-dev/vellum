@@ -9,13 +9,18 @@ use anyhow::{Context as _, Result};
 
 use super::{
     display_map::{DisplayMap, HiddenSyntaxPolicy},
-    document::{BlockKind, BlockProjection, DocumentBuffer, SelectionState, Transaction},
-    table::{TableCellRef, TableModel, TableNavDirection},
+    document::{
+        BlockKind, BlockProjection, DocumentBuffer, SelectionAffinity, SelectionState,
+        Transaction,
+    },
+    table::{TableCellRef, TableColumnAlignment, TableModel, TableNavDirection},
     text_ops::{
-        AutoFormatAction, adjust_block_markup, byte_offset_for_line_column, clamp_to_char_boundary,
+        AutoFormatAction, adjust_block_markup, adjust_list_markup_at_cursor,
+        adjust_quoted_list_markup_at_cursor, adjust_selected_list_markup,
+        adjust_selected_quoted_list_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, detect_auto_format,
         line_column_for_byte_offset, pipe_table_enter_transform, semantic_enter_transform,
-        set_blockquote_markup, set_heading_markup, set_list_markup,
+        set_blockquote_markup, set_heading_markup, set_list_markup, set_task_list_markup,
     },
 };
 
@@ -181,6 +186,8 @@ pub enum EditCommand {
         before: String,
         after: String,
     },
+    InsertLink,
+    InsertImage,
     Indent,
     Outdent,
     MoveCaret {
@@ -205,6 +212,8 @@ pub enum EditCommand {
     ToggleBulletList,
     /// Toggle ordered list (`1. `) prefix. If already an ordered list, strips it.
     ToggleOrderedList,
+    /// Convert the current block to a task list item with an unchecked checkbox.
+    ToggleTaskList,
     /// Insert a thematic break (`---`). If the current block is an empty paragraph, replace it;
     /// otherwise insert after the current block and leave the cursor in the following empty paragraph.
     InsertHorizontalRule,
@@ -212,9 +221,16 @@ pub enum EditCommand {
     /// replace it; otherwise insert after the current block. The cursor lands on the empty line
     /// between the opening and closing fence markers.
     InsertCodeFence,
+    InsertMermaidDiagram,
     /// Insert a minimal 2-column pipe table template and place the cursor in the first body cell.
     InsertTable,
+    InsertInlineMath,
     InsertMathBlock,
+    InsertHtmlBlock,
+    InsertCallout,
+    InsertToc,
+    InsertFootnote,
+    InsertFrontMatter,
     Undo,
     Redo,
     ReloadConflict,
@@ -641,6 +657,46 @@ impl EditorController {
         )
     }
 
+    pub(crate) fn align_table_column(&mut self, alignment: TableColumnAlignment) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        if block.kind != BlockKind::Table {
+            return EditorEffects::default();
+        }
+
+        let table = TableModel::parse(&self.document.block_text(&block));
+        if table.is_empty() {
+            return EditorEffects::default();
+        }
+
+        let local_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let Some(current_cell) = table
+            .cell_ref_for_source_offset(local_cursor, self.selection.affinity)
+            .or_else(|| table.first_cell())
+        else {
+            return EditorEffects::default();
+        };
+
+        let Some(replacement) =
+            table.rebuild_markdown_with_column_alignment(current_cell.column, alignment)
+        else {
+            return EditorEffects::default();
+        };
+        let rebuilt = TableModel::parse(&replacement);
+        let selection_after = table_cell_selection(&block, &rebuilt, current_cell);
+        let trailing = self.document.block_trailing_text(&block);
+        self.apply_edit(
+            block.byte_range.clone(),
+            format!("{}{}", replacement, trailing),
+            selection_after,
+            "Aligned table column",
+        )
+    }
+
     pub(crate) fn exit_table(&mut self) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
@@ -920,15 +976,25 @@ impl EditorController {
             EditCommand::ToggleInlineMarkup { before, after } => {
                 self.toggle_inline_markup(before, after)
             }
+            EditCommand::InsertLink => self.insert_link(),
+            EditCommand::InsertImage => self.insert_image_placeholder(),
             EditCommand::Indent => self.adjust_current_block(true),
             EditCommand::Outdent => self.adjust_current_block(false),
             EditCommand::ToggleBlockquote => self.toggle_blockquote(),
             EditCommand::ToggleBulletList => self.toggle_list(false),
             EditCommand::ToggleOrderedList => self.toggle_list(true),
+            EditCommand::ToggleTaskList => self.set_task_list_markup(),
             EditCommand::InsertHorizontalRule => self.insert_horizontal_rule(),
             EditCommand::InsertCodeFence => self.insert_code_fence(),
+            EditCommand::InsertMermaidDiagram => self.insert_mermaid_diagram(),
             EditCommand::InsertTable => self.insert_table(),
+            EditCommand::InsertInlineMath => self.insert_inline_math(),
             EditCommand::InsertMathBlock => self.insert_math_block(),
+            EditCommand::InsertHtmlBlock => self.insert_html_block(),
+            EditCommand::InsertCallout => self.insert_callout(),
+            EditCommand::InsertToc => self.insert_toc(),
+            EditCommand::InsertFootnote => self.insert_footnote(),
+            EditCommand::InsertFrontMatter => self.insert_front_matter(),
             EditCommand::MoveCaret {
                 direction,
                 preferred_column,
@@ -1237,7 +1303,14 @@ impl EditorController {
                     effects
                 }
             }
-            AutoFormatAction::TaskList => self.insert_break(false),
+            AutoFormatAction::TaskList => {
+                let effects = self.set_task_list_markup();
+                if effects.changed {
+                    self.insert_break(false)
+                } else {
+                    effects
+                }
+            }
             AutoFormatAction::HorizontalRule => {
                 let effects = self.insert_horizontal_rule();
                 if effects.changed {
@@ -1277,18 +1350,149 @@ impl EditorController {
         )
     }
 
+    fn insert_link(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        let url_placeholder = "https://";
+        let raw_label = if selected_text.is_empty() {
+            "text"
+        } else {
+            selected_text.as_str()
+        };
+        let label = Self::escape_link_label(raw_label);
+        let replacement = format!("[{label}]({url_placeholder})");
+        let url_start = range.start + label.len() + 3;
+        let selection_after = SelectionState {
+            anchor_byte: url_start,
+            head_byte: url_start + url_placeholder.len(),
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+        self.apply_edit(range, replacement, selection_after, "Inserted link")
+    }
+
+    fn insert_image_placeholder(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        let url_placeholder = "image.png";
+        let raw_alt = if selected_text.is_empty() {
+            "alt"
+        } else {
+            selected_text.as_str()
+        };
+        let alt = Self::escape_link_label(raw_alt);
+        let replacement = format!("![{alt}]({url_placeholder})");
+        let url_start = range.start + alt.len() + 4;
+        let selection_after = SelectionState {
+            anchor_byte: url_start,
+            head_byte: url_start + url_placeholder.len(),
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+        self.apply_edit(range, replacement, selection_after, "Inserted image")
+    }
+
+    fn insert_inline_math(&mut self) -> EditorEffects {
+        let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        let body = if selected_text.is_empty() {
+            "x".to_string()
+        } else {
+            selected_text
+        };
+        let replacement = format!("${body}$");
+        let selection_after = if body == "x" {
+            SelectionState {
+                anchor_byte: range.start + replacement.len() - 1,
+                head_byte: range.start + 1,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            }
+        } else {
+            SelectionState::collapsed(range.start + replacement.len())
+        };
+        self.apply_edit(range, replacement, selection_after, "Inserted inline math")
+    }
+
+    fn escape_link_label(text: &str) -> String {
+        text.replace('\\', r"\\").replace(']', r"\]")
+    }
+
     fn adjust_current_block(&mut self, deepen: bool) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let current = self.document.block_text(&block);
-        let Some(updated) = adjust_block_markup(&current, deepen) else {
-            return EditorEffects::default();
-        };
         let relative_cursor = self
             .selection
             .cursor()
             .saturating_sub(block.content_range.start);
+        let local_selection = self.selection.range().start.saturating_sub(block.content_range.start)
+            ..self.selection.range().end.saturating_sub(block.content_range.start);
+        if block.kind == BlockKind::List
+            && !local_selection.is_empty()
+            && let Some(transform) = adjust_selected_list_markup(&current, local_selection.clone(), deepen)
+        {
+            let selection_after = SelectionState {
+                anchor_byte: block.content_range.start + transform.selection.start,
+                head_byte: block.content_range.start + transform.selection.end,
+                preferred_column: None,
+                affinity: self.selection.affinity,
+            };
+            return self.apply_edit(
+                block.content_range,
+                transform.replacement,
+                selection_after,
+                "Adjusted selected list structure",
+            );
+        }
+        if block.kind == BlockKind::List
+            && let Some(transform) = adjust_list_markup_at_cursor(&current, relative_cursor, deepen)
+        {
+            let selection_after =
+                SelectionState::collapsed(block.content_range.start + transform.cursor_offset);
+            return self.apply_edit(
+                block.content_range,
+                transform.replacement,
+                selection_after,
+                "Adjusted list structure",
+            );
+        }
+        if matches!(block.kind, BlockKind::Blockquote | BlockKind::Callout { .. })
+            && !local_selection.is_empty()
+            && let Some(transform) =
+                adjust_selected_quoted_list_markup(&current, local_selection, deepen)
+        {
+            let selection_after = SelectionState {
+                anchor_byte: block.content_range.start + transform.selection.start,
+                head_byte: block.content_range.start + transform.selection.end,
+                preferred_column: None,
+                affinity: self.selection.affinity,
+            };
+            return self.apply_edit(
+                block.content_range,
+                transform.replacement,
+                selection_after,
+                "Adjusted selected quoted list structure",
+            );
+        }
+        if matches!(block.kind, BlockKind::Blockquote | BlockKind::Callout { .. })
+            && let Some(transform) =
+                adjust_quoted_list_markup_at_cursor(&current, relative_cursor, deepen)
+        {
+            let selection_after =
+                SelectionState::collapsed(block.content_range.start + transform.cursor_offset);
+            return self.apply_edit(
+                block.content_range,
+                transform.replacement,
+                selection_after,
+                "Adjusted quoted list structure",
+            );
+        }
+
+        let Some(updated) = adjust_block_markup(&current, deepen) else {
+            return EditorEffects::default();
+        };
         let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
         self.apply_edit(
             block.content_range,
@@ -1374,6 +1578,25 @@ impl EditorController {
         )
     }
 
+    fn set_task_list_markup(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current = self.document.block_text(&block);
+        let updated = set_task_list_markup(&current);
+        let relative_cursor = self
+            .selection
+            .cursor()
+            .saturating_sub(block.content_range.start);
+        let new_cursor = block.content_range.start + cmp::min(relative_cursor, updated.len());
+        self.apply_edit(
+            block.content_range,
+            updated,
+            SelectionState::collapsed(new_cursor),
+            "Converted paragraph to task list",
+        )
+    }
+
     fn insert_horizontal_rule(&mut self) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
@@ -1441,6 +1664,43 @@ impl EditorController {
         }
     }
 
+    fn insert_mermaid_diagram(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let body = "graph TD\n  A[Start] --> B[End]";
+        let template = format!("```mermaid\n{body}\n```");
+        let body_start = "```mermaid\n".len();
+        let body_end = body_start + body.len();
+        let selection_for = |base: usize| SelectionState {
+            anchor_byte: base + body_end,
+            head_byte: base + body_start,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        if is_empty {
+            let base = block.content_range.start;
+            self.apply_edit(
+                block.content_range,
+                template,
+                selection_for(base),
+                "Inserted Mermaid diagram",
+            )
+        } else {
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                selection_for(insert_pos + 2),
+                "Inserted Mermaid diagram",
+            )
+        }
+    }
+
     fn insert_math_block(&mut self) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
@@ -1467,6 +1727,178 @@ impl EditorController {
                 "Inserted math block",
             )
         }
+    }
+
+    fn insert_html_block(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let template = "<div>\n  Content\n</div>";
+        let selection_start = "<div>\n  ".len();
+        let selection_end = selection_start + "Content".len();
+
+        if is_empty {
+            let base_offset = block.content_range.start;
+            self.apply_edit(
+                block.content_range,
+                template.to_string(),
+                SelectionState {
+                    anchor_byte: base_offset + selection_end,
+                    head_byte: base_offset + selection_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted HTML block",
+            )
+        } else {
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            let base_offset = insert_pos + 2;
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState {
+                    anchor_byte: base_offset + selection_end,
+                    head_byte: base_offset + selection_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted HTML block",
+            )
+        }
+    }
+
+    fn insert_callout(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let template = "> [!NOTE] Title\n> ";
+        let body_cursor = template.len();
+        if is_empty {
+            let base_offset = block.content_range.start;
+            self.apply_edit(
+                block.content_range,
+                template.to_string(),
+                SelectionState::collapsed(base_offset + body_cursor),
+                "Inserted callout",
+            )
+        } else {
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState::collapsed(insert_pos + 2 + body_cursor),
+                "Inserted callout",
+            )
+        }
+    }
+
+    fn insert_toc(&mut self) -> EditorEffects {
+        let Some(block) = self.current_block().cloned() else {
+            return EditorEffects::default();
+        };
+        let current_text = self.document.block_text(&block);
+        let is_empty = current_text.trim().is_empty();
+        let template = "[toc]";
+        if is_empty {
+            let base_offset = block.content_range.start;
+            self.apply_edit(
+                block.content_range,
+                template.to_string(),
+                SelectionState::collapsed(base_offset + template.len()),
+                "Inserted table of contents",
+            )
+        } else {
+            let insert_pos = block.byte_range.end;
+            let insertion = format!("\n\n{template}");
+            self.apply_edit(
+                insert_pos..insert_pos,
+                insertion,
+                SelectionState::collapsed(insert_pos + 2 + template.len()),
+                "Inserted table of contents",
+            )
+        }
+    }
+
+    fn insert_footnote(&mut self) -> EditorEffects {
+        let text = self.document.text();
+        let label = next_footnote_label(&text);
+        let reference = format!("[^{label}]");
+        let definition_prefix = format!("[^{label}]: ");
+        let placeholder = "Footnote text";
+        let range = self.selection.range();
+        let tail = &text[range.end..];
+        let body_end = range.start + reference.len() + tail.len();
+        let body_text = format!("{}{}{}", &text[..range.start], reference, tail);
+        let separator = if body_text.is_empty() {
+            ""
+        } else if body_text.ends_with("\n\n") {
+            ""
+        } else if body_text.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+
+        let insertion = format!(
+            "{reference}{tail}{separator}{definition_prefix}{placeholder}"
+        );
+        let definition_start = body_end + separator.len() + definition_prefix.len();
+        let definition_end = definition_start + placeholder.len();
+
+        self.apply_edit(
+            range.start..text.len(),
+            insertion,
+            SelectionState {
+                anchor_byte: definition_end,
+                head_byte: definition_start,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+            "Inserted footnote",
+        )
+    }
+
+    fn insert_front_matter(&mut self) -> EditorEffects {
+        let text = self.document.text();
+        let template = "---\ntitle: Untitled\ndate: \ntags: []\n---\n\n";
+        let title_start = "---\ntitle: ".len();
+        let title_end = title_start + "Untitled".len();
+
+        if text.trim().is_empty() {
+            return self.apply_edit(
+                0..text.len(),
+                template.to_string(),
+                SelectionState {
+                    anchor_byte: title_end,
+                    head_byte: title_start,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+                "Inserted front matter",
+            );
+        }
+
+        if text.starts_with("---\n") || text.starts_with("+++\n") {
+            return self.update_selection(SelectionState::collapsed(0));
+        }
+
+        self.apply_edit(
+            0..0,
+            template.to_string(),
+            SelectionState {
+                anchor_byte: title_end,
+                head_byte: title_start,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+            "Inserted front matter",
+        )
     }
 
     fn insert_table(&mut self) -> EditorEffects {
@@ -2078,6 +2510,28 @@ impl EditorController {
     }
 }
 
+fn next_footnote_label(text: &str) -> usize {
+    let mut max_label = 0usize;
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+
+    while let Some(relative) = text[index..].find("[^") {
+        let start = index + relative + 2;
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start && bytes.get(end) == Some(&b']') {
+            if let Ok(label) = text[start..end].parse::<usize>() {
+                max_label = max_label.max(label);
+            }
+        }
+        index = start;
+    }
+
+    max_label + 1
+}
+
 fn file_modified_at(path: &Path) -> Option<SystemTime> {
     fs::metadata(path)
         .ok()
@@ -2444,6 +2898,50 @@ mod tests {
 
         controller.toggle_task_range(task_range);
         assert_eq!(controller.snapshot().document_text, "- [ ] task");
+    }
+
+    #[test]
+    fn enter_after_typed_task_marker_creates_task_list_and_next_checkbox() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- [ ] task".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- [ ] task".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] task\n- [ ] ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(17));
+    }
+
+    #[test]
+    fn toggle_task_list_command_converts_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "todo".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(4),
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] todo");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(4));
     }
 
     #[test]
@@ -2858,6 +3356,126 @@ mod tests {
     }
 
     #[test]
+    fn indent_only_adjusts_current_list_item() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n- two".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- one\n- two".len()),
+        });
+
+        controller.dispatch(EditCommand::Indent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- one\n  - two");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- one\n  - two".len()));
+    }
+
+    #[test]
+    fn outdent_only_adjusts_current_list_item() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n  - two".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- one\n  - two".len()),
+        });
+
+        controller.dispatch(EditCommand::Outdent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- one\n- two");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- one\n- two".len()));
+    }
+
+    #[test]
+    fn outdent_top_level_list_item_converts_only_current_item_to_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n- two".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- one\n- two".len()),
+        });
+
+        controller.dispatch(EditCommand::Outdent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- one\ntwo");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- one\ntwo".len()));
+    }
+
+    #[test]
+    fn indent_adjusts_selected_list_items() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n- two\n- three".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: "- one\n- two".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::Indent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "  - one\n  - two\n- three");
+        assert_eq!(snapshot.selection.range(), 0.."  - one\n  - two".len());
+    }
+
+    #[test]
+    fn outdent_adjusts_selected_top_level_list_items() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- one\n- two\n- three".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: "- one\n- two".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::Outdent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "one\ntwo\n- three");
+        assert_eq!(snapshot.selection.range(), 0.."one\ntwo".len());
+    }
+
+    #[test]
     fn delete_backward_on_collapsed_inter_block_gap_removes_visible_empty_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -2985,6 +3603,167 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "> keep\n\n");
         assert_eq!(snapshot.selection, SelectionState::collapsed(8));
+    }
+
+    #[test]
+    fn enter_continues_list_inside_blockquote() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> - one".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("> - one".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> - one\n> - ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("> - one\n> - ".len()));
+    }
+
+    #[test]
+    fn enter_continues_list_inside_callout() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> [!NOTE]\n> - one".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("> [!NOTE]\n> - one".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE]\n> - one\n> - ");
+        assert_eq!(
+            snapshot.selection,
+            SelectionState::collapsed("> [!NOTE]\n> - one\n> - ".len())
+        );
+    }
+
+    #[test]
+    fn indent_adjusts_list_inside_callout_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> [!NOTE]\n> - one".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("> [!NOTE]\n> - one".len()),
+        });
+
+        controller.dispatch(EditCommand::Indent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE]\n>   - one");
+        assert_eq!(
+            snapshot.selection,
+            SelectionState::collapsed("> [!NOTE]\n>   - one".len())
+        );
+    }
+
+    #[test]
+    fn outdent_adjusts_nested_list_inside_callout_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> [!NOTE]\n>   - one".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("> [!NOTE]\n>   - one".len()),
+        });
+
+        controller.dispatch(EditCommand::Outdent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE]\n> - one");
+        assert_eq!(
+            snapshot.selection,
+            SelectionState::collapsed("> [!NOTE]\n> - one".len())
+        );
+    }
+
+    #[test]
+    fn indent_adjusts_selected_list_items_inside_callout() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> [!NOTE]\n> - one\n> - two\n> tail".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let selection_start = "> [!NOTE]\n".len();
+        let selection_end = "> [!NOTE]\n> - one\n> - two".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: selection_start,
+                head_byte: selection_end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::Indent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE]\n>   - one\n>   - two\n> tail");
+        assert_eq!(
+            snapshot.selection.range(),
+            selection_start.."> [!NOTE]\n>   - one\n>   - two".len()
+        );
+    }
+
+    #[test]
+    fn outdent_selected_top_level_list_items_inside_callout_to_quote_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "> [!NOTE]\n> - one\n> - two\n> tail".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let selection_start = "> [!NOTE]\n".len();
+        let selection_end = "> [!NOTE]\n> - one\n> - two".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: selection_start,
+                head_byte: selection_end,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::Outdent);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE]\n> one\n> two\n> tail");
+        assert_eq!(
+            snapshot.selection.range(),
+            selection_start.."> [!NOTE]\n> one\n> two".len()
+        );
     }
 
     #[test]
@@ -3186,6 +3965,46 @@ mod tests {
         let deleted = controller.delete_table_column();
         assert!(deleted.changed);
         assert_eq!(controller.snapshot().document_text, source);
+    }
+
+    #[test]
+    fn align_table_column_updates_current_column_delimiter() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let body_role_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("body role cell");
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(body_role_cell.start),
+        });
+
+        let effects = controller.align_table_column(TableColumnAlignment::Right);
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        let expected = "| Name | Role |\n| --- | ---: |\n| Ada | Eng |";
+        assert_eq!(snapshot.document_text, expected);
+        assert_eq!(
+            snapshot.selection.cursor(),
+            crate::core::table::TableModel::parse(expected)
+                .cell_source_range(crate::core::table::TableCellRef {
+                    visible_row: 1,
+                    column: 1,
+                })
+                .expect("same table cell")
+                .start
+        );
     }
 
     #[test]
@@ -3517,6 +4336,203 @@ mod tests {
     }
 
     #[test]
+    fn insert_inline_math_wraps_selection() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Formula x + y".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 8,
+                head_byte: 13,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertInlineMath);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Formula $x + y$");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(15));
+        assert!(snapshot.display_map.blocks.iter().any(|block| {
+            block
+                .spans
+                .iter()
+                .any(|span| matches!(span.meta, Some(crate::RenderSpanMeta::Math { .. })))
+        }));
+    }
+
+    #[test]
+    fn insert_inline_math_selects_placeholder_for_empty_selection() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Formula ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Formula ".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertInlineMath);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Formula $x$");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "x");
+    }
+
+    #[test]
+    fn insert_link_wraps_selection_and_selects_url_placeholder() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read docs".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 5,
+                head_byte: 9,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read [docs](https://)");
+        assert_eq!(snapshot.selection.range(), 12..20);
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "https://"
+        );
+    }
+
+    #[test]
+    fn insert_link_escapes_selected_label() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"Read a\]b".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 5,
+                head_byte: r"Read a\]b".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, r"Read [a\\\]b](https://)");
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "https://"
+        );
+    }
+
+    #[test]
+    fn insert_link_with_collapsed_selection_creates_editable_label_and_selects_url() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(5),
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read [text](https://)");
+        assert_eq!(snapshot.selection.range(), 12..20);
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "https://"
+        );
+    }
+
+    #[test]
+    fn insert_image_placeholder_selects_path() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(4),
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See ![alt](image.png)");
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "image.png"
+        );
+    }
+
+    #[test]
+    fn insert_image_placeholder_wraps_selection_as_escaped_alt() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"See a\]b".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 4,
+                head_byte: r"See a\]b".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, r"See ![a\\\]b](image.png)");
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "image.png"
+        );
+    }
+
+    #[test]
     fn disk_conflict_sets_conflict_state() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -3593,5 +4609,264 @@ mod tests {
         let cursor = snapshot.selection.cursor();
         let math_start = doc_text.find("$$\n$$").expect("math block in doc");
         assert_eq!(cursor, math_start + 3, "source cursor should be inside math block");
+    }
+
+    #[test]
+    fn insert_mermaid_diagram_creates_diagram_block_and_selects_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertMermaidDiagram);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "```mermaid\ngraph TD\n  A[Start] --> B[End]\n```"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "graph TD\n  A[Start] --> B[End]"
+        );
+        assert!(snapshot.display_map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(crate::EmbeddedNodeKind::Diagram { ref language }) if language == "mermaid"
+        )));
+    }
+
+    #[test]
+    fn insert_html_block_on_empty_line_selects_content() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertHtmlBlock);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "<div>\n  Content\n</div>");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Content");
+        assert!(snapshot.display_map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(crate::EmbeddedNodeKind::HtmlBlock)
+        )));
+    }
+
+    #[test]
+    fn insert_html_block_after_text_selects_content() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertHtmlBlock);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello\n\n<div>\n  Content\n</div>");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Content");
+    }
+
+    #[test]
+    fn insert_callout_on_empty_line_places_cursor_in_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertCallout);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE] Title\n> ");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| matches!(block.kind, BlockKind::Callout { .. })));
+    }
+
+    #[test]
+    fn insert_callout_after_text_places_cursor_in_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertCallout);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello\n\n> [!NOTE] Title\n> ");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
+    fn insert_toc_on_empty_line_creates_toc_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertToc);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "[toc]");
+        assert_eq!(snapshot.selection.cursor(), "[toc]".len());
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::Toc));
+        assert!(snapshot.display_map.visible_text.contains("Table of Contents"));
+    }
+
+    #[test]
+    fn insert_toc_after_text_appends_toc_block() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertToc);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Hello\n\n[toc]");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
+    fn insert_footnote_adds_reference_and_selects_definition_text() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello world".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Hello".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertFootnote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Hello[^1] world\n\n[^1]: Footnote text"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "Footnote text"
+        );
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::FootnoteDefinition));
+    }
+
+    #[test]
+    fn insert_footnote_uses_next_numeric_label() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Note[^2]\n\n[^2]: Existing".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Note".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertFootnote);
+
+        let snapshot = controller.snapshot();
+        assert!(snapshot.document_text.contains("Note[^3][^2]"));
+        assert!(snapshot.document_text.ends_with("[^3]: Footnote text"));
+    }
+
+    #[test]
+    fn insert_front_matter_prepends_metadata_and_selects_title() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "# Draft".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertFrontMatter);
+
+        let snapshot = controller.snapshot();
+        assert!(snapshot.document_text.starts_with(
+            "---\ntitle: Untitled\ndate: \ntags: []\n---\n\n# Draft"
+        ));
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Untitled");
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.kind == BlockKind::YamlFrontMatter));
+    }
+
+    #[test]
+    fn insert_front_matter_does_not_duplicate_existing_metadata() {
+        let source = "---\ntitle: Existing\n---\n\n# Draft";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertFrontMatter);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, source);
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
     }
 }

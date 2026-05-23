@@ -2,13 +2,18 @@ use gpui::{App, Context, KeyBinding, Window};
 use gpui_component::input::{DeleteToNextWordEnd, Enter as InputEnter};
 
 use super::{EDITOR_CONTEXT, view::MarkdownEditor};
+use crate::core::table::TableColumnAlignment;
 use crate::{
+    AlignTableColumnCenter, AlignTableColumnLeft, AlignTableColumnRight,
     BoldSelection, DemoteBlock, ExitBlockEdit, FocusNextBlock, FocusPrevBlock, GotoLine,
-    InsertCodeFence, InsertHorizontalRule, InsertMathBlock, InsertTable, ItalicSelection,
-    LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
+    DeleteTableColumn, DeleteTableRow, InsertCallout, InsertCodeFence, InsertFootnote,
+    InsertFrontMatter, InsertHorizontalRule, InsertHtmlBlock, InsertImage, InsertInlineMath,
+    InsertMathBlock, InsertMermaidDiagram, InsertTable, InsertTableColumn, InsertTableRow, InsertToc,
+    ItalicSelection, LinkSelection, PromoteBlock, RedoEdit, SecondaryEnter, ToggleBlockquote, ToggleBulletList,
     ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2, ToggleHeading3, ToggleHeading4,
-    ToggleHeading5, ToggleHeading6, ToggleInlineCode, ToggleOrderedList, ToggleParagraph,
-    ToggleSourceMode, ToggleStrikethrough, ToggleTypewriterMode, UndoEdit,
+    ToggleHeading5, ToggleHeading6, ToggleHighlight, ToggleInlineCode, ToggleOrderedList,
+    ToggleParagraph, ToggleSourceMode, ToggleStrikethrough, ToggleSubscript, ToggleSuperscript,
+    ToggleTaskList, ToggleTypewriterMode, UndoEdit,
 };
 
 const GPUI_COMPONENT_INPUT_CONTEXT: &str = "Input";
@@ -369,7 +374,7 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.apply_markup("[", "](https://)", window, cx);
+        self.insert_link(window, cx);
     }
 
     pub(crate) fn on_promote_block(
@@ -574,6 +579,15 @@ impl MarkdownEditor {
         self.toggle_list(true, window, cx);
     }
 
+    pub(crate) fn on_toggle_task_list(
+        &mut self,
+        _: &ToggleTaskList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_task_list(window, cx);
+    }
+
     pub(crate) fn on_insert_horizontal_rule(
         &mut self,
         _: &InsertHorizontalRule,
@@ -592,6 +606,15 @@ impl MarkdownEditor {
         self.insert_code_fence(window, cx);
     }
 
+    pub(crate) fn on_insert_mermaid_diagram(
+        &mut self,
+        _: &InsertMermaidDiagram,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_mermaid_diagram(window, cx);
+    }
+
     pub(crate) fn on_insert_table(
         &mut self,
         _: &InsertTable,
@@ -601,6 +624,69 @@ impl MarkdownEditor {
         self.insert_table(window, cx);
     }
 
+    pub(crate) fn on_insert_table_row(
+        &mut self,
+        _: &InsertTableRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_row(window, cx);
+    }
+
+    pub(crate) fn on_delete_table_row(
+        &mut self,
+        _: &DeleteTableRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_table_row(window, cx);
+    }
+
+    pub(crate) fn on_insert_table_column(
+        &mut self,
+        _: &InsertTableColumn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_column(window, cx);
+    }
+
+    pub(crate) fn on_delete_table_column(
+        &mut self,
+        _: &DeleteTableColumn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_table_column(window, cx);
+    }
+
+    pub(crate) fn on_align_table_column_left(
+        &mut self,
+        _: &AlignTableColumnLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.align_table_column(TableColumnAlignment::Left, window, cx);
+    }
+
+    pub(crate) fn on_align_table_column_center(
+        &mut self,
+        _: &AlignTableColumnCenter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.align_table_column(TableColumnAlignment::Center, window, cx);
+    }
+
+    pub(crate) fn on_align_table_column_right(
+        &mut self,
+        _: &AlignTableColumnRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.align_table_column(TableColumnAlignment::Right, window, cx);
+    }
+
     pub(crate) fn on_insert_math_block(
         &mut self,
         _: &InsertMathBlock,
@@ -608,6 +694,69 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.insert_math_block(window, cx);
+    }
+
+    pub(crate) fn on_insert_html_block(
+        &mut self,
+        _: &InsertHtmlBlock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_html_block(window, cx);
+    }
+
+    pub(crate) fn on_insert_inline_math(
+        &mut self,
+        _: &InsertInlineMath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_inline_math(window, cx);
+    }
+
+    pub(crate) fn on_insert_image(
+        &mut self,
+        _: &InsertImage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_image(window, cx);
+    }
+
+    pub(crate) fn on_insert_callout(
+        &mut self,
+        _: &InsertCallout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_callout(window, cx);
+    }
+
+    pub(crate) fn on_insert_toc(
+        &mut self,
+        _: &InsertToc,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_toc(window, cx);
+    }
+
+    pub(crate) fn on_insert_footnote(
+        &mut self,
+        _: &InsertFootnote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_footnote(window, cx);
+    }
+
+    pub(crate) fn on_insert_front_matter(
+        &mut self,
+        _: &InsertFrontMatter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_front_matter(window, cx);
     }
 
     pub(crate) fn on_toggle_inline_code(
@@ -626,5 +775,32 @@ impl MarkdownEditor {
         cx: &mut Context<Self>,
     ) {
         self.apply_markup("~~", "~~", window, cx);
+    }
+
+    pub(crate) fn on_toggle_highlight(
+        &mut self,
+        _: &ToggleHighlight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_markup("==", "==", window, cx);
+    }
+
+    pub(crate) fn on_toggle_superscript(
+        &mut self,
+        _: &ToggleSuperscript,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_markup("^", "^", window, cx);
+    }
+
+    pub(crate) fn on_toggle_subscript(
+        &mut self,
+        _: &ToggleSubscript,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_markup("~", "~", window, cx);
     }
 }

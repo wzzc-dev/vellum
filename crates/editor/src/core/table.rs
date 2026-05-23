@@ -43,6 +43,13 @@ pub(crate) struct TableCellRef {
     pub(crate) column: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TableColumnAlignment {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TableModel {
     source: String,
@@ -420,6 +427,36 @@ impl TableModel {
         Some(lines.join("\n"))
     }
 
+    pub(crate) fn rebuild_markdown_with_column_alignment(
+        &self,
+        column: usize,
+        alignment: TableColumnAlignment,
+    ) -> Option<String> {
+        if column >= self.column_count() {
+            return None;
+        }
+
+        let mut delimiter_cells = self.delimiter_row_cells();
+        if delimiter_cells.len() < self.column_count.max(1) {
+            delimiter_cells.resize(self.column_count.max(1), "---".to_string());
+        }
+        delimiter_cells[column] = match alignment {
+            TableColumnAlignment::Left => ":---".to_string(),
+            TableColumnAlignment::Center => ":---:".to_string(),
+            TableColumnAlignment::Right => "---:".to_string(),
+        };
+
+        let mut lines = Vec::with_capacity(self.visible_row_count().saturating_add(1));
+        for visible_row in 0..self.visible_row_count() {
+            lines.push(format_pipe_row(&self.visible_row_cells(visible_row)));
+            if visible_row == 0 {
+                lines.push(format_pipe_row(&delimiter_cells));
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
     pub(crate) fn append_empty_row(&self) -> String {
         if self.source.is_empty() {
             return self.empty_row_markdown();
@@ -660,6 +697,16 @@ mod tests {
         assert_eq!(
             model.rebuild_markdown_without_column(1),
             Some("| H1 | H3 |\n| :--- | ---: |\n| A | C |".to_string())
+        );
+    }
+
+    #[test]
+    fn aligning_column_rebuilds_delimiter_cell_only() {
+        let model = TableModel::parse("| H1 | H2 | H3 |\n| :--- | --- | ---: |\n| A | B | C |");
+
+        assert_eq!(
+            model.rebuild_markdown_with_column_alignment(1, TableColumnAlignment::Center),
+            Some("| H1 | H2 | H3 |\n| :--- | :---: | ---: |\n| A | B | C |".to_string())
         );
     }
 }

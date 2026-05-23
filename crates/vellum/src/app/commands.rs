@@ -253,6 +253,15 @@ impl VellumApp {
             PaletteCommand::Strikethrough => {
                 window.dispatch_action(Box::new(editor::ToggleStrikethrough), cx);
             }
+            PaletteCommand::Highlight => {
+                window.dispatch_action(Box::new(editor::ToggleHighlight), cx);
+            }
+            PaletteCommand::Superscript => {
+                window.dispatch_action(Box::new(editor::ToggleSuperscript), cx);
+            }
+            PaletteCommand::Subscript => {
+                window.dispatch_action(Box::new(editor::ToggleSubscript), cx);
+            }
             PaletteCommand::Link => {
                 window.dispatch_action(Box::new(editor::LinkSelection), cx);
             }
@@ -286,14 +295,62 @@ impl VellumApp {
             PaletteCommand::OrderedList => {
                 window.dispatch_action(Box::new(editor::ToggleOrderedList), cx);
             }
+            PaletteCommand::TaskList => {
+                window.dispatch_action(Box::new(editor::ToggleTaskList), cx);
+            }
             PaletteCommand::HorizontalRule => {
                 window.dispatch_action(Box::new(editor::InsertHorizontalRule), cx);
             }
             PaletteCommand::CodeFence => {
                 window.dispatch_action(Box::new(editor::InsertCodeFence), cx);
             }
+            PaletteCommand::MermaidDiagram => {
+                window.dispatch_action(Box::new(editor::InsertMermaidDiagram), cx);
+            }
             PaletteCommand::Table => {
                 window.dispatch_action(Box::new(editor::InsertTable), cx);
+            }
+            PaletteCommand::TableInsertRow => {
+                window.dispatch_action(Box::new(editor::InsertTableRow), cx);
+            }
+            PaletteCommand::TableDeleteRow => {
+                window.dispatch_action(Box::new(editor::DeleteTableRow), cx);
+            }
+            PaletteCommand::TableInsertColumn => {
+                window.dispatch_action(Box::new(editor::InsertTableColumn), cx);
+            }
+            PaletteCommand::TableDeleteColumn => {
+                window.dispatch_action(Box::new(editor::DeleteTableColumn), cx);
+            }
+            PaletteCommand::TableAlignLeft => {
+                window.dispatch_action(Box::new(editor::AlignTableColumnLeft), cx);
+            }
+            PaletteCommand::TableAlignCenter => {
+                window.dispatch_action(Box::new(editor::AlignTableColumnCenter), cx);
+            }
+            PaletteCommand::TableAlignRight => {
+                window.dispatch_action(Box::new(editor::AlignTableColumnRight), cx);
+            }
+            PaletteCommand::InlineMath => {
+                window.dispatch_action(Box::new(editor::InsertInlineMath), cx);
+            }
+            PaletteCommand::HtmlBlock => {
+                window.dispatch_action(Box::new(editor::InsertHtmlBlock), cx);
+            }
+            PaletteCommand::Image => {
+                window.dispatch_action(Box::new(editor::InsertImage), cx);
+            }
+            PaletteCommand::Callout => {
+                window.dispatch_action(Box::new(editor::InsertCallout), cx);
+            }
+            PaletteCommand::Toc => {
+                window.dispatch_action(Box::new(editor::InsertToc), cx);
+            }
+            PaletteCommand::Footnote => {
+                window.dispatch_action(Box::new(editor::InsertFootnote), cx);
+            }
+            PaletteCommand::FrontMatter => {
+                window.dispatch_action(Box::new(editor::InsertFrontMatter), cx);
             }
             PaletteCommand::SourceMode => {
                 window.dispatch_action(Box::new(editor::ToggleSourceMode), cx);

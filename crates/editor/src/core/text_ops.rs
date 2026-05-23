@@ -8,6 +8,12 @@ pub(crate) struct SemanticEnterTransform {
     pub(crate) cursor_offset: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SelectionTransform {
+    pub(crate) replacement: String,
+    pub(crate) selection: Range<usize>,
+}
+
 #[derive(Debug, Clone)]
 struct EditedText {
     text: String,
@@ -16,6 +22,7 @@ struct EditedText {
 
 #[derive(Debug, Clone)]
 struct ListLineInfo {
+    indent_len: usize,
     current_prefix_end: usize,
     continuation_prefix: String,
     is_empty: bool,
@@ -140,6 +147,224 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     } else {
         None
     }
+}
+
+pub(crate) fn adjust_quoted_list_markup_at_cursor(
+    text: &str,
+    cursor_offset: usize,
+    deepen: bool,
+) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    let (line_start, line_end) = line_bounds(text, cursor_offset);
+    let line = &text[line_start..line_end];
+    let quote_prefix_end = quoted_content_prefix_end(line)?;
+    let inner = &line[quote_prefix_end..];
+    let list_info = parse_list_line(inner)?;
+
+    if !deepen && list_info.indent_len < 2 {
+        let updated_line = format!(
+            "{}{}",
+            &line[..quote_prefix_end],
+            &inner[list_info.current_prefix_end..]
+        );
+        let replacement = format!("{}{}{}", &text[..line_start], updated_line, &text[line_end..]);
+        let marker_len = list_info.current_prefix_end;
+        let marker_start = line_start + quote_prefix_end;
+        let cursor_offset = if cursor_offset > marker_start {
+            cursor_offset.saturating_sub(marker_len)
+        } else {
+            cursor_offset
+        };
+        return Some(SemanticEnterTransform {
+            replacement,
+            cursor_offset,
+        });
+    }
+
+    let inner_indent = &inner[..list_info.indent_len];
+    let updated_inner_indent = if deepen {
+        format!("{inner_indent}  ")
+    } else {
+        inner_indent[..inner_indent.len() - 2].to_string()
+    };
+    let updated_line = format!(
+        "{}{}{}",
+        &line[..quote_prefix_end],
+        updated_inner_indent,
+        &inner[list_info.indent_len..]
+    );
+    let replacement = format!("{}{}{}", &text[..line_start], updated_line, &text[line_end..]);
+
+    let old_content_start = line_start + quote_prefix_end + list_info.indent_len;
+    let delta = updated_inner_indent.len() as isize - inner_indent.len() as isize;
+    let cursor_offset = if cursor_offset >= old_content_start {
+        cursor_offset.saturating_add_signed(delta)
+    } else {
+        cursor_offset
+    };
+
+    Some(SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    })
+}
+
+pub(crate) fn adjust_list_markup_at_cursor(
+    text: &str,
+    cursor_offset: usize,
+    deepen: bool,
+) -> Option<SemanticEnterTransform> {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    let (line_start, line_end) = line_bounds(text, cursor_offset);
+    let line = &text[line_start..line_end];
+    let list_info = parse_list_line(line)?;
+
+    let indent = &line[..list_info.indent_len];
+    if !deepen && list_info.indent_len < 2 {
+        let updated_line = line[list_info.current_prefix_end..].to_string();
+        let replacement = format!("{}{}{}", &text[..line_start], updated_line, &text[line_end..]);
+        let cursor_offset = cursor_offset
+            .saturating_sub(list_info.current_prefix_end)
+            .max(line_start);
+        return Some(SemanticEnterTransform {
+            replacement,
+            cursor_offset,
+        });
+    }
+
+    let updated_indent = if deepen {
+        format!("{indent}  ")
+    } else {
+        indent[..indent.len() - 2].to_string()
+    };
+    let updated_line = format!("{}{}", updated_indent, &line[list_info.indent_len..]);
+    let replacement = format!("{}{}{}", &text[..line_start], updated_line, &text[line_end..]);
+
+    let old_content_start = line_start + list_info.indent_len;
+    let delta = updated_indent.len() as isize - indent.len() as isize;
+    let cursor_offset = if cursor_offset >= old_content_start {
+        cursor_offset.saturating_add_signed(delta)
+    } else {
+        cursor_offset
+    };
+
+    Some(SemanticEnterTransform {
+        replacement,
+        cursor_offset,
+    })
+}
+
+pub(crate) fn adjust_selected_list_markup(
+    text: &str,
+    selection: Range<usize>,
+    deepen: bool,
+) -> Option<SelectionTransform> {
+    adjust_selected_lines(text, selection, deepen, adjusted_list_line)
+}
+
+pub(crate) fn adjust_selected_quoted_list_markup(
+    text: &str,
+    selection: Range<usize>,
+    deepen: bool,
+) -> Option<SelectionTransform> {
+    adjust_selected_lines(text, selection, deepen, adjusted_quoted_list_line)
+}
+
+fn adjust_selected_lines(
+    text: &str,
+    selection: Range<usize>,
+    deepen: bool,
+    adjust_line: fn(&str, bool) -> Option<String>,
+) -> Option<SelectionTransform> {
+    let start = clamp_to_char_boundary(text, selection.start.min(selection.end));
+    let end = clamp_to_char_boundary(text, selection.end.max(selection.start));
+    if start == end {
+        return None;
+    }
+
+    let (start_line, _) = line_bounds(text, start);
+    let mut end_line_offset = end;
+    if end_line_offset > start_line && text.as_bytes().get(end_line_offset - 1) == Some(&b'\n') {
+        end_line_offset -= 1;
+    }
+    let (_, end_line) = line_bounds(text, end_line_offset);
+
+    let mut replacement = String::with_capacity(text.len() + 2);
+    replacement.push_str(&text[..start_line]);
+
+    let mut cursor = start_line;
+    let mut changed = false;
+    let mut start_delta = 0isize;
+    let mut end_delta = 0isize;
+    while cursor <= end_line {
+        let line_end = text[cursor..]
+            .find('\n')
+            .map(|ix| cursor + ix)
+            .unwrap_or(text.len());
+        let line = &text[cursor..line_end];
+        let before_len = replacement.len();
+        if let Some(updated_line) = adjust_line(line, deepen) {
+            changed = true;
+            let delta = updated_line.len() as isize - line.len() as isize;
+            if cursor < start {
+                start_delta += delta;
+            }
+            if cursor < end {
+                end_delta += delta;
+            }
+            replacement.push_str(&updated_line);
+        } else {
+            replacement.push_str(line);
+        }
+        if line_end < text.len() && line_end < end_line {
+            replacement.push('\n');
+        }
+        cursor = line_end.saturating_add(1);
+        if before_len == replacement.len() && line_end >= text.len() {
+            break;
+        }
+        if line_end >= end_line {
+            break;
+        }
+    }
+
+    if !changed {
+        return None;
+    }
+
+    replacement.push_str(&text[end_line..]);
+    let selection_start = start.saturating_add_signed(start_delta);
+    let selection_end = end.saturating_add_signed(end_delta).max(selection_start);
+
+    Some(SelectionTransform {
+        replacement,
+        selection: selection_start..selection_end,
+    })
+}
+
+fn adjusted_quoted_list_line(line: &str, deepen: bool) -> Option<String> {
+    let quote_prefix_end = quoted_content_prefix_end(line)?;
+    let updated_inner = adjusted_list_line(&line[quote_prefix_end..], deepen)?;
+    Some(format!("{}{}", &line[..quote_prefix_end], updated_inner))
+}
+
+fn adjusted_list_line(line: &str, deepen: bool) -> Option<String> {
+    let list_info = parse_list_line(line)?;
+    let indent = &line[..list_info.indent_len];
+    if !deepen && list_info.indent_len < 2 {
+        return Some(line[list_info.current_prefix_end..].to_string());
+    }
+
+    let updated_indent = if deepen {
+        format!("{indent}  ")
+    } else {
+        indent[..indent.len() - 2].to_string()
+    };
+    Some(format!(
+        "{}{}",
+        updated_indent,
+        &line[list_info.indent_len..]
+    ))
 }
 
 /// Set the block's heading marker to the given depth (1–6), or strip it to plain
@@ -297,6 +522,41 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
         .join("\n")
 }
 
+pub(crate) fn set_task_list_markup(text: &str) -> String {
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return "- [ ] ".to_string();
+    };
+
+    let trimmed = first.trim_start();
+    let indent = &first[..first.len().saturating_sub(trimmed.len())];
+    let task_markers = [
+        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
+    ];
+    let unordered_markers = ["- ", "* ", "+ "];
+    let rest = if text.contains('\n') {
+        text[first.len()..].to_string()
+    } else {
+        String::new()
+    };
+
+    let content = 'strip: {
+        for marker in task_markers {
+            if let Some(rest) = trimmed.strip_prefix(marker) {
+                break 'strip rest;
+            }
+        }
+        for marker in unordered_markers {
+            if let Some(rest) = trimmed.strip_prefix(marker) {
+                break 'strip rest;
+            }
+        }
+        trimmed
+    };
+
+    format!("{indent}- [ ] {content}{rest}")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AutoFormatAction {
     Heading { depth: u8 },
@@ -353,7 +613,12 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
         return Some(AutoFormatAction::Blockquote);
     }
 
-    if text.trim_start().starts_with("- [ ] ") || text.trim_start().starts_with("- [x] ") {
+    if [
+        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
+    ]
+    .iter()
+    .any(|marker| text.trim_start().starts_with(marker))
+    {
         return Some(AutoFormatAction::TaskList);
     }
 
@@ -566,7 +831,25 @@ fn thematic_break_enter_transform(text: &str, cursor_offset: usize) -> SemanticE
 }
 
 fn heading_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
-    // Find the heading marker length: "## " → 3
+    if let Some((content, marker)) = setext_heading_parts(text) {
+        if content.trim().is_empty() {
+            return SemanticEnterTransform {
+                replacement: String::new(),
+                cursor_offset: 0,
+            };
+        }
+        let cursor_offset = clamp_to_char_boundary(text, cursor_offset).min(content.len());
+        let before = &content[..cursor_offset];
+        let after = &content[cursor_offset..];
+        let replacement = format!("{before}\n{marker}\n\n{after}");
+        let cursor_offset = before.len() + 1 + marker.len() + 2;
+        return SemanticEnterTransform {
+            replacement,
+            cursor_offset,
+        };
+    }
+
+    // Find the heading marker length: "## " -> 3
     let trimmed = text.trim_start();
     let marker_len = trimmed.chars().take_while(|ch| *ch == '#').count();
     // The content after "## " (or "##" with no space)
@@ -585,6 +868,27 @@ fn heading_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTra
         }
     } else {
         split_block_transform(text, cursor_offset)
+    }
+}
+
+fn setext_heading_parts(text: &str) -> Option<(&str, &str)> {
+    let mut lines = text.lines();
+    let content = lines.next()?;
+    let marker = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+
+    let marker = marker.trim();
+    if !marker.is_empty()
+        && marker
+            .chars()
+            .all(|ch| ch == '=' || ch == '-')
+        && marker.chars().all(|ch| ch == marker.chars().next().unwrap())
+    {
+        Some((content, marker))
+    } else {
+        None
     }
 }
 
@@ -654,6 +958,42 @@ fn blockquote_enter_transform(text: &str, cursor_offset: usize) -> Option<Semant
     let (line_start, line_end) = line_bounds(text, cursor_offset);
     let line = &text[line_start..line_end];
     let info = parse_blockquote_line(line)?;
+
+    if let Some(list_info) = parse_list_line(&line[info.current_prefix_end..]) {
+        if list_info.is_empty {
+            let before = &text[..line_start];
+            let after = &text[line_end..];
+            let replacement = format!("{before}{}{after}", info.continuation_prefix);
+            let cursor_offset = before.len() + info.continuation_prefix.len();
+            return Some(SemanticEnterTransform {
+                replacement,
+                cursor_offset,
+            });
+        }
+
+        let split_offset = cursor_offset.max(
+            line_start + info.current_prefix_end + list_info.current_prefix_end,
+        );
+        let local_split = split_offset - line_start;
+        let current_line = &line[..local_split];
+        let moved_suffix = &line[local_split..];
+        let before = &text[..line_start];
+        let after = &text[line_end..];
+        let replacement = format!(
+            "{before}{current_line}\n{}{}{}{after}",
+            info.continuation_prefix, list_info.continuation_prefix, moved_suffix
+        );
+        let cursor_offset = before.len()
+            + current_line.len()
+            + 1
+            + info.continuation_prefix.len()
+            + list_info.continuation_prefix.len();
+
+        return Some(SemanticEnterTransform {
+            replacement,
+            cursor_offset,
+        });
+    }
 
     if info.is_empty {
         return Some(exit_structured_line(text, line_start, line_end));
@@ -754,6 +1094,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
             let continuation_prefix = format!("{indent}{bullet} [ ] ");
             let is_empty = line[current_prefix_end..].trim().is_empty();
             return Some(ListLineInfo {
+                indent_len: indent_end,
                 current_prefix_end,
                 continuation_prefix,
                 is_empty,
@@ -767,6 +1108,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
             let continuation_prefix = format!("{indent}{marker}");
             let is_empty = line[current_prefix_end..].trim().is_empty();
             return Some(ListLineInfo {
+                indent_len: indent_end,
                 current_prefix_end,
                 continuation_prefix,
                 is_empty,
@@ -783,6 +1125,7 @@ fn parse_list_line(line: &str) -> Option<ListLineInfo> {
         let continuation_prefix = format!("{indent}{next_number}. ");
         let is_empty = line[current_prefix_end..].trim().is_empty();
         return Some(ListLineInfo {
+            indent_len: indent_end,
             current_prefix_end,
             continuation_prefix,
             is_empty,
@@ -824,6 +1167,25 @@ fn parse_blockquote_line(line: &str) -> Option<QuoteLineInfo> {
         continuation_prefix,
         is_empty,
     })
+}
+
+fn quoted_content_prefix_end(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut ix = 0usize;
+    while ix < bytes.len() && matches!(bytes[ix], b' ' | b'\t') {
+        ix += 1;
+    }
+
+    let mut saw_marker = false;
+    while ix < bytes.len() && bytes[ix] == b'>' {
+        saw_marker = true;
+        ix += 1;
+        if ix < bytes.len() && bytes[ix] == b' ' {
+            ix += 1;
+        }
+    }
+
+    saw_marker.then_some(ix)
 }
 
 fn trim_leading_newlines(text: &str) -> &str {
@@ -990,6 +1352,44 @@ mod tests {
     }
 
     #[test]
+    fn setext_heading_enter_splits_without_erasing_content() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Heading { depth: 2 },
+            "Title\n---",
+            None,
+            "Title".len(),
+        )
+        .unwrap();
+
+        assert_eq!(transform.replacement, "Title\n---\n\n");
+        assert_eq!(transform.cursor_offset, "Title\n---\n\n".len());
+    }
+
+    #[test]
+    fn setext_heading_enter_moves_remainder_to_following_paragraph() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Heading { depth: 1 },
+            "Hello world\n=",
+            None,
+            "Hello".len(),
+        )
+        .unwrap();
+
+        assert_eq!(transform.replacement, "Hello\n=\n\n world");
+        assert_eq!(transform.cursor_offset, "Hello\n=\n\n".len());
+    }
+
+    #[test]
+    fn empty_setext_heading_enter_exits_heading() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Heading { depth: 2 }, "\n---", None, "\n---".len())
+                .unwrap();
+
+        assert_eq!(transform.replacement, "");
+        assert_eq!(transform.cursor_offset, 0);
+    }
+
+    #[test]
     fn continues_list_item_and_moves_remainder() {
         let transform = semantic_enter_transform(&BlockKind::List, "- item", None, 3).unwrap();
 
@@ -1022,6 +1422,54 @@ mod tests {
 
         assert_eq!(transform.replacement, "> keep\n\n");
         assert_eq!(transform.cursor_offset, 8);
+    }
+
+    #[test]
+    fn continues_list_inside_blockquote() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Blockquote, "> - item", None, 5).unwrap();
+
+        assert_eq!(transform.replacement, "> - i\n> - tem");
+        assert_eq!(transform.cursor_offset, 10);
+    }
+
+    #[test]
+    fn continues_ordered_list_inside_callout() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Callout {
+                kind: "note".to_string(),
+            },
+            "> 1. first",
+            None,
+            "> 1. first".len(),
+        )
+        .unwrap();
+
+        assert_eq!(transform.replacement, "> 1. first\n> 2. ");
+        assert_eq!(transform.cursor_offset, "> 1. first\n> 2. ".len());
+    }
+
+    #[test]
+    fn continues_task_list_inside_blockquote_as_unchecked_item() {
+        let transform = semantic_enter_transform(
+            &BlockKind::Blockquote,
+            "> - [x] done",
+            None,
+            "> - [x] done".len(),
+        )
+        .unwrap();
+
+        assert_eq!(transform.replacement, "> - [x] done\n> - [ ] ");
+        assert_eq!(transform.cursor_offset, "> - [x] done\n> - [ ] ".len());
+    }
+
+    #[test]
+    fn exits_empty_list_item_inside_blockquote_to_quote_line() {
+        let transform =
+            semantic_enter_transform(&BlockKind::Blockquote, "> keep\n> - ", None, 11).unwrap();
+
+        assert_eq!(transform.replacement, "> keep\n> ");
+        assert_eq!(transform.cursor_offset, 9);
     }
 
     #[test]
@@ -1079,6 +1527,98 @@ mod tests {
     }
 
     #[test]
+    fn indents_list_inside_blockquote_without_deepening_quote() {
+        let transform = adjust_quoted_list_markup_at_cursor("> - item", "> - item".len(), true)
+            .expect("quoted list adjustment");
+
+        assert_eq!(transform.replacement, ">   - item");
+        assert_eq!(transform.cursor_offset, ">   - item".len());
+    }
+
+    #[test]
+    fn outdents_list_inside_blockquote() {
+        let transform = adjust_quoted_list_markup_at_cursor(">   - item", ">   - item".len(), false)
+            .expect("quoted list adjustment");
+
+        assert_eq!(transform.replacement, "> - item");
+        assert_eq!(transform.cursor_offset, "> - item".len());
+    }
+
+    #[test]
+    fn outdents_top_level_quoted_list_line_to_quote_text() {
+        let transform = adjust_quoted_list_markup_at_cursor("> - item", "> - item".len(), false)
+            .expect("quoted list adjustment");
+
+        assert_eq!(transform.replacement, "> item");
+        assert_eq!(transform.cursor_offset, "> item".len());
+    }
+
+    #[test]
+    fn indents_current_list_line() {
+        let transform = adjust_list_markup_at_cursor("- one\n- two", "- one\n- two".len(), true)
+            .expect("list adjustment");
+
+        assert_eq!(transform.replacement, "- one\n  - two");
+        assert_eq!(transform.cursor_offset, "- one\n  - two".len());
+    }
+
+    #[test]
+    fn outdents_current_list_line() {
+        let transform = adjust_list_markup_at_cursor("- one\n  - two", "- one\n  - two".len(), false)
+            .expect("list adjustment");
+
+        assert_eq!(transform.replacement, "- one\n- two");
+        assert_eq!(transform.cursor_offset, "- one\n- two".len());
+    }
+
+    #[test]
+    fn outdents_top_level_list_line_to_plain_text() {
+        let transform = adjust_list_markup_at_cursor("- one", "- one".len(), false)
+            .expect("list adjustment");
+
+        assert_eq!(transform.replacement, "one");
+        assert_eq!(transform.cursor_offset, "one".len());
+    }
+
+    #[test]
+    fn indents_selected_list_lines() {
+        let transform = adjust_selected_list_markup("- one\n- two\n- three", 0..11, true)
+            .expect("selected list adjustment");
+
+        assert_eq!(transform.replacement, "  - one\n  - two\n- three");
+        assert_eq!(transform.selection, 0..15);
+    }
+
+    #[test]
+    fn outdents_selected_top_level_list_lines_to_plain_text() {
+        let transform = adjust_selected_list_markup("- one\n- two\n- three", 0..11, false)
+            .expect("selected list adjustment");
+
+        assert_eq!(transform.replacement, "one\ntwo\n- three");
+        assert_eq!(transform.selection, 0..7);
+    }
+
+    #[test]
+    fn indents_selected_quoted_list_lines() {
+        let source = "> - one\n> - two\n> tail";
+        let transform = adjust_selected_quoted_list_markup(source, 0..15, true)
+            .expect("selected quoted list adjustment");
+
+        assert_eq!(transform.replacement, ">   - one\n>   - two\n> tail");
+        assert_eq!(transform.selection, 0..19);
+    }
+
+    #[test]
+    fn outdents_selected_top_level_quoted_list_lines_to_quote_text() {
+        let source = "> - one\n> - two\n> tail";
+        let transform = adjust_selected_quoted_list_markup(source, 0..15, false)
+            .expect("selected quoted list adjustment");
+
+        assert_eq!(transform.replacement, "> one\n> two\n> tail");
+        assert_eq!(transform.selection, 0..11);
+    }
+
+    #[test]
     fn set_blockquote_markup_wraps_and_strips_prefix() {
         assert_eq!(set_blockquote_markup("Hello", true), "> Hello");
         assert_eq!(set_blockquote_markup("> Hello", false), "Hello");
@@ -1122,6 +1662,13 @@ mod tests {
     #[test]
     fn set_list_markup_converts_bullet_to_ordered() {
         assert_eq!(set_list_markup("- Hello", true), "1. Hello");
+    }
+
+    #[test]
+    fn set_task_list_markup_converts_typed_marker_to_task() {
+        assert_eq!(set_task_list_markup("- [ ] task"), "- [ ] task");
+        assert_eq!(set_task_list_markup("* [x] done"), "- [ ] done");
+        assert_eq!(set_task_list_markup("+ todo"), "- [ ] todo");
     }
 
     #[test]
@@ -1176,6 +1723,14 @@ mod tests {
     fn detect_auto_format_task_list() {
         assert_eq!(
             detect_auto_format(&BlockKind::Paragraph, "- [ ] "),
+            Some(AutoFormatAction::TaskList)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "* [x] done"),
+            Some(AutoFormatAction::TaskList)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "+ [X] done"),
             Some(AutoFormatAction::TaskList)
         );
     }

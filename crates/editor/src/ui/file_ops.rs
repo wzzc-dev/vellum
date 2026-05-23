@@ -25,8 +25,7 @@ impl MarkdownEditor {
             for entry in item.entries() {
                 if let gpui::ClipboardEntry::Image(image) = entry {
                     if let Some(path) = self.save_clipboard_image(image, cx) {
-                        let relative = self.relative_image_path(&path);
-                        let markdown = format!("![]({})", relative);
+                        let markdown = self.image_markdown_for_path(&path);
                         let effects = self
                             .controller
                             .dispatch(EditCommand::ReplaceSelection { text: markdown });
@@ -249,6 +248,20 @@ impl MarkdownEditor {
 
     pub(super) fn delete_table_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.delete_table_column();
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
+    pub(super) fn align_table_column(
+        &mut self,
+        alignment: crate::core::table::TableColumnAlignment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.align_table_column(alignment);
         if effects.changed {
             self.schedule_autosave(window, cx);
         }

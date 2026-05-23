@@ -21,6 +21,8 @@ pub struct RenderInlineStyle {
     pub code: bool,
     pub link: bool,
     pub highlight: bool,
+    pub superscript: bool,
+    pub subscript: bool,
 }
 
 impl From<&InlineStyle> for RenderInlineStyle {
@@ -32,6 +34,8 @@ impl From<&InlineStyle> for RenderInlineStyle {
             code: value.code,
             link: value.link,
             highlight: value.highlight,
+            superscript: false,
+            subscript: false,
         }
     }
 }
@@ -1931,7 +1935,7 @@ fn parse_inline_tokens_into(
                 base_offset + offset + delimiter.len(),
                 inner,
                 RenderInlineStyle {
-                    code: true,
+                    superscript: true,
                     ..style
                 },
             );
@@ -1951,7 +1955,7 @@ fn parse_inline_tokens_into(
                 base_offset + offset + delimiter.len(),
                 inner,
                 RenderInlineStyle {
-                    code: true,
+                    subscript: true,
                     ..style
                 },
             );
@@ -2340,6 +2344,8 @@ fn merge_inline_styles(base: RenderInlineStyle, overlay: RenderInlineStyle) -> R
         code: base.code || overlay.code,
         link: base.link || overlay.link,
         highlight: base.highlight || overlay.highlight,
+        superscript: base.superscript || overlay.superscript,
+        subscript: base.subscript || overlay.subscript,
     }
 }
 
@@ -2463,6 +2469,12 @@ mod tests {
                 .count()
                 >= 4
         );
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            span.visible_text == "2" && span.style.subscript && !span.style.code
+        }));
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            span.visible_text == "2" && span.style.superscript && !span.style.code
+        }));
     }
 
     #[test]

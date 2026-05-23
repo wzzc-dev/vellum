@@ -1688,6 +1688,7 @@ fn styled_text_for_block(
 
     let mut runs = Vec::new();
     let base_style = base_text_style_for_block(block, palette.text_color, window);
+    let base_font_size = px(block_presentation(&block.kind).font_size);
 
     for span in rendered_spans(block).filter(|span| !span.visible_text.is_empty()) {
         let mut style = base_style.clone();
@@ -1697,6 +1698,7 @@ fn styled_text_for_block(
             span.style,
             span.meta.as_ref(),
             palette,
+            base_font_size,
         );
         runs.push(style.to_run(span.visible_text.len()));
     }
@@ -1837,6 +1839,7 @@ fn apply_fragment_style(
     inline_style: crate::RenderInlineStyle,
     meta: Option<&crate::RenderSpanMeta>,
     palette: RenderPalette,
+    base_font_size: gpui::Pixels,
 ) {
     if matches!(
         kind,
@@ -1910,6 +1913,9 @@ fn apply_fragment_style(
     }
     if inline_style.highlight {
         style.background_color = Some(palette.highlight_background);
+    }
+    if inline_style.superscript || inline_style.subscript {
+        style.font_size = px(f32::from(base_font_size) * 0.78).into();
     }
 }
 
@@ -2462,6 +2468,7 @@ fn styled_text_for_line(
     let mut text = String::new();
     let mut runs = Vec::new();
     let base_style = base_text_style_for_block(block, palette.text_color, window);
+    let base_font_size = px(block_presentation(&block.kind).font_size);
 
     for fragment in &line.fragments {
         text.push_str(&fragment.text);
@@ -2472,6 +2479,7 @@ fn styled_text_for_line(
             fragment.style,
             None,
             palette,
+            base_font_size,
         );
         runs.push(style.to_run(fragment.text.len()));
     }
@@ -2932,6 +2940,30 @@ fn build_editor_context_menu(
                     });
                 }
             }))
+            .item(PopupMenuItem::new("Highlight").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("==", "==", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Superscript").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("^", "^", window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Subscript").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.apply_markup("~", "~", window, cx);
+                    });
+                }
+            }))
             .item(PopupMenuItem::new("Inline Code").on_click({
                 let view = view.clone();
                 move |_, window, cx| {
@@ -2944,7 +2976,15 @@ fn build_editor_context_menu(
                 let view = view.clone();
                 move |_, window, cx| {
                     let _ = view.update(cx, |this, cx| {
-                        this.apply_markup("[", "](url)", window, cx);
+                        this.insert_link(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Image").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_image(window, cx);
                     });
                 }
             }));
@@ -3002,12 +3042,76 @@ fn build_editor_context_menu(
                     });
                 }
             }))
+            .item(PopupMenuItem::new("Task List").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.toggle_task_list(window, cx);
+                    });
+                }
+            }))
             .separator()
             .item(PopupMenuItem::new("Code Block").on_click({
                 let view = view.clone();
                 move |_, window, cx| {
                     let _ = view.update(cx, |this, cx| {
                         this.insert_code_fence(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Mermaid Diagram").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_mermaid_diagram(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Inline Math").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_inline_math(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("HTML Block").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_html_block(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Callout").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_callout(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Table of Contents").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_toc(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Footnote").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_footnote(window, cx);
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Front Matter").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.insert_front_matter(window, cx);
                     });
                 }
             }))
@@ -3061,6 +3165,43 @@ fn build_editor_context_menu(
                 move |_, window, cx| {
                     let _ = view.update(cx, |this, cx| {
                         this.delete_table_column(window, cx);
+                    });
+                }
+            }))
+            .separator()
+            .item(PopupMenuItem::new("Align Column Left").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.align_table_column(
+                            crate::core::table::TableColumnAlignment::Left,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Align Column Center").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.align_table_column(
+                            crate::core::table::TableColumnAlignment::Center,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            }))
+            .item(PopupMenuItem::new("Align Column Right").on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.align_table_column(
+                            crate::core::table::TableColumnAlignment::Right,
+                            window,
+                            cx,
+                        );
                     });
                 }
             }));

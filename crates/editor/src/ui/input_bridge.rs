@@ -73,6 +73,54 @@ fn detect_wrap_selection_opportunity(
         .map(|(_, before, after)| (*before, *after))
 }
 
+fn detect_link_paste_opportunity(
+    old_visible: &str,
+    new_visible: &str,
+    old_selection: &SelectionState,
+) -> Option<String> {
+    if old_selection.is_collapsed() {
+        return None;
+    }
+
+    let (range, replacement) = compute_document_diff(old_visible, new_visible)?;
+    if range != old_selection.range() {
+        return None;
+    }
+
+    if replacement.trim() != replacement || !is_url_like(&replacement) {
+        return None;
+    }
+
+    Some(replacement.to_string())
+}
+
+fn is_url_like(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has_supported_scheme = lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:");
+    has_supported_scheme
+        && text
+            .chars()
+            .all(|ch| !ch.is_whitespace() && !ch.is_control())
+}
+
+fn markdown_link(label: &str, destination: &str) -> String {
+    format!(
+        "[{}]({})",
+        escape_link_label(label),
+        escape_link_destination(destination)
+    )
+}
+
+fn escape_link_label(text: &str) -> String {
+    text.replace('\\', r"\\").replace(']', r"\]")
+}
+
+fn escape_link_destination(text: &str) -> String {
+    text.replace('\\', r"\\").replace(')', r"\)")
+}
+
 fn detect_overclose_opportunity(
     old_visible: &str,
     new_visible: &str,
@@ -231,8 +279,28 @@ impl MarkdownEditor {
                 &visible_text,
                 &mirrored_selection,
             );
+            let link_paste_opportunity = detect_link_paste_opportunity(
+                &self.snapshot.display_map.visible_text,
+                &visible_text,
+                &mirrored_selection,
+            );
 
-            if let Some((before, after)) = wrap_opportunity {
+            if let Some(url) = link_paste_opportunity {
+                self.syncing_input = true;
+                self.document_input.update(cx, |input, cx| {
+                    input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
+                });
+                self.syncing_input = false;
+
+                let selected_text = self
+                    .snapshot
+                    .document_text
+                    .get(self.snapshot.selection.range())
+                    .unwrap_or("");
+                let replacement = markdown_link(selected_text, &url);
+                self.controller
+                    .dispatch(EditCommand::ReplaceSelection { text: replacement })
+            } else if let Some((before, after)) = wrap_opportunity {
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
                     input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
@@ -1636,6 +1704,82 @@ mod tests {
     use crate::core::controller::{DocumentSource, EditorController, SyncPolicy};
 
     use super::*;
+
+    #[test]
+    fn detects_url_paste_over_selection() {
+        let old_visible = "Read docs";
+        let new_visible = "Read https://example.com";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("https://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_url_paste_with_case_insensitive_scheme() {
+        let old_visible = "Read docs";
+        let new_visible = "Read HTTPS://example.com";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("HTTPS://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_url_paste_with_surrounding_whitespace() {
+        let old_visible = "Read docs";
+        let new_visible = "Read  https://example.com ";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 9,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            None
+        );
+    }
+
+    #[test]
+    fn ignores_url_like_typing_without_selection() {
+        let old_visible = "Read ";
+        let new_visible = "Read https://example.com";
+        let selection = SelectionState::collapsed(5);
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            None
+        );
+    }
+
+    #[test]
+    fn escapes_smart_paste_link_parts() {
+        assert_eq!(escape_link_label("a]b"), r"a\]b");
+        assert_eq!(
+            escape_link_destination("https://example.com/a)b"),
+            r"https://example.com/a\)b"
+        );
+        assert_eq!(
+            markdown_link(r"a\]b", r"https://example.com/a\)b"),
+            r"[a\\\]b](https://example.com/a\\\)b)"
+        );
+    }
 
     #[test]
     fn same_line_move_to_hidden_blockquote_start_requests_marker_reveal() {

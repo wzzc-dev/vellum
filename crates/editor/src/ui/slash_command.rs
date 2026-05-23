@@ -23,11 +23,18 @@ pub(crate) enum SlashCommandAction {
     TaskList,
     Blockquote,
     CodeFence,
+    MermaidDiagram,
     Table,
     HorizontalRule,
+    InlineMath,
     MathBlock,
+    HtmlBlock,
     Image,
     Link,
+    Callout,
+    Toc,
+    Footnote,
+    FrontMatter,
 }
 
 impl SlashCommandAction {
@@ -40,28 +47,24 @@ impl SlashCommandAction {
             Self::OrderedList => EditCommand::ToggleOrderedList,
             Self::Blockquote => EditCommand::ToggleBlockquote,
             Self::CodeFence => EditCommand::InsertCodeFence,
+            Self::MermaidDiagram => EditCommand::InsertMermaidDiagram,
             Self::Table => EditCommand::InsertTable,
             Self::HorizontalRule => EditCommand::InsertHorizontalRule,
-            Self::TaskList => EditCommand::ToggleBulletList,
+            Self::InlineMath => EditCommand::InsertInlineMath,
+            Self::TaskList => EditCommand::ToggleTaskList,
             Self::MathBlock => EditCommand::InsertMathBlock,
-            Self::Image | Self::Link => EditCommand::ToggleInlineMarkup {
-                before: if *self == SlashCommandAction::Image {
-                    "![](".to_string()
-                } else {
-                    "[](".to_string()
-                },
-                after: ")".to_string(),
-            },
+            Self::HtmlBlock => EditCommand::InsertHtmlBlock,
+            Self::Link => EditCommand::InsertLink,
+            Self::Image => EditCommand::InsertImage,
+            Self::Callout => EditCommand::InsertCallout,
+            Self::Toc => EditCommand::InsertToc,
+            Self::Footnote => EditCommand::InsertFootnote,
+            Self::FrontMatter => EditCommand::InsertFrontMatter,
         }
     }
 
     pub fn insert_text(&self) -> Option<&'static str> {
-        match self {
-            Self::TaskList => Some("- [ ] "),
-            Self::Image => Some("![]()"),
-            Self::Link => Some("[]()"),
-            _ => None,
-        }
+        None
     }
 }
 
@@ -115,6 +118,12 @@ const SLASH_COMMANDS: &[SlashCommandItem] = &[
         command: SlashCommandAction::CodeFence,
     },
     SlashCommandItem {
+        label: "Mermaid Diagram",
+        keywords: &["mermaid", "diagram", "flowchart", "图表", "流程图"],
+        description: "Mermaid diagram block",
+        command: SlashCommandAction::MermaidDiagram,
+    },
+    SlashCommandItem {
         label: "Table",
         keywords: &["table", "表格"],
         description: "Insert a table",
@@ -127,10 +136,46 @@ const SLASH_COMMANDS: &[SlashCommandItem] = &[
         command: SlashCommandAction::HorizontalRule,
     },
     SlashCommandItem {
+        label: "Inline Math",
+        keywords: &["inline math", "math inline", "formula", "latex", "行内公式", "公式"],
+        description: "Inline math formula",
+        command: SlashCommandAction::InlineMath,
+    },
+    SlashCommandItem {
         label: "Math Block",
         keywords: &["math", "latex", "formula", "公式", "数学"],
         description: "Math formula block",
         command: SlashCommandAction::MathBlock,
+    },
+    SlashCommandItem {
+        label: "HTML Block",
+        keywords: &["html", "embed", "raw", "iframe", "html块", "嵌入"],
+        description: "Raw HTML block",
+        command: SlashCommandAction::HtmlBlock,
+    },
+    SlashCommandItem {
+        label: "Callout",
+        keywords: &["callout", "note", "tip", "warning", "提示", "标注", "告示"],
+        description: "Callout note block",
+        command: SlashCommandAction::Callout,
+    },
+    SlashCommandItem {
+        label: "Table of Contents",
+        keywords: &["toc", "contents", "outline", "目录", "大纲"],
+        description: "Table of contents marker",
+        command: SlashCommandAction::Toc,
+    },
+    SlashCommandItem {
+        label: "Footnote",
+        keywords: &["footnote", "note", "reference", "脚注", "注释"],
+        description: "Insert a footnote reference",
+        command: SlashCommandAction::Footnote,
+    },
+    SlashCommandItem {
+        label: "Front Matter",
+        keywords: &["front matter", "metadata", "yaml", "元数据", "头信息"],
+        description: "Insert YAML front matter",
+        command: SlashCommandAction::FrontMatter,
     },
     SlashCommandItem {
         label: "Image",
@@ -355,5 +400,100 @@ pub enum SlashCommandEvent {
 impl Render for SlashCommandPanel {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_list_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::TaskList.to_edit_command(),
+            EditCommand::ToggleTaskList
+        ));
+        assert_eq!(SlashCommandAction::TaskList.insert_text(), None);
+    }
+
+    #[test]
+    fn link_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::Link.to_edit_command(),
+            EditCommand::InsertLink
+        ));
+        assert_eq!(SlashCommandAction::Link.insert_text(), None);
+    }
+
+    #[test]
+    fn mermaid_diagram_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::MermaidDiagram.to_edit_command(),
+            EditCommand::InsertMermaidDiagram
+        ));
+        assert_eq!(SlashCommandAction::MermaidDiagram.insert_text(), None);
+    }
+
+    #[test]
+    fn html_block_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::HtmlBlock.to_edit_command(),
+            EditCommand::InsertHtmlBlock
+        ));
+        assert_eq!(SlashCommandAction::HtmlBlock.insert_text(), None);
+    }
+
+    #[test]
+    fn image_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::Image.to_edit_command(),
+            EditCommand::InsertImage
+        ));
+        assert_eq!(SlashCommandAction::Image.insert_text(), None);
+    }
+
+    #[test]
+    fn callout_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::Callout.to_edit_command(),
+            EditCommand::InsertCallout
+        ));
+        assert_eq!(SlashCommandAction::Callout.insert_text(), None);
+    }
+
+    #[test]
+    fn toc_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::Toc.to_edit_command(),
+            EditCommand::InsertToc
+        ));
+        assert_eq!(SlashCommandAction::Toc.insert_text(), None);
+    }
+
+    #[test]
+    fn inline_math_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::InlineMath.to_edit_command(),
+            EditCommand::InsertInlineMath
+        ));
+        assert_eq!(SlashCommandAction::InlineMath.insert_text(), None);
+    }
+
+    #[test]
+    fn footnote_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::Footnote.to_edit_command(),
+            EditCommand::InsertFootnote
+        ));
+        assert_eq!(SlashCommandAction::Footnote.insert_text(), None);
+    }
+
+    #[test]
+    fn front_matter_uses_structural_edit_command() {
+        assert!(matches!(
+            SlashCommandAction::FrontMatter.to_edit_command(),
+            EditCommand::InsertFrontMatter
+        ));
+        assert_eq!(SlashCommandAction::FrontMatter.insert_text(), None);
     }
 }

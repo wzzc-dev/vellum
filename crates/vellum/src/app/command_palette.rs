@@ -7,6 +7,9 @@ pub(crate) enum PaletteCommand {
     Italic,
     InlineCode,
     Strikethrough,
+    Highlight,
+    Superscript,
+    Subscript,
     Link,
     Heading1,
     Heading2,
@@ -18,9 +21,25 @@ pub(crate) enum PaletteCommand {
     Blockquote,
     BulletList,
     OrderedList,
+    TaskList,
     HorizontalRule,
     CodeFence,
+    MermaidDiagram,
     Table,
+    TableInsertRow,
+    TableDeleteRow,
+    TableInsertColumn,
+    TableDeleteColumn,
+    TableAlignLeft,
+    TableAlignCenter,
+    TableAlignRight,
+    InlineMath,
+    HtmlBlock,
+    Image,
+    Callout,
+    Toc,
+    Footnote,
+    FrontMatter,
     SourceMode,
     ToggleSidebar,
     ToggleStatusBar,
@@ -72,6 +91,24 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         keywords: &["strikethrough", "delete", "删除线"],
         description: "Toggle strikethrough",
         command: PaletteCommand::Strikethrough,
+    },
+    CommandItem {
+        label: "Highlight",
+        keywords: &["highlight", "mark", "高亮", "标记"],
+        description: "Toggle highlighted text",
+        command: PaletteCommand::Highlight,
+    },
+    CommandItem {
+        label: "Superscript",
+        keywords: &["superscript", "sup", "上标"],
+        description: "Toggle superscript text",
+        command: PaletteCommand::Superscript,
+    },
+    CommandItem {
+        label: "Subscript",
+        keywords: &["subscript", "sub", "下标"],
+        description: "Toggle subscript text",
+        command: PaletteCommand::Subscript,
     },
     CommandItem {
         label: "Link",
@@ -140,6 +177,12 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         command: PaletteCommand::OrderedList,
     },
     CommandItem {
+        label: "Task List",
+        keywords: &["task", "todo", "checkbox", "任务列表", "待办"],
+        description: "Convert to task list",
+        command: PaletteCommand::TaskList,
+    },
+    CommandItem {
         label: "Insert Horizontal Rule",
         keywords: &["hr", "divider", "分隔线"],
         description: "Insert horizontal rule",
@@ -152,10 +195,100 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         command: PaletteCommand::CodeFence,
     },
     CommandItem {
+        label: "Insert Mermaid Diagram",
+        keywords: &["mermaid", "diagram", "flowchart", "图表", "流程图"],
+        description: "Insert Mermaid diagram block",
+        command: PaletteCommand::MermaidDiagram,
+    },
+    CommandItem {
         label: "Insert Table",
         keywords: &["table", "表格"],
         description: "Insert table",
         command: PaletteCommand::Table,
+    },
+    CommandItem {
+        label: "Table: Insert Row",
+        keywords: &["table", "row", "insert row", "表格", "插入行"],
+        description: "Insert row after current table row",
+        command: PaletteCommand::TableInsertRow,
+    },
+    CommandItem {
+        label: "Table: Delete Row",
+        keywords: &["table", "row", "delete row", "表格", "删除行"],
+        description: "Delete current table row",
+        command: PaletteCommand::TableDeleteRow,
+    },
+    CommandItem {
+        label: "Table: Insert Column",
+        keywords: &["table", "column", "insert column", "表格", "插入列"],
+        description: "Insert column after current table column",
+        command: PaletteCommand::TableInsertColumn,
+    },
+    CommandItem {
+        label: "Table: Delete Column",
+        keywords: &["table", "column", "delete column", "表格", "删除列"],
+        description: "Delete current table column",
+        command: PaletteCommand::TableDeleteColumn,
+    },
+    CommandItem {
+        label: "Table: Align Column Left",
+        keywords: &["table", "align", "left", "表格", "左对齐"],
+        description: "Align current table column left",
+        command: PaletteCommand::TableAlignLeft,
+    },
+    CommandItem {
+        label: "Table: Align Column Center",
+        keywords: &["table", "align", "center", "表格", "居中"],
+        description: "Align current table column center",
+        command: PaletteCommand::TableAlignCenter,
+    },
+    CommandItem {
+        label: "Table: Align Column Right",
+        keywords: &["table", "align", "right", "表格", "右对齐"],
+        description: "Align current table column right",
+        command: PaletteCommand::TableAlignRight,
+    },
+    CommandItem {
+        label: "Insert Inline Math",
+        keywords: &["inline math", "math", "formula", "latex", "行内公式", "公式"],
+        description: "Insert inline math formula",
+        command: PaletteCommand::InlineMath,
+    },
+    CommandItem {
+        label: "Insert HTML Block",
+        keywords: &["html", "embed", "raw", "iframe", "html块", "嵌入"],
+        description: "Insert raw HTML block",
+        command: PaletteCommand::HtmlBlock,
+    },
+    CommandItem {
+        label: "Insert Image",
+        keywords: &["image", "img", "picture", "图片"],
+        description: "Insert image placeholder",
+        command: PaletteCommand::Image,
+    },
+    CommandItem {
+        label: "Insert Callout",
+        keywords: &["callout", "note", "tip", "warning", "提示", "标注", "告示"],
+        description: "Insert callout note block",
+        command: PaletteCommand::Callout,
+    },
+    CommandItem {
+        label: "Insert Table of Contents",
+        keywords: &["toc", "contents", "outline", "目录", "大纲"],
+        description: "Insert table of contents marker",
+        command: PaletteCommand::Toc,
+    },
+    CommandItem {
+        label: "Insert Footnote",
+        keywords: &["footnote", "reference", "脚注", "注释"],
+        description: "Insert footnote reference",
+        command: PaletteCommand::Footnote,
+    },
+    CommandItem {
+        label: "Insert Front Matter",
+        keywords: &["front matter", "metadata", "yaml", "元数据", "头信息"],
+        description: "Insert YAML front matter",
+        command: PaletteCommand::FrontMatter,
     },
     CommandItem {
         label: "Toggle Source Mode",
@@ -260,9 +393,9 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         command: PaletteCommand::ThemeGitHub,
     },
     CommandItem {
-        label: "Insert Math Formula",
-        keywords: &["math", "formula", "katex", "latex", "公式", "数学"],
-        description: "Insert inline math formula $$...$$",
+        label: "Insert Math Block",
+        keywords: &["math block", "display math", "katex", "latex", "块公式", "数学"],
+        description: "Insert display math block",
         command: PaletteCommand::MathBlock,
     },
 ];
@@ -341,5 +474,19 @@ impl CommandPaletteState {
         self.filtered_indices
             .get(self.selected_index)
             .map(|&i| ALL_COMMANDS[i].command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_block_command_is_discoverable() {
+        let commands: Vec<_> = filter_commands("html")
+            .into_iter()
+            .map(|index| ALL_COMMANDS[index].command)
+            .collect();
+        assert!(commands.contains(&PaletteCommand::HtmlBlock));
     }
 }

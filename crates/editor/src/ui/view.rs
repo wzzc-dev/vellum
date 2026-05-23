@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, time::Duration};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -462,6 +462,14 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    pub(crate) fn insert_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertLink);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
     pub(crate) fn adjust_current_block(
         &mut self,
         deepen: bool,
@@ -521,6 +529,14 @@ impl MarkdownEditor {
         self.apply_effects(window, cx, effects);
     }
 
+    pub(crate) fn toggle_task_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::ToggleTaskList);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
     pub(crate) fn insert_horizontal_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::InsertHorizontalRule);
         if effects.changed {
@@ -545,31 +561,65 @@ impl MarkdownEditor {
                 ext.as_str(),
                 "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
             );
-            if is_image {
-                let relative = self.relative_image_path(path);
-                let markdown = format!("![]({})", relative);
-                let effects = self
-                    .controller
-                    .dispatch(EditCommand::ReplaceSelection { text: markdown });
-                if effects.changed {
-                    self.schedule_autosave(window, cx);
-                }
-                self.apply_effects(window, cx, effects);
+            let markdown = if is_image {
+                self.image_markdown_for_path(path)
+            } else if path.is_file() {
+                self.file_link_markdown_for_path(path)
+            } else {
+                continue;
+            };
+
+            let effects = self
+                .controller
+                .dispatch(EditCommand::ReplaceSelection { text: markdown });
+            if effects.changed {
+                self.schedule_autosave(window, cx);
             }
+            self.apply_effects(window, cx, effects);
         }
     }
 
-    pub(crate) fn relative_image_path(&self, image_path: &std::path::Path) -> String {
+    pub(crate) fn relative_image_path(&self, image_path: &Path) -> String {
+        self.relative_path_for_markdown(image_path)
+    }
+
+    fn relative_path_for_markdown(&self, path: &Path) -> String {
         if let Some(doc_dir) = self.controller.current_document_dir() {
-            if let Ok(relative) = image_path.strip_prefix(&doc_dir) {
+            if let Ok(relative) = path.strip_prefix(&doc_dir) {
                 return format!("./{}", relative.display());
             }
         }
-        image_path.display().to_string()
+        path.display().to_string()
+    }
+
+    pub(crate) fn image_markdown_for_path(&self, image_path: &Path) -> String {
+        let relative = self.relative_image_path(image_path);
+        format!("![]({})", markdown_link_destination(&relative))
+    }
+
+    pub(crate) fn file_link_markdown_for_path(&self, file_path: &Path) -> String {
+        let label = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file");
+        let relative = self.relative_path_for_markdown(file_path);
+        format!(
+            "[{}]({})",
+            markdown_link_label(label),
+            markdown_link_destination(&relative)
+        )
     }
 
     pub(crate) fn insert_code_fence(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::InsertCodeFence);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_mermaid_diagram(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertMermaidDiagram);
         if effects.changed {
             self.schedule_autosave(window, cx);
         }
@@ -586,6 +636,62 @@ impl MarkdownEditor {
 
     pub(crate) fn insert_math_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let effects = self.controller.dispatch(EditCommand::InsertMathBlock);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_html_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertHtmlBlock);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_inline_math(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertInlineMath);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertImage);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_callout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertCallout);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_toc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertToc);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_footnote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertFootnote);
+        if effects.changed {
+            self.schedule_autosave(window, cx);
+        }
+        self.apply_effects(window, cx, effects);
+    }
+
+    pub(crate) fn insert_front_matter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let effects = self.controller.dispatch(EditCommand::InsertFrontMatter);
         if effects.changed {
             self.schedule_autosave(window, cx);
         }
@@ -1022,6 +1128,21 @@ fn byte_offset_for_line(text: &str, line_number: usize) -> usize {
     text.len()
 }
 
+fn markdown_link_destination(destination: &str) -> String {
+    let needs_angle_destination = destination
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
+    if needs_angle_destination {
+        format!("<{}>", destination.replace('\\', r"\\").replace('>', r"\>"))
+    } else {
+        destination.to_string()
+    }
+}
+
+fn markdown_link_label(label: &str) -> String {
+    label.replace('\\', r"\\").replace(']', r"\]")
+}
+
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
     let range = snapshot.selection.range();
     snapshot.display_map.blocks.iter().any(|block| {
@@ -1071,12 +1192,31 @@ impl Render for MarkdownEditor {
             .on_action(cx.listener(Self::on_toggle_blockquote))
             .on_action(cx.listener(Self::on_toggle_bullet_list))
             .on_action(cx.listener(Self::on_toggle_ordered_list))
+            .on_action(cx.listener(Self::on_toggle_task_list))
             .on_action(cx.listener(Self::on_insert_horizontal_rule))
             .on_action(cx.listener(Self::on_insert_code_fence))
+            .on_action(cx.listener(Self::on_insert_mermaid_diagram))
             .on_action(cx.listener(Self::on_insert_table))
+            .on_action(cx.listener(Self::on_insert_table_row))
+            .on_action(cx.listener(Self::on_delete_table_row))
+            .on_action(cx.listener(Self::on_insert_table_column))
+            .on_action(cx.listener(Self::on_delete_table_column))
+            .on_action(cx.listener(Self::on_align_table_column_left))
+            .on_action(cx.listener(Self::on_align_table_column_center))
+            .on_action(cx.listener(Self::on_align_table_column_right))
+            .on_action(cx.listener(Self::on_insert_inline_math))
             .on_action(cx.listener(Self::on_insert_math_block))
+            .on_action(cx.listener(Self::on_insert_html_block))
+            .on_action(cx.listener(Self::on_insert_image))
+            .on_action(cx.listener(Self::on_insert_callout))
+            .on_action(cx.listener(Self::on_insert_toc))
+            .on_action(cx.listener(Self::on_insert_footnote))
+            .on_action(cx.listener(Self::on_insert_front_matter))
             .on_action(cx.listener(Self::on_toggle_inline_code))
             .on_action(cx.listener(Self::on_toggle_strikethrough))
+            .on_action(cx.listener(Self::on_toggle_highlight))
+            .on_action(cx.listener(Self::on_toggle_superscript))
+            .on_action(cx.listener(Self::on_toggle_subscript))
             .on_drop::<gpui::ExternalPaths>(cx.listener(Self::on_file_drop))
             .capture_action({
                 let enter_view = view.clone();
@@ -1288,6 +1428,25 @@ mod tests {
         assert_eq!(byte_offset_for_line(text, 2), "一行\n".len());
         assert_eq!(byte_offset_for_line(text, 3), "一行\nsecond\n".len());
         assert_eq!(byte_offset_for_line(text, 99), text.len());
+    }
+
+    #[test]
+    fn markdown_link_destination_wraps_paths_that_need_escaping() {
+        assert_eq!(markdown_link_destination("./assets/pic.png"), "./assets/pic.png");
+        assert_eq!(
+            markdown_link_destination("./assets/my pic(1).png"),
+            "<./assets/my pic(1).png>"
+        );
+        assert_eq!(
+            markdown_link_destination(r".\assets\a>b.png"),
+            r"<.\\assets\\a\>b.png>"
+        );
+    }
+
+    #[test]
+    fn markdown_link_label_escapes_file_names() {
+        assert_eq!(markdown_link_label("notes.md"), "notes.md");
+        assert_eq!(markdown_link_label(r"a\]b.md"), r"a\\\]b.md");
     }
 
     #[test]
@@ -2191,6 +2350,26 @@ mod tests {
     }
 
     #[gpui::test]
+    fn typing_heading_marker_space_immediately_switches_to_heading_view(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "");
+        let input = document_input(&view, cx);
+
+        cx.update_window_entity(&input, |input, window, cx| {
+            input.set_value("# ".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "# ");
+        assert_eq!(snapshot.display_map.visible_text, "");
+        let visible_text = cx.update_window_entity(&input, |input, _, _| input.text().to_string());
+        assert_eq!(visible_text, "");
+    }
+
+    #[gpui::test]
     fn single_surface_hides_blockquote_prefix_but_preserves_source_markup(cx: &mut TestAppContext) {
         assert_visible_edit_round_trip(cx, "> quote", "quote", "changed", "> changed", "changed");
     }
@@ -3019,6 +3198,85 @@ mod tests {
                 .map(std::ops::Range::is_empty)
                 .unwrap_or(true)
         );
+    }
+
+    #[gpui::test]
+    fn highlight_action_wraps_selection_with_mark_markers(cx: &mut TestAppContext) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "hello");
+
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let selection = SelectionState {
+                anchor_byte: 1,
+                head_byte: 4,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            };
+            let effects = editor
+                .controller
+                .dispatch(EditCommand::SetSelection { selection });
+            editor.apply_effects(window, cx, effects);
+            editor.on_toggle_highlight(&crate::ToggleHighlight, window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "h==ell==o");
+        assert_eq!(snapshot.display_map.visible_text, "hello");
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .flat_map(|block| block.spans.iter())
+            .any(|span| span.style.highlight && span.visible_text == "ell"));
+    }
+
+    #[gpui::test]
+    fn super_and_subscript_actions_wrap_selection_with_typora_markers(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = build_editor_window(cx);
+        load_document(cx, &view, "H2O x2");
+
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: 1,
+                    head_byte: 2,
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+            editor.on_toggle_subscript(&crate::ToggleSubscript, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&view, |editor, window, cx| {
+            let effects = editor.controller.dispatch(EditCommand::SetSelection {
+                selection: SelectionState {
+                    anchor_byte: "H~2~O x".len(),
+                    head_byte: "H~2~O x2".len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                },
+            });
+            editor.apply_effects(window, cx, effects);
+            editor.on_toggle_superscript(&crate::ToggleSuperscript, window, cx);
+        });
+        cx.run_until_parked();
+
+        let snapshot = snapshot(&view, cx);
+        assert_eq!(snapshot.document_text, "H~2~O x^2^");
+        assert_eq!(snapshot.display_map.visible_text, "H2O x2");
+        assert!(snapshot.display_map.blocks[0]
+            .spans
+            .iter()
+            .any(|span| span.visible_text == "2" && span.style.subscript));
+        assert!(snapshot.display_map.blocks[0]
+            .spans
+            .iter()
+            .any(|span| span.visible_text == "2" && span.style.superscript));
     }
 
     #[gpui::test]
