@@ -443,6 +443,13 @@ impl MarkdownEditor {
                 self.schedule_autosave(window, cx);
             }
             self.apply_effects(window, cx, effects);
+            if let Some(selection) = math_completion_selection_after_insert(
+                replace_start,
+                item.snippet,
+            ) {
+                let effects = self.controller.dispatch(EditCommand::SetSelection { selection });
+                self.apply_effects(window, cx, effects);
+            }
         }
         self.math_completion_panel.hide();
     }
@@ -604,12 +611,11 @@ impl MarkdownEditor {
 
     pub(crate) fn image_markdown_for_path(&self, image_path: &Path) -> String {
         let relative = self.relative_image_path(image_path);
-        let alt = image_alt_text_for_path(image_path);
-        format!(
-            "![{}]({})",
-            markdown_link_label(alt),
-            markdown_link_destination(&relative)
-        )
+        image_markdown_for_relative_path(image_path, &relative)
+    }
+
+    pub(crate) fn pasted_image_markdown_for_path(&self, image_path: &Path) -> String {
+        pasted_image_markdown(&self.image_markdown_for_path(image_path))
     }
 
     pub(crate) fn file_link_markdown_for_path(&self, file_path: &Path) -> String {
@@ -1165,6 +1171,30 @@ fn image_alt_text_for_path(path: &Path) -> &str {
         .unwrap_or("image")
 }
 
+fn image_markdown_for_relative_path(image_path: &Path, relative: &str) -> String {
+    let alt = image_alt_text_for_path(image_path);
+    format!(
+        "![{}]({})",
+        markdown_link_label(alt),
+        markdown_link_destination(relative)
+    )
+}
+
+fn pasted_image_markdown(markdown: &str) -> String {
+    format!("{markdown}\n\n")
+}
+
+fn math_completion_selection_after_insert(base: usize, snippet: &str) -> Option<SelectionState> {
+    let cursor = if let Some(open) = snippet.find("{}") {
+        base + open + 1
+    } else if let Some(empty_line) = snippet.find("\n\n") {
+        base + empty_line + 1
+    } else {
+        return None;
+    };
+    Some(SelectionState::collapsed(cursor))
+}
+
 fn relative_markdown_path(base_dir: &Path, target: &Path) -> Option<String> {
     let base_components = normal_path_components(base_dir)?;
     let target_components = normal_path_components(target)?;
@@ -1537,6 +1567,34 @@ mod tests {
     fn image_alt_text_uses_file_stem() {
         assert_eq!(image_alt_text_for_path(Path::new("/tmp/diagram.png")), "diagram");
         assert_eq!(image_alt_text_for_path(Path::new(r"/tmp/a\]b.png")), r"a\]b");
+    }
+
+    #[test]
+    fn pasted_image_markdown_creates_following_paragraph() {
+        let markdown = image_markdown_for_relative_path(
+            Path::new("/tmp/diagram.png"),
+            "./assets/diagram.png",
+        );
+
+        assert_eq!(
+            pasted_image_markdown(&markdown),
+            "![diagram](./assets/diagram.png)\n\n"
+        );
+    }
+
+    #[test]
+    fn math_completion_selection_enters_first_empty_placeholder() {
+        assert_eq!(
+            math_completion_selection_after_insert(10, r"\frac{}{}")
+                .map(|selection| selection.cursor()),
+            Some(16)
+        );
+        assert_eq!(
+            math_completion_selection_after_insert(10, "\\begin{aligned}\n\n\\end{aligned}")
+                .map(|selection| selection.cursor()),
+            Some(26)
+        );
+        assert_eq!(math_completion_selection_after_insert(10, r"\alpha"), None);
     }
 
     #[test]

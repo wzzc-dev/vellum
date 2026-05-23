@@ -82,8 +82,8 @@ const MATH_COMPLETIONS: &[MathCompletionItem] = &[
     },
     MathCompletionItem {
         command: "begin",
-        snippet: "\\begin{}\n\n\\end{}",
-        description: "Begin environment",
+        snippet: "\\begin{aligned}\n\n\\end{aligned}",
+        description: "Aligned environment",
         category: Construct,
     },
     MathCompletionItem {
@@ -376,4 +376,22 @@ pub fn math_completion_count() -> usize {
 
 pub fn math_completion_items() -> &'static [MathCompletionItem] {
     MATH_COMPLETIONS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn begin_completion_uses_editable_aligned_environment() {
+        let begin = math_completion_items()
+            .iter()
+            .find(|item| item.command == "begin")
+            .expect("begin completion");
+
+        assert_eq!(begin.snippet, "\\begin{aligned}\n\n\\end{aligned}");
+        assert!(filter_math_completions("beg")
+            .iter()
+            .any(|index| math_completion_items()[*index].command == "begin"));
+    }
 }

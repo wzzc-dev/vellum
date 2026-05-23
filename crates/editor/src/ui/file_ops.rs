@@ -25,7 +25,7 @@ impl MarkdownEditor {
             for entry in item.entries() {
                 if let gpui::ClipboardEntry::Image(image) = entry {
                     if let Some(path) = self.save_clipboard_image(image, cx) {
-                        let markdown = self.image_markdown_for_path(&path);
+                        let markdown = self.pasted_image_markdown_for_path(&path);
                         let effects = self
                             .controller
                             .dispatch(EditCommand::ReplaceSelection { text: markdown });

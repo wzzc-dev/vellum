@@ -223,7 +223,7 @@ pub enum EditCommand {
     /// between the opening and closing fence markers.
     InsertCodeFence,
     InsertMermaidDiagram,
-    /// Insert a minimal 2-column pipe table template and place the cursor in the first body cell.
+    /// Insert a small pipe table template and place the cursor in the first body cell.
     InsertTable,
     InsertInlineMath,
     InsertMathBlock,
@@ -1437,14 +1437,27 @@ impl EditorController {
         };
         let alt = Self::escape_link_label(raw_alt);
         let replacement = format!("![{alt}]({url_placeholder})");
-        let url_start = range.start + alt.len() + 4;
+        let (edit_range, replacement, base_offset) = if selected_text.is_empty()
+            && let Some(block) = self.current_block().cloned()
+            && self.document.block_text(&block).trim().is_empty()
+        {
+            (
+                block.content_range.clone(),
+                format!("{replacement}\n\n"),
+                block.content_range.start,
+            )
+        } else {
+            let base_offset = range.start;
+            (range, replacement, base_offset)
+        };
+        let url_start = base_offset + alt.len() + 4;
         let selection_after = SelectionState {
             anchor_byte: url_start,
             head_byte: url_start + url_placeholder.len(),
             preferred_column: None,
             affinity: SelectionAffinity::Downstream,
         };
-        self.apply_edit(range, replacement, selection_after, "Inserted image")
+        self.apply_edit(edit_range, replacement, selection_after, "Inserted image")
     }
 
     fn insert_inline_math(&mut self) -> EditorEffects {
@@ -1682,11 +1695,11 @@ impl EditorController {
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
         if is_empty {
-            // Replace the empty paragraph with `---` and leave cursor at the end.
-            let cursor = block.content_range.start + 3;
+            // Replace the empty paragraph with the rule and a following paragraph.
+            let cursor = block.content_range.start + 5;
             self.apply_edit(
                 block.content_range,
-                "---".to_string(),
+                "---\n\n".to_string(),
                 SelectionState::collapsed(cursor),
                 "Inserted horizontal rule",
             )
@@ -1754,7 +1767,7 @@ impl EditorController {
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
         let body = "graph TD\n  A[Start] --> B[End]";
-        let template = format!("```mermaid\n{body}\n```");
+        let template = format!("```mermaid\n{body}\n```\n\n");
         let body_start = "```mermaid\n".len();
         let body_end = body_start + body.len();
         let selection_for = |base: usize| SelectionState {
@@ -1818,7 +1831,7 @@ impl EditorController {
         };
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
-        let template = "<div>\n  Content\n</div>";
+        let template = "<div>\n  Content\n</div>\n\n";
         let selection_start = "<div>\n  ".len();
         let selection_end = selection_start + "Content".len();
 
@@ -1888,21 +1901,22 @@ impl EditorController {
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
         let template = "[toc]";
+        let replacement = format!("{template}\n\n");
         if is_empty {
             let base_offset = block.content_range.start;
             self.apply_edit(
                 block.content_range,
-                template.to_string(),
-                SelectionState::collapsed(base_offset + template.len()),
+                replacement,
+                SelectionState::collapsed(base_offset + template.len() + 2),
                 "Inserted table of contents",
             )
         } else {
             let insert_pos = block.byte_range.end;
-            let insertion = format!("\n\n{template}");
+            let insertion = format!("\n\n{replacement}");
             self.apply_edit(
                 insert_pos..insert_pos,
                 insertion,
-                SelectionState::collapsed(insert_pos + 2 + template.len()),
+                SelectionState::collapsed(insert_pos + 2 + template.len() + 2),
                 "Inserted table of contents",
             )
         }
@@ -1929,7 +1943,7 @@ impl EditorController {
         };
 
         let insertion = format!(
-            "{reference}{tail}{separator}{definition_prefix}{placeholder}"
+            "{reference}{tail}{separator}{definition_prefix}{placeholder}\n\n"
         );
         let definition_start = body_end + separator.len() + definition_prefix.len();
         let definition_end = definition_start + placeholder.len();
@@ -1988,7 +2002,7 @@ impl EditorController {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
-        let table_template = "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |";
+        let table_template = "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |";
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
         let (edit_range, insertion, base_offset) = if is_empty {
@@ -2005,14 +2019,14 @@ impl EditorController {
                 insert_pos + 2,
             )
         };
-        // Cursor should land in the first body cell of the table.
-        // "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |"
-        //  The first body cell "|  |  |" starts at offset:
-        //  "| Column 1 | Column 2 |\n| --- | --- |\n|" → len = 24 + 14 + 1 = 39 … then " " at +1
-        let header = "| Column 1 | Column 2 |\n";
-        let separator = "| --- | --- |\n";
-        // first body cell content starts after "| " → +2
-        let cursor = base_offset + header.len() + separator.len() + 2;
+        let table = TableModel::parse(table_template);
+        let cursor = table
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 0,
+            })
+            .map(|range| base_offset + range.start)
+            .unwrap_or(base_offset + table_template.len());
         self.apply_edit(
             edit_range,
             insertion,
@@ -4535,7 +4549,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_horizontal_rule_replaces_empty_paragraph() {
+    fn insert_horizontal_rule_replaces_empty_paragraph_and_creates_following_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -4552,9 +4566,12 @@ mod tests {
         controller.dispatch(EditCommand::InsertHorizontalRule);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "---");
-        assert_eq!(snapshot.selection, SelectionState::collapsed(3));
-        assert_eq!(snapshot.blocks.len(), 1);
+        assert_eq!(snapshot.document_text, "---\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("---\n\n".len()));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::ThematicBreak
+        ));
     }
 
     #[test]
@@ -4678,17 +4695,18 @@ mod tests {
         controller.dispatch(EditCommand::InsertTable);
 
         let snapshot = controller.snapshot();
-        let expected = "Hello\n\n| Column 1 | Column 2 |\n| --- | --- |\n|  |  |";
+        let expected =
+            "Hello\n\n| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |";
         assert_eq!(snapshot.document_text, expected);
         let first_body_cell = crate::core::table::TableModel::parse(
-            "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |",
+            "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |",
         )
         .cell_source_range(crate::core::table::TableCellRef {
             visible_row: 1,
             column: 0,
         })
         .expect("first body cell");
-        assert_eq!(snapshot.selection.cursor(), 7 + first_body_cell.start + 1);
+        assert_eq!(snapshot.selection.cursor(), 7 + first_body_cell.start);
         assert!(matches!(snapshot.blocks[1].kind, crate::BlockKind::Table));
     }
 
@@ -4979,6 +4997,33 @@ mod tests {
     }
 
     #[test]
+    fn insert_image_on_empty_line_creates_following_paragraph_and_selects_path() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "![alt](image.png)\n\n");
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "image.png"
+        );
+        assert!(snapshot
+            .display_map
+            .blocks
+            .iter()
+            .any(|block| block.embedded == Some(crate::EmbeddedNodeKind::Image)));
+    }
+
+    #[test]
     fn insert_image_placeholder_wraps_selection_as_escaped_alt() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5165,7 +5210,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_mermaid_diagram_creates_diagram_block_and_selects_body() {
+    fn insert_mermaid_diagram_creates_following_paragraph_and_selects_body() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5181,7 +5226,7 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(
             snapshot.document_text,
-            "```mermaid\ngraph TD\n  A[Start] --> B[End]\n```"
+            "```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n\n"
         );
         assert_eq!(
             &snapshot.document_text[snapshot.selection.range()],
@@ -5194,7 +5239,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_html_block_on_empty_line_selects_content() {
+    fn insert_html_block_on_empty_line_creates_following_paragraph_and_selects_content() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5208,7 +5253,7 @@ mod tests {
         controller.dispatch(EditCommand::InsertHtmlBlock);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "<div>\n  Content\n</div>");
+        assert_eq!(snapshot.document_text, "<div>\n  Content\n</div>\n\n");
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Content");
         assert!(snapshot.display_map.blocks.iter().any(|block| matches!(
             block.embedded,
@@ -5217,7 +5262,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_html_block_after_text_selects_content() {
+    fn insert_html_block_after_text_creates_following_paragraph_and_selects_content() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5231,7 +5276,7 @@ mod tests {
         controller.dispatch(EditCommand::InsertHtmlBlock);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "Hello\n\n<div>\n  Content\n</div>");
+        assert_eq!(snapshot.document_text, "Hello\n\n<div>\n  Content\n</div>\n\n");
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "Content");
     }
 
@@ -5260,6 +5305,26 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_inserted_callout_exits_to_following_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: String::new(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::InsertCallout);
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> [!NOTE] Title\n\n");
+        assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
+    }
+
+    #[test]
     fn insert_callout_after_text_places_cursor_in_body() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5279,7 +5344,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_toc_on_empty_line_creates_toc_block() {
+    fn insert_toc_on_empty_line_creates_following_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5293,8 +5358,8 @@ mod tests {
         controller.dispatch(EditCommand::InsertToc);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "[toc]");
-        assert_eq!(snapshot.selection.cursor(), "[toc]".len());
+        assert_eq!(snapshot.document_text, "[toc]\n\n");
+        assert_eq!(snapshot.selection.cursor(), "[toc]\n\n".len());
         assert!(snapshot
             .display_map
             .blocks
@@ -5304,7 +5369,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_toc_after_text_appends_toc_block() {
+    fn insert_toc_after_text_appends_toc_block_and_following_paragraph() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5318,7 +5383,7 @@ mod tests {
         controller.dispatch(EditCommand::InsertToc);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, "Hello\n\n[toc]");
+        assert_eq!(snapshot.document_text, "Hello\n\n[toc]\n\n");
         assert_eq!(snapshot.selection.cursor(), snapshot.document_text.len());
     }
 
@@ -5345,7 +5410,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_footnote_adds_reference_and_selects_definition_text() {
+    fn insert_footnote_adds_reference_and_following_paragraph_and_selects_definition_text() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
@@ -5364,7 +5429,7 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(
             snapshot.document_text,
-            "Hello[^1] world\n\n[^1]: Footnote text"
+            "Hello[^1] world\n\n[^1]: Footnote text\n\n"
         );
         assert_eq!(
             &snapshot.document_text[snapshot.selection.range()],
@@ -5446,7 +5511,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert!(snapshot.document_text.contains("Note[^3][^2]"));
-        assert!(snapshot.document_text.ends_with("[^3]: Footnote text"));
+        assert!(snapshot.document_text.ends_with("[^3]: Footnote text\n\n"));
     }
 
     #[test]

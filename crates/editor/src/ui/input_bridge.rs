@@ -55,6 +55,7 @@ fn detect_auto_pair_opportunity(
 
 const MARKUP_WRAP_CHARS: &[(char, &str, &str)] = &[
     ('*', "**", "**"),
+    ('_', "_", "_"),
     ('`', "`", "`"),
     ('~', "~~", "~~"),
     ('=', "==", "=="),
@@ -1824,6 +1825,23 @@ mod tests {
         assert_eq!(
             detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
             Some(("^", "^"))
+        );
+    }
+
+    #[test]
+    fn detects_underscore_italic_wrap_over_selection() {
+        let old_visible = "Make italic";
+        let new_visible = "Make _italic";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("_", "_"))
         );
     }
 

@@ -2322,9 +2322,10 @@ fn resolve_image_source(src: &str, base_dir: Option<&Path>) -> Option<ResolvedIm
 }
 
 fn looks_like_image_uri(src: &str) -> bool {
+    let lower = src.to_ascii_lowercase();
     ["http://", "https://", "file://", "data:"]
         .into_iter()
-        .any(|prefix| src.starts_with(prefix))
+        .any(|prefix| lower.starts_with(prefix))
 }
 
 fn alt_if_present(alt: &str, fallback: &str) -> String {
@@ -3270,6 +3271,8 @@ mod tests {
             ))
         );
         assert!(looks_like_image_uri("https://example.com/image.png"));
+        assert!(looks_like_image_uri("HTTPS://example.com/image.png"));
+        assert!(looks_like_image_uri("DATA:image/png;base64,abc"));
     }
 
     #[test]
