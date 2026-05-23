@@ -124,7 +124,8 @@ fn is_url_like(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let has_supported_scheme = lower.starts_with("http://")
         || lower.starts_with("https://")
-        || lower.starts_with("mailto:");
+        || lower.starts_with("mailto:")
+        || lower.starts_with("file://");
     has_supported_scheme
         && text
             .chars()
@@ -1762,6 +1763,23 @@ mod tests {
         assert_eq!(
             detect_link_paste_opportunity(old_visible, new_visible, &selection),
             Some("HTTPS://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_file_url_paste_over_selection() {
+        let old_visible = "Open report";
+        let new_visible = "Open file:///tmp/report.md";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("file:///tmp/report.md".to_string())
         );
     }
 

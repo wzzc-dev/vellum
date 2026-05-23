@@ -2677,7 +2677,8 @@ fn is_url_like(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let has_supported_scheme = lower.starts_with("http://")
         || lower.starts_with("https://")
-        || lower.starts_with("mailto:");
+        || lower.starts_with("mailto:")
+        || lower.starts_with("file://");
     has_supported_scheme
         && text
             .chars()
@@ -4942,6 +4943,34 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, r"Read [text](https://example.com/a\)b)");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "text");
+    }
+
+    #[test]
+    fn insert_link_with_selected_file_url_uses_it_as_destination() {
+        let source = "Open file:///tmp/report.md";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Open ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Open [text](file:///tmp/report.md)");
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "text");
     }
 
