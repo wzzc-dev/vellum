@@ -3187,6 +3187,11 @@ fn auto_pair_closer_for(opener: char) -> Option<char> {
         '`' => Some('`'),
         '$' => Some('$'),
         '<' => Some('>'),
+        '*' => Some('*'),
+        '_' => Some('_'),
+        '~' => Some('~'),
+        '=' => Some('='),
+        '^' => Some('^'),
         _ => None,
     }
 }
@@ -3650,6 +3655,28 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Formula ");
         assert_eq!(snapshot.selection, SelectionState::collapsed("Formula ".len()));
+    }
+
+    #[test]
+    fn delete_backward_between_empty_markdown_emphasis_pair_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Emphasis **".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Emphasis *".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Emphasis ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Emphasis ".len()));
     }
 
     #[test]

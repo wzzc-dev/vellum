@@ -23,6 +23,11 @@ const AUTO_PAIR_OPENERS: &[(char, char)] =
         ('`', '`'),
         ('$', '$'),
         ('<', '>'),
+        ('*', '*'),
+        ('_', '_'),
+        ('~', '~'),
+        ('=', '='),
+        ('^', '^'),
     ];
 
 fn closing_char_for_opener(c: char) -> Option<char> {
@@ -1928,6 +1933,26 @@ mod tests {
         assert_eq!(
             detect_auto_pair_opportunity(old_visible, "Formula `", &selection),
             Some('`')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula *", &selection),
+            Some('*')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula _", &selection),
+            Some('_')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula ~", &selection),
+            Some('~')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula =", &selection),
+            Some('=')
+        );
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Formula ^", &selection),
+            Some('^')
         );
     }
 
