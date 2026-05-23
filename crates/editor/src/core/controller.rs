@@ -2860,6 +2860,7 @@ fn auto_pair_closer_for(opener: char) -> Option<char> {
         '\'' => Some('\''),
         '`' => Some('`'),
         '$' => Some('$'),
+        '<' => Some('>'),
         _ => None,
     }
 }
@@ -3326,6 +3327,28 @@ mod tests {
     }
 
     #[test]
+    fn delete_backward_between_empty_angle_brackets_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Link <>".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Link <".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteBackward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Link ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Link ".len()));
+    }
+
+    #[test]
     fn delete_backward_inside_nonempty_auto_pair_removes_only_previous_char() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -3367,6 +3390,28 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Call ");
         assert_eq!(snapshot.selection, SelectionState::collapsed("Call ".len()));
+    }
+
+    #[test]
+    fn delete_forward_before_empty_angle_brackets_removes_both_sides() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Link <>".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("Link ".len()),
+        });
+
+        controller.dispatch(EditCommand::DeleteForward);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Link ");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Link ".len()));
     }
 
     #[test]
