@@ -19,8 +19,9 @@ use super::{
         adjust_quoted_list_markup_at_cursor, adjust_selected_list_markup,
         adjust_selected_quoted_list_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, detect_auto_format,
-        line_column_for_byte_offset, pipe_table_enter_transform, semantic_enter_transform,
-        set_blockquote_markup, set_heading_markup, set_list_markup, set_task_list_markup,
+        line_column_for_byte_offset, opening_fence_marker, pipe_table_enter_transform,
+        semantic_enter_transform, set_blockquote_markup, set_heading_markup, set_list_markup,
+        set_task_list_markup,
     },
 };
 
@@ -1150,6 +1151,37 @@ impl EditorController {
             return self.navigate_table_from_block(block, TableNavDirection::Down);
         }
 
+        if !plain
+            && range.is_empty()
+            && let Some(effect) = self.close_opening_code_fence_line(range.start)
+        {
+            return effect;
+        }
+
+        if !plain
+            && range.is_empty()
+            && let Some(block) = current_block.as_ref()
+            && matches!(block.kind, BlockKind::CodeFence { .. })
+            && range.start == block.byte_range.end
+        {
+            let block_span_text = self.document.block_span_text(block);
+            if let Some(transform) = semantic_enter_transform(
+                &block.kind,
+                &block_span_text,
+                None,
+                block_span_text.len(),
+            ) {
+                let selection_after =
+                    SelectionState::collapsed(block.byte_range.start + transform.cursor_offset);
+                return self.apply_edit(
+                    block.byte_range.clone(),
+                    transform.replacement,
+                    selection_after,
+                    "Updated block structure",
+                );
+            }
+        }
+
         if plain {
             let start = self.selection.range().start;
             let selection_after = SelectionState::collapsed(start + 1);
@@ -1319,9 +1351,8 @@ impl EditorController {
                     effects
                 }
             }
-            AutoFormatAction::CodeFence => {
-                let effects = self.insert_code_fence();
-                effects
+            AutoFormatAction::CodeFence { marker, info } => {
+                self.insert_code_fence_template(marker, info)
             }
             AutoFormatAction::MathBlock => {
                 let effects = self.insert_math_block();
@@ -1412,6 +1443,25 @@ impl EditorController {
             SelectionState::collapsed(range.start + replacement.len())
         };
         self.apply_edit(range, replacement, selection_after, "Inserted inline math")
+    }
+
+    fn close_opening_code_fence_line(&mut self, cursor: usize) -> Option<EditorEffects> {
+        let text = self.document.text();
+        let cursor = clamp_to_char_boundary(&text, cursor);
+        let (line_start, line_end) = line_bounds_in_text(&text, cursor);
+        if cursor != line_end {
+            return None;
+        }
+        let line = &text[line_start..line_end];
+        let marker = opening_fence_marker(line.trim())?;
+        let replacement = format!("{line}\n\n{marker}");
+        let selection_after = SelectionState::collapsed(line_start + line.len() + 1);
+        Some(self.apply_edit(
+            line_start..line_end,
+            replacement,
+            selection_after,
+            "Inserted code fence",
+        ))
     }
 
     fn escape_link_label(text: &str) -> String {
@@ -1632,29 +1682,34 @@ impl EditorController {
     }
 
     fn insert_code_fence(&mut self) -> EditorEffects {
+        self.insert_code_fence_template("```", "")
+    }
+
+    fn insert_code_fence_template(&mut self, marker: &str, info: &str) -> EditorEffects {
         let Some(block) = self.current_block().cloned() else {
             return EditorEffects::default();
         };
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
-        // The fence template: opening fence, empty body line, closing fence.
-        // The cursor should land at the start of the empty body line.
-        let template = "```\n\n```";
+        let opening = if info.is_empty() {
+            marker.to_string()
+        } else {
+            format!("{marker}{info}")
+        };
+        let template = format!("{opening}\n\n{marker}");
+        let cursor_in_template = opening.len() + 1;
         if is_empty {
-            // Replace the empty paragraph in-place.
-            let cursor = block.content_range.start + 4; // after "```\n"
+            let cursor = block.content_range.start + cursor_in_template;
             self.apply_edit(
                 block.content_range,
-                template.to_string(),
+                template,
                 SelectionState::collapsed(cursor),
                 "Inserted code fence",
             )
         } else {
-            // Insert after the current block.
             let insert_pos = block.byte_range.end;
             let insertion = format!("\n\n{template}");
-            // Cursor lands at the empty body line: insert_pos + "\n\n```\n".len()
-            let cursor = insert_pos + 2 + 4; // "\n\n" + "```\n"
+            let cursor = insert_pos + 2 + cursor_in_template;
             self.apply_edit(
                 insert_pos..insert_pos,
                 insertion,
@@ -2696,6 +2751,19 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
         cursor += 1;
     }
     cursor.min(text.len())
+}
+
+fn line_bounds_in_text(text: &str, cursor_offset: usize) -> (usize, usize) {
+    let cursor_offset = clamp_to_char_boundary(text, cursor_offset);
+    let line_start = text[..cursor_offset]
+        .rfind('\n')
+        .map(|ix| ix + 1)
+        .unwrap_or(0);
+    let line_end = text[cursor_offset..]
+        .find('\n')
+        .map(|ix| cursor_offset + ix)
+        .unwrap_or(text.len());
+    (line_start, line_end)
 }
 
 fn is_last_block(document: &DocumentBuffer, block: &BlockProjection) -> bool {
@@ -4209,6 +4277,58 @@ mod tests {
         assert!(matches!(
             snapshot.blocks[1].kind,
             crate::BlockKind::CodeFence { .. }
+        ));
+    }
+
+    #[test]
+    fn enter_after_typed_code_fence_preserves_language_info() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "```rust".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("```rust".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "```rust\n\n```");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("```rust\n".len()));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::CodeFence { ref language } if language.as_deref() == Some("rust")
+        ));
+    }
+
+    #[test]
+    fn enter_after_typed_tilde_code_fence_uses_tilde_marker() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "~~~js".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("~~~js".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "~~~js\n\n~~~");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("~~~js\n".len()));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::CodeFence { ref language } if language.as_deref() == Some("js")
         ));
     }
 

@@ -565,7 +565,7 @@ pub(crate) enum AutoFormatAction {
     OrderedList,
     TaskList,
     HorizontalRule,
-    CodeFence,
+    CodeFence { marker: String, info: String },
     MathBlock,
 }
 
@@ -584,10 +584,8 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
         return Some(AutoFormatAction::MathBlock);
     }
 
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        if rest.chars().all(|c| c == '`') {
-            return Some(AutoFormatAction::CodeFence);
-        }
+    if let Some(action) = detect_code_fence_auto_format(trimmed) {
+        return Some(action);
     }
 
     if trimmed.len() >= 3 {
@@ -636,6 +634,29 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
     }
 
     None
+}
+
+fn detect_code_fence_auto_format(trimmed: &str) -> Option<AutoFormatAction> {
+    let marker_char = trimmed.chars().next()?;
+    if marker_char != '`' && marker_char != '~' {
+        return None;
+    }
+
+    let marker_len = trimmed
+        .chars()
+        .take_while(|ch| *ch == marker_char)
+        .count();
+    if marker_len < 3 {
+        return None;
+    }
+
+    let marker = marker_char.to_string().repeat(marker_len);
+    let info = trimmed[marker_len..].trim().to_string();
+    if info.chars().any(|ch| ch == marker_char) {
+        return None;
+    }
+
+    Some(AutoFormatAction::CodeFence { marker, info })
 }
 
 pub(crate) fn supports_semantic_enter(kind: &BlockKind) -> bool {
@@ -935,10 +956,37 @@ fn code_fence_enter_transform(text: &str, cursor_offset: usize) -> Option<Semant
     let (line_start, line_end) = line_bounds(text, cursor_offset);
     let line = &text[line_start..line_end];
     let trimmed = line.trim();
+    if line_start == 0
+        && line_end == text.len()
+        && cursor_offset == line_end
+        && let Some(marker) = opening_fence_marker(trimmed)
+    {
+        let replacement = format!("{line}\n\n{marker}");
+        return Some(SemanticEnterTransform {
+            cursor_offset: line.len() + 1,
+            replacement,
+        });
+    }
     if !is_closing_fence(trimmed) {
         return None;
     }
     Some(exit_structured_line(text, line_start, line_end))
+}
+
+pub(crate) fn opening_fence_marker(s: &str) -> Option<String> {
+    let marker_char = s.chars().next()?;
+    if marker_char != '`' && marker_char != '~' {
+        return None;
+    }
+    let marker_len = s.chars().take_while(|ch| *ch == marker_char).count();
+    if marker_len < 3 {
+        return None;
+    }
+    let info = &s[marker_len..];
+    if info.chars().any(|ch| ch == marker_char) {
+        return None;
+    }
+    Some(marker_char.to_string().repeat(marker_len))
 }
 
 fn is_closing_fence(s: &str) -> bool {
@@ -1759,11 +1807,31 @@ mod tests {
     fn detect_auto_format_code_fence() {
         assert_eq!(
             detect_auto_format(&BlockKind::Paragraph, "```"),
-            Some(AutoFormatAction::CodeFence)
+            Some(AutoFormatAction::CodeFence {
+                marker: "```".to_string(),
+                info: String::new(),
+            })
         );
         assert_eq!(
             detect_auto_format(&BlockKind::Paragraph, "````"),
-            Some(AutoFormatAction::CodeFence)
+            Some(AutoFormatAction::CodeFence {
+                marker: "````".to_string(),
+                info: String::new(),
+            })
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "```rust"),
+            Some(AutoFormatAction::CodeFence {
+                marker: "```".to_string(),
+                info: "rust".to_string(),
+            })
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "~~~ js"),
+            Some(AutoFormatAction::CodeFence {
+                marker: "~~~".to_string(),
+                info: "js".to_string(),
+            })
         );
     }
 
