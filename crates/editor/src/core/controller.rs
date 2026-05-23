@@ -1927,8 +1927,13 @@ impl EditorController {
         let label = next_footnote_label(&text);
         let reference = format!("[^{label}]");
         let definition_prefix = format!("[^{label}]: ");
-        let placeholder = "Footnote text";
         let range = self.selection.range();
+        let selected_text = self.document.text_for_range(range.clone());
+        let definition_text = if selected_text.is_empty() {
+            "Footnote text"
+        } else {
+            selected_text.as_str()
+        };
         let tail = &text[range.end..];
         let body_end = range.start + reference.len() + tail.len();
         let body_text = format!("{}{}{}", &text[..range.start], reference, tail);
@@ -1943,10 +1948,10 @@ impl EditorController {
         };
 
         let insertion = format!(
-            "{reference}{tail}{separator}{definition_prefix}{placeholder}\n\n"
+            "{reference}{tail}{separator}{definition_prefix}{definition_text}\n\n"
         );
         let definition_start = body_end + separator.len() + definition_prefix.len();
-        let definition_end = definition_start + placeholder.len();
+        let definition_end = definition_start + definition_text.len();
 
         self.apply_edit(
             range.start..text.len(),
@@ -5617,6 +5622,39 @@ mod tests {
             .blocks
             .iter()
             .any(|block| block.kind == BlockKind::FootnoteDefinition));
+    }
+
+    #[test]
+    fn insert_footnote_moves_selected_text_into_definition() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Hello cited claim world".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Hello ".len(),
+                head_byte: "Hello cited claim".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertFootnote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "Hello [^1] world\n\n[^1]: cited claim\n\n"
+        );
+        assert_eq!(
+            &snapshot.document_text[snapshot.selection.range()],
+            "cited claim"
+        );
     }
 
     #[test]
