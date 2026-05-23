@@ -594,7 +594,12 @@ impl MarkdownEditor {
 
     pub(crate) fn image_markdown_for_path(&self, image_path: &Path) -> String {
         let relative = self.relative_image_path(image_path);
-        format!("![]({})", markdown_link_destination(&relative))
+        let alt = image_alt_text_for_path(image_path);
+        format!(
+            "![{}]({})",
+            markdown_link_label(alt),
+            markdown_link_destination(&relative)
+        )
     }
 
     pub(crate) fn file_link_markdown_for_path(&self, file_path: &Path) -> String {
@@ -1143,6 +1148,13 @@ fn markdown_link_label(label: &str) -> String {
     label.replace('\\', r"\\").replace(']', r"\]")
 }
 
+fn image_alt_text_for_path(path: &Path) -> &str {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("image")
+}
+
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
     let range = snapshot.selection.range();
     snapshot.display_map.blocks.iter().any(|block| {
@@ -1447,6 +1459,12 @@ mod tests {
     fn markdown_link_label_escapes_file_names() {
         assert_eq!(markdown_link_label("notes.md"), "notes.md");
         assert_eq!(markdown_link_label(r"a\]b.md"), r"a\\\]b.md");
+    }
+
+    #[test]
+    fn image_alt_text_uses_file_stem() {
+        assert_eq!(image_alt_text_for_path(Path::new("/tmp/diagram.png")), "diagram");
+        assert_eq!(image_alt_text_for_path(Path::new(r"/tmp/a\]b.png")), r"a\]b");
     }
 
     #[test]
