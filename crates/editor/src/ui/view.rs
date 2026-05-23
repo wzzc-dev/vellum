@@ -1,4 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -589,8 +595,8 @@ impl MarkdownEditor {
 
     fn relative_path_for_markdown(&self, path: &Path) -> String {
         if let Some(doc_dir) = self.controller.current_document_dir() {
-            if let Ok(relative) = path.strip_prefix(&doc_dir) {
-                return format!("./{}", relative.display());
+            if let Some(relative) = relative_markdown_path(&doc_dir, path) {
+                return relative;
             }
         }
         path.display().to_string()
@@ -1159,6 +1165,61 @@ fn image_alt_text_for_path(path: &Path) -> &str {
         .unwrap_or("image")
 }
 
+fn relative_markdown_path(base_dir: &Path, target: &Path) -> Option<String> {
+    let base_components = normal_path_components(base_dir)?;
+    let target_components = normal_path_components(target)?;
+    if base_components.is_empty()
+        || target_components.is_empty()
+        || base_components[0] != target_components[0]
+    {
+        return None;
+    }
+
+    let common_len = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(base, target)| base == target)
+        .count();
+    if common_len == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        relative.push("..");
+    }
+    for component in &target_components[common_len..] {
+        relative.push(component);
+    }
+
+    if relative.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+
+    let rendered = relative.display().to_string();
+    if rendered.starts_with("..") {
+        Some(rendered)
+    } else {
+        Some(format!("./{rendered}"))
+    }
+}
+
+fn normal_path_components(path: &Path) -> Option<Vec<String>> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                components.push(prefix.as_os_str().to_string_lossy().into_owned())
+            }
+            Component::RootDir => components.push(std::path::MAIN_SEPARATOR.to_string()),
+            Component::Normal(part) => components.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::ParentDir => return None,
+        }
+    }
+    Some(components)
+}
+
 fn join_dropped_markdown(snippets: &[String]) -> Option<String> {
     if snippets.is_empty() {
         return None;
@@ -1476,6 +1537,28 @@ mod tests {
     fn image_alt_text_uses_file_stem() {
         assert_eq!(image_alt_text_for_path(Path::new("/tmp/diagram.png")), "diagram");
         assert_eq!(image_alt_text_for_path(Path::new(r"/tmp/a\]b.png")), r"a\]b");
+    }
+
+    #[test]
+    fn relative_markdown_path_prefers_document_relative_paths() {
+        let base = Path::new("/notes/drafts");
+
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/drafts/pic.png")),
+            Some("./pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/drafts/assets/pic.png")),
+            Some("./assets/pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/assets/pic.png")),
+            Some("../assets/pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/../assets/pic.png")),
+            None
+        );
     }
 
     #[test]
