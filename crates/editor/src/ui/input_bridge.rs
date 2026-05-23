@@ -22,6 +22,7 @@ const AUTO_PAIR_OPENERS: &[(char, char)] =
         ('\'', '\''),
         ('`', '`'),
         ('$', '$'),
+        ('<', '>'),
     ];
 
 fn closing_char_for_opener(c: char) -> Option<char> {
@@ -95,6 +96,7 @@ fn wrap_pair_for_opener(c: char) -> Option<(&'static str, &'static str)> {
         '{' => Some(("{", "}")),
         '"' => Some(("\"", "\"")),
         '\'' => Some(("'", "'")),
+        '<' => Some(("<", ">")),
         _ => None,
     }
 }
@@ -1898,6 +1900,23 @@ mod tests {
     }
 
     #[test]
+    fn detects_angle_bracket_wrap_over_selection() {
+        let old_visible = "Visit https://example.com";
+        let new_visible = "Visit <https://example.com";
+        let selection = SelectionState {
+            anchor_byte: 6,
+            head_byte: 25,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_wrap_selection_opportunity(old_visible, new_visible, &selection),
+            Some(("<", ">"))
+        );
+    }
+
+    #[test]
     fn detects_markdown_inline_delimiter_auto_pairs() {
         let old_visible = "Formula ";
         let selection = SelectionState::collapsed(old_visible.len());
@@ -1913,11 +1932,30 @@ mod tests {
     }
 
     #[test]
+    fn detects_angle_bracket_auto_pair() {
+        let old_visible = "Link ";
+        let selection = SelectionState::collapsed(old_visible.len());
+
+        assert_eq!(
+            detect_auto_pair_opportunity(old_visible, "Link <", &selection),
+            Some('>')
+        );
+    }
+
+    #[test]
     fn detects_markdown_inline_delimiter_overclose() {
         let old_visible = "$x$";
         let selection = SelectionState::collapsed(2);
 
         assert!(detect_overclose_opportunity(old_visible, "$x$$", &selection));
+    }
+
+    #[test]
+    fn detects_angle_bracket_overclose() {
+        let old_visible = "<url>";
+        let selection = SelectionState::collapsed(4);
+
+        assert!(detect_overclose_opportunity(old_visible, "<url>>", &selection));
     }
 
     #[test]
