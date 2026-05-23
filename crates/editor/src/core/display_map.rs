@@ -2288,12 +2288,16 @@ fn generic_list_prefix_len(line: &str) -> Option<usize> {
 }
 
 fn task_bullet_prefix_len(line: &str) -> Option<usize> {
-    for prefix in [
-        "- [ ] ", "* [ ] ", "+ [ ] ", "- [x] ", "* [x] ", "+ [x] ", "- [X] ", "* [X] ", "+ [X] ",
-    ] {
-        if line.starts_with(prefix) {
-            return Some(2);
-        }
+    let bytes = line.as_bytes();
+    if bytes.len() >= 5
+        && matches!(bytes[0], b'-' | b'*' | b'+')
+        && bytes[1] == b' '
+        && bytes[2] == b'['
+        && matches!(bytes[3], b' ' | b'x' | b'X')
+        && bytes[4] == b']'
+        && (bytes.len() == 5 || bytes.get(5).is_some_and(|byte| byte.is_ascii_whitespace()))
+    {
+        return Some(2);
     }
     None
 }
@@ -2308,7 +2312,11 @@ fn task_marker_text(line: &str) -> String {
 }
 
 fn task_source_suffix_start(line: &str) -> usize {
-    if line.len() >= 6 { 6 } else { line.len() }
+    if line.len() >= 6 && line.as_bytes()[5].is_ascii_whitespace() {
+        6
+    } else {
+        line.len().min(5)
+    }
 }
 
 fn split_inclusive_lines(text: &str) -> Vec<&str> {
@@ -2606,6 +2614,32 @@ mod tests {
                 .source_offset,
             6
         );
+    }
+
+    #[test]
+    fn bare_task_item_marker_renders_checkbox() {
+        let doc = DocumentBuffer::from_text("+ [X]");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "\u{2611} ");
+        let span = map.blocks[0]
+            .spans
+            .iter()
+            .find(|span| span.kind == RenderSpanKind::TaskMarker)
+            .expect("task marker span");
+        assert_eq!(span.source_range, 2..5);
+    }
+
+    #[test]
+    fn task_marker_without_separator_keeps_plain_text() {
+        let doc = DocumentBuffer::from_text("- [ ]todo");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "[ ]todo");
+        assert!(!map.blocks[0]
+            .spans
+            .iter()
+            .any(|span| span.kind == RenderSpanKind::TaskMarker));
     }
 
     #[test]

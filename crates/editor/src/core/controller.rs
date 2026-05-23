@@ -681,6 +681,10 @@ impl EditorController {
         else {
             return EditorEffects::default();
         };
+        let offset_in_cell = table
+            .cell_source_range(current_cell)
+            .map(|range| local_cursor.saturating_sub(range.start))
+            .unwrap_or(0);
 
         let Some(replacement) =
             table.rebuild_markdown_with_column_alignment(current_cell.column, alignment)
@@ -688,7 +692,8 @@ impl EditorController {
             return EditorEffects::default();
         };
         let rebuilt = TableModel::parse(&replacement);
-        let selection_after = table_cell_selection(&block, &rebuilt, current_cell);
+        let selection_after =
+            table_cell_selection_with_offset(&block, &rebuilt, current_cell, offset_in_cell);
         let trailing = self.document.block_trailing_text(&block);
         self.apply_edit(
             block.byte_range.clone(),
@@ -1363,7 +1368,52 @@ impl EditorController {
 
     fn toggle_inline_markup(&mut self, before: String, after: String) -> EditorEffects {
         let range = self.selection.range();
+        let document_text = self.document.text();
         let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            if selected_text.starts_with(&before) && selected_text.ends_with(&after) {
+                let inner_start = before.len();
+                let inner_end = selected_text.len().saturating_sub(after.len());
+                if inner_start <= inner_end {
+                    let replacement = selected_text[inner_start..inner_end].to_string();
+                    let selection_after = SelectionState {
+                        anchor_byte: range.start,
+                        head_byte: range.start + replacement.len(),
+                        preferred_column: None,
+                        affinity: SelectionAffinity::Downstream,
+                    };
+                    return self.apply_edit(
+                        range,
+                        replacement,
+                        selection_after,
+                        "Updated formatting",
+                    );
+                }
+            }
+
+            if range.start >= before.len()
+                && range.end + after.len() <= document_text.len()
+                && &document_text[range.start - before.len()..range.start] == before.as_str()
+                && &document_text[range.end..range.end + after.len()] == after.as_str()
+            {
+                let replacement = selected_text;
+                let edit_start = range.start - before.len();
+                let edit_end = range.end + after.len();
+                let selection_after = SelectionState {
+                    anchor_byte: edit_start,
+                    head_byte: edit_start + replacement.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(
+                    edit_start..edit_end,
+                    replacement,
+                    selection_after,
+                    "Updated formatting",
+                );
+            }
+        }
+
         let (replacement, cursor) = if selected_text.is_empty() {
             let replacement = format!("{before}{after}");
             let cursor = range.start + before.len();
@@ -1383,8 +1433,44 @@ impl EditorController {
 
     fn insert_link(&mut self) -> EditorEffects {
         let range = self.selection.range();
+        let document_text = self.document.text();
         let selected_text = self.document.text_for_range(range.clone());
         let url_placeholder = "https://";
+        if !selected_text.is_empty() {
+            if let Some(label) = selected_markdown_link_label(&selected_text) {
+                let selection_after = SelectionState {
+                    anchor_byte: range.start,
+                    head_byte: range.start + label.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(range, label, selection_after, "Inserted link");
+            }
+
+            if range.start > 0
+                && document_text[..range.start].ends_with('[')
+                && range.end < document_text.len()
+                && document_text[range.end..].starts_with("](")
+                && let Some(close_offset) = document_text[range.end + 2..].find(')')
+            {
+                let label = selected_text;
+                let edit_start = range.start - 1;
+                let edit_end = range.end + 2 + close_offset + 1;
+                let selection_after = SelectionState {
+                    anchor_byte: edit_start,
+                    head_byte: edit_start + label.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(
+                    edit_start..edit_end,
+                    label,
+                    selection_after,
+                    "Inserted link",
+                );
+            }
+        }
+
         if is_url_like(&selected_text) {
             let label_placeholder = "text";
             let destination = Self::escape_link_destination(&selected_text);
@@ -1416,8 +1502,44 @@ impl EditorController {
 
     fn insert_image_placeholder(&mut self) -> EditorEffects {
         let range = self.selection.range();
+        let document_text = self.document.text();
         let selected_text = self.document.text_for_range(range.clone());
         let url_placeholder = "image.png";
+        if !selected_text.is_empty() {
+            if let Some(alt) = selected_markdown_image_alt(&selected_text) {
+                let selection_after = SelectionState {
+                    anchor_byte: range.start,
+                    head_byte: range.start + alt.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(range, alt, selection_after, "Inserted image");
+            }
+
+            if range.start >= 2
+                && document_text[..range.start].ends_with("![")
+                && range.end < document_text.len()
+                && document_text[range.end..].starts_with("](")
+                && let Some(close_offset) = document_text[range.end + 2..].find(')')
+            {
+                let alt = selected_text;
+                let edit_start = range.start - 2;
+                let edit_end = range.end + 2 + close_offset + 1;
+                let selection_after = SelectionState {
+                    anchor_byte: edit_start,
+                    head_byte: edit_start + alt.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(
+                    edit_start..edit_end,
+                    alt,
+                    selection_after,
+                    "Inserted image",
+                );
+            }
+        }
+
         if is_url_like(&selected_text) || looks_like_image_path(&selected_text) {
             let alt_placeholder = "alt";
             let destination = Self::escape_link_destination(&selected_text);
@@ -1462,7 +1584,49 @@ impl EditorController {
 
     fn insert_inline_math(&mut self) -> EditorEffects {
         let range = self.selection.range();
+        let document_text = self.document.text();
         let selected_text = self.document.text_for_range(range.clone());
+        if !selected_text.is_empty() {
+            if selected_text.starts_with('$') && selected_text.ends_with('$') {
+                let replacement = selected_text[1..selected_text.len().saturating_sub(1)]
+                    .to_string();
+                let selection_after = SelectionState {
+                    anchor_byte: range.start,
+                    head_byte: range.start + replacement.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(
+                    range,
+                    replacement,
+                    selection_after,
+                    "Inserted inline math",
+                );
+            }
+
+            if range.start > 0
+                && range.end < document_text.len()
+                && &document_text[range.start - 1..range.start] == "$"
+                && &document_text[range.end..range.end + 1] == "$"
+            {
+                let replacement = selected_text;
+                let edit_start = range.start - 1;
+                let edit_end = range.end + 1;
+                let selection_after = SelectionState {
+                    anchor_byte: edit_start,
+                    head_byte: edit_start + replacement.len(),
+                    preferred_column: None,
+                    affinity: SelectionAffinity::Downstream,
+                };
+                return self.apply_edit(
+                    edit_start..edit_end,
+                    replacement,
+                    selection_after,
+                    "Inserted inline math",
+                );
+            }
+        }
+
         let body = if selected_text.is_empty() {
             "x".to_string()
         } else {
@@ -1630,16 +1794,16 @@ impl EditorController {
         let current = self.document.block_text(&block);
         let enabled = !matches!(block.kind, BlockKind::Blockquote);
         let updated = set_blockquote_markup(&current, enabled);
-        let relative_cursor = self
-            .selection
-            .cursor()
-            .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start
-            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
+        let selection_after = remap_list_selection_after_markup_change(
+            &current,
+            &updated,
+            &self.selection,
+            block.content_range.start,
+        );
         self.apply_edit(
             block.content_range,
             updated,
-            SelectionState::collapsed(new_cursor),
+            selection_after,
             if enabled {
                 "Converted paragraph to blockquote"
             } else {
@@ -1654,16 +1818,16 @@ impl EditorController {
         };
         let current = self.document.block_text(&block);
         let updated = set_list_markup(&current, ordered);
-        let relative_cursor = self
-            .selection
-            .cursor()
-            .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start
-            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
+        let selection_after = remap_list_selection_after_markup_change(
+            &current,
+            &updated,
+            &self.selection,
+            block.content_range.start,
+        );
         self.apply_edit(
             block.content_range,
             updated,
-            SelectionState::collapsed(new_cursor),
+            selection_after,
             if ordered {
                 "Toggled ordered list"
             } else {
@@ -1677,17 +1841,23 @@ impl EditorController {
             return EditorEffects::default();
         };
         let current = self.document.block_text(&block);
-        let updated = set_task_list_markup(&current);
-        let relative_cursor = self
-            .selection
-            .cursor()
-            .saturating_sub(block.content_range.start);
-        let new_cursor = block.content_range.start
-            + remap_list_cursor_after_markup_change(&current, &updated, relative_cursor);
+        let updated = if matches!(block.kind, BlockKind::List)
+            && first_line_is_task_item(&current)
+        {
+            strip_task_list_markup(&current)
+        } else {
+            set_task_list_markup(&current)
+        };
+        let selection_after = remap_list_selection_after_markup_change(
+            &current,
+            &updated,
+            &self.selection,
+            block.content_range.start,
+        );
         self.apply_edit(
             block.content_range,
             updated,
-            SelectionState::collapsed(new_cursor),
+            selection_after,
             "Converted paragraph to task list",
         )
     }
@@ -1712,11 +1882,7 @@ impl EditorController {
             // leave cursor in the trailing empty paragraph that follows the rule.
             let insert_pos = block.byte_range.end;
             let insertion = "\n\n---\n\n".to_string();
-            // Cursor should land after the two-newline separator that follows `---`.
-            // That puts it at: insert_pos + "\n\n---\n\n".len() - 1 … but since the
-            // document will re-parse, we just place cursor at insert_pos + 6 which is
-            // the start of the blank paragraph after `---`.
-            let cursor = insert_pos + 6;
+            let cursor = insert_pos + insertion.len();
             self.apply_edit(
                 insert_pos..insert_pos,
                 insertion,
@@ -1907,7 +2073,7 @@ impl EditorController {
         };
         let current_text = self.document.block_text(&block);
         let is_empty = current_text.trim().is_empty();
-        let template = "$$\n$$";
+        let template = "$$\n$$\n\n";
         if is_empty {
             let cursor = block.content_range.start + 3;
             self.apply_edit(
@@ -1918,8 +2084,8 @@ impl EditorController {
             )
         } else {
             let insert_pos = block.byte_range.end;
-            let insertion = format!("\n{template}");
-            let cursor = insert_pos + 1 + 3;
+            let insertion = format!("\n\n{template}");
+            let cursor = insert_pos + 2 + 3;
             self.apply_edit(
                 insert_pos..insert_pos,
                 insertion,
@@ -2903,6 +3069,32 @@ fn looks_like_image_path(text: &str) -> bool {
     )
 }
 
+fn selected_markdown_link_label(text: &str) -> Option<String> {
+    if !text.starts_with('[') || !text.ends_with(')') {
+        return None;
+    }
+
+    let close_label = text.find("](")?;
+    if close_label == 0 || close_label + 2 >= text.len().saturating_sub(1) {
+        return None;
+    }
+
+    Some(text[1..close_label].to_string())
+}
+
+fn selected_markdown_image_alt(text: &str) -> Option<String> {
+    if !text.starts_with("![") || !text.ends_with(')') {
+        return None;
+    }
+
+    let close_alt = text.find("](")?;
+    if close_alt <= 1 || close_alt + 2 >= text.len().saturating_sub(1) {
+        return None;
+    }
+
+    Some(text[2..close_alt].to_string())
+}
+
 fn file_modified_at(path: &Path) -> Option<SystemTime> {
     fs::metadata(path)
         .ok()
@@ -2998,6 +3190,29 @@ fn remap_list_cursor_after_markup_change(before: &str, after: &str, cursor_offse
     (after_content_start + content_offset).min(after_line_end)
 }
 
+fn remap_list_selection_after_markup_change(
+    before: &str,
+    after: &str,
+    selection: &SelectionState,
+    block_start: usize,
+) -> SelectionState {
+    let remap = |offset: usize| {
+        block_start
+            + remap_list_cursor_after_markup_change(
+                before,
+                after,
+                offset.saturating_sub(block_start),
+            )
+    };
+
+    SelectionState {
+        anchor_byte: remap(selection.anchor_byte),
+        head_byte: remap(selection.head_byte),
+        preferred_column: selection.preferred_column,
+        affinity: selection.affinity,
+    }
+}
+
 fn list_content_start(line: &str, line_start: usize) -> usize {
     let trimmed = line.trim_start();
     let indent_len = line.len().saturating_sub(trimmed.len());
@@ -3030,6 +3245,41 @@ fn ordered_marker_len(trimmed: &str) -> Option<usize> {
         return None;
     }
     Some(index + 2)
+}
+
+fn first_line_is_task_item(text: &str) -> bool {
+    text.lines()
+        .next()
+        .map(|line| task_marker_len(line.trim_start()).is_some())
+        .unwrap_or(false)
+}
+
+fn strip_task_list_markup(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len().saturating_sub(trimmed.len())];
+            if let Some(marker_len) = task_marker_len(trimmed) {
+                format!("{indent}{}", &trimmed[marker_len..])
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn task_marker_len(trimmed: &str) -> Option<usize> {
+    for marker in [
+        "- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ", "+ [ ] ", "+ [x] ",
+        "+ [X] ",
+    ] {
+        if trimmed.starts_with(marker) {
+            return Some(marker.len());
+        }
+    }
+
+    None
 }
 
 fn nth_line_bounds(text: &str, target_line: usize) -> Option<(usize, usize)> {
@@ -3497,6 +3747,50 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "- [ ] todo");
         assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] todo".len()));
+    }
+
+    #[test]
+    fn toggle_task_list_command_converts_task_item_to_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- [ ] todo".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- [ ] to".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "todo");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("to".len()));
+    }
+
+    #[test]
+    fn toggle_task_list_command_converts_checked_task_item_to_paragraph() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "- [x] done".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("- [x] do".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "done");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("do".len()));
     }
 
     #[test]
@@ -4130,6 +4424,38 @@ mod tests {
     }
 
     #[test]
+    fn toggle_blockquote_preserves_visible_multiline_selection() {
+        let source = "one\ntwo";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleBlockquote);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "> one\n> two");
+        assert_eq!(
+            snapshot.selection.range(),
+            "> ".len().."> one\n> two".len()
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "one\n> two");
+    }
+
+    #[test]
     fn toggle_bullet_list_converts_paragraph_to_list() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4201,6 +4527,38 @@ mod tests {
     }
 
     #[test]
+    fn toggle_bullet_list_preserves_visible_multiline_selection() {
+        let source = "one\ntwo";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleBulletList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- one\n- two");
+        assert_eq!(
+            snapshot.selection.range(),
+            "- ".len().."- one\n- two".len()
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "one\n- two");
+    }
+
+    #[test]
     fn toggle_ordered_list_converts_paragraph_to_numbered_list() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4224,6 +4582,35 @@ mod tests {
     }
 
     #[test]
+    fn toggle_ordered_list_off_preserves_visible_multiline_selection() {
+        let source = "1. one\n2. two";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "1. ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleOrderedList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "one\ntwo");
+        assert_eq!(snapshot.selection.range(), 0.."one\ntwo".len());
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "one\ntwo");
+    }
+
+    #[test]
     fn toggle_task_list_preserves_cursor_position_in_visible_item_text() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4243,6 +4630,61 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "- [ ] todo");
         assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] to".len()));
+    }
+
+    #[test]
+    fn toggle_task_list_preserves_visible_multiline_selection() {
+        let source = "one\ntwo";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] one\n- [ ] two");
+        assert_eq!(
+            snapshot.selection.range(),
+            "- [ ] ".len().."- [ ] one\n- [ ] two".len()
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "one\n- [ ] two");
+    }
+
+    #[test]
+    fn toggle_task_list_converts_ordered_list_items_to_tasks() {
+        let source = "1. one\n2. two";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("1. one\n2. t".len()),
+        });
+
+        controller.dispatch(EditCommand::ToggleTaskList);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "- [ ] one\n- [ ] two");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("- [ ] one\n- [ ] t".len()));
     }
 
     #[test]
@@ -5038,6 +5480,44 @@ mod tests {
     }
 
     #[test]
+    fn align_table_column_preserves_cursor_offset_in_current_cell() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Engineer |";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let body_role_cell = crate::core::table::TableModel::parse(source)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("body role cell");
+        let offset_in_cell = "Eng".len();
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed(body_role_cell.start + offset_in_cell),
+        });
+
+        let effects = controller.align_table_column(TableColumnAlignment::Center);
+        assert!(effects.changed);
+
+        let snapshot = controller.snapshot();
+        let expected = "| Name | Role |\n| --- | :---: |\n| Ada | Engineer |";
+        assert_eq!(snapshot.document_text, expected);
+        let expected_cell = crate::core::table::TableModel::parse(expected)
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("same body role cell");
+        assert_eq!(snapshot.selection.cursor(), expected_cell.start + offset_in_cell);
+    }
+
+    #[test]
     fn backspace_at_start_of_empty_table_cell_preserves_markdown() {
         let source = concat!(
             "| 1 | 2 | 3 | 4 |\n",
@@ -5213,6 +5693,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Hello\n\n---\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("Hello\n\n---\n\n".len()));
         assert!(matches!(
             snapshot.blocks[1].kind,
             crate::BlockKind::ThematicBreak
@@ -5461,6 +5942,126 @@ mod tests {
     }
 
     #[test]
+    fn toggle_inline_markup_unwraps_fully_selected_markup() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "**hello**".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: "**hello**".len(),
+                preferred_column: None,
+                affinity: crate::SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "**".to_string(),
+            after: "**".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "hello");
+        assert_eq!(snapshot.selection.range(), 0.."hello".len());
+    }
+
+    #[test]
+    fn toggle_inline_markup_unwraps_selected_content_inside_markup() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "**hello**".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "**".len(),
+                head_byte: "**hello".len(),
+                preferred_column: None,
+                affinity: crate::SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "**".to_string(),
+            after: "**".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "hello");
+        assert_eq!(snapshot.selection.range(), 0.."hello".len());
+    }
+
+    #[test]
+    fn toggle_inline_markup_unwraps_typora_highlight_markup() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "==important==".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: 0,
+                head_byte: "==important==".len(),
+                preferred_column: None,
+                affinity: crate::SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "==".to_string(),
+            after: "==".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "important");
+        assert_eq!(snapshot.selection.range(), 0.."important".len());
+    }
+
+    #[test]
+    fn toggle_inline_markup_unwraps_strikethrough_body_selection() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "~~done~~".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "~~".len(),
+                head_byte: "~~done".len(),
+                preferred_column: None,
+                affinity: crate::SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::ToggleInlineMarkup {
+            before: "~~".to_string(),
+            after: "~~".to_string(),
+        });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "done");
+        assert_eq!(snapshot.selection.range(), 0.."done".len());
+    }
+
+    #[test]
     fn insert_inline_math_wraps_selection() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5513,6 +6114,60 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.document_text, "Formula $x$");
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "x");
+    }
+
+    #[test]
+    fn insert_inline_math_unwraps_fully_selected_math() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Formula $x + y$".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Formula ".len(),
+                head_byte: "Formula $x + y$".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertInlineMath);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Formula x + y");
+        assert_eq!(snapshot.selection.range(), "Formula ".len().."Formula x + y".len());
+    }
+
+    #[test]
+    fn insert_inline_math_unwraps_selected_formula_body() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Formula $x + y$".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Formula $".len(),
+                head_byte: "Formula $x + y".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertInlineMath);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Formula x + y");
+        assert_eq!(snapshot.selection.range(), "Formula ".len().."Formula x + y".len());
     }
 
     #[test]
@@ -5656,6 +6311,60 @@ mod tests {
             &snapshot.document_text[snapshot.selection.range()],
             "https://"
         );
+    }
+
+    #[test]
+    fn insert_link_unwraps_fully_selected_markdown_link() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](https://example.com)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read ".len(),
+                head_byte: "Read [docs](https://example.com)".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read docs");
+        assert_eq!(snapshot.selection.range(), "Read ".len().."Read docs".len());
+    }
+
+    #[test]
+    fn insert_link_unwraps_selected_label_inside_markdown_link() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "Read [docs](https://example.com)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read docs");
+        assert_eq!(snapshot.selection.range(), "Read ".len().."Read docs".len());
     }
 
     #[test]
@@ -5831,6 +6540,60 @@ mod tests {
     }
 
     #[test]
+    fn insert_image_unwraps_fully_selected_markdown_image() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](./assets/diagram.png)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ".len(),
+                head_byte: "See ![diagram](./assets/diagram.png)".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See diagram");
+        assert_eq!(snapshot.selection.range(), "See ".len().."See diagram".len());
+    }
+
+    #[test]
+    fn insert_image_unwraps_selected_alt_inside_markdown_image() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![diagram](./assets/diagram.png)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See diagram");
+        assert_eq!(snapshot.selection.range(), "See ".len().."See diagram".len());
+    }
+
+    #[test]
     fn disk_conflict_sets_conflict_state() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5870,7 +6633,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         let doc_text = &snapshot.document_text;
-        assert_eq!(doc_text, "$$\n$$");
+        assert_eq!(doc_text, "$$\n$$\n\n");
         let cursor = snapshot.selection.cursor();
         assert_eq!(cursor, 3, "source cursor should be at byte 3 (start of closing $$)");
 
@@ -5903,7 +6666,7 @@ mod tests {
 
         let snapshot = controller.snapshot();
         let doc_text = &snapshot.document_text;
-        assert!(doc_text.contains("$$\n$$"), "doc should contain math block template: {doc_text}");
+        assert_eq!(doc_text, "Hello\n\n$$\n$$\n\n");
         let cursor = snapshot.selection.cursor();
         let math_start = doc_text.find("$$\n$$").expect("math block in doc");
         assert_eq!(cursor, math_start + 3, "source cursor should be inside math block");

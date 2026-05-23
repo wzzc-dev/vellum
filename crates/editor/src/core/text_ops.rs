@@ -104,10 +104,8 @@ pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
         }
     }
 
-    let list_markers = ["- ", "* ", "+ ", "- [ ] ", "- [x] ", "* [ ] ", "* [x] "];
-    if list_markers
-        .iter()
-        .any(|marker| trimmed.starts_with(marker))
+    if matches!(trimmed.as_bytes(), [b'-' | b'*' | b'+', b' ', ..])
+        || strip_task_marker(trimmed).is_some()
         || ordered_list_marker(trimmed).is_some()
     {
         let updated_indent = if deepen {
@@ -444,7 +442,10 @@ pub(crate) fn set_blockquote_markup(text: &str, enabled: bool) -> String {
 /// `ordered`: true → `1.` style, false → `-` style.
 pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
     let list_markers_unordered = ["- ", "* ", "+ "];
-    let task_markers = ["- [ ] ", "- [x] ", "* [ ] ", "* [x] "];
+    let task_markers = [
+        "- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ", "+ [ ] ",
+        "+ [x] ", "+ [X] ",
+    ];
 
     let mut lines = text.lines();
     let Some(first) = lines.next() else {
@@ -522,25 +523,29 @@ pub(crate) fn set_list_markup(text: &str, ordered: bool) -> String {
 }
 
 pub(crate) fn set_task_list_markup(text: &str) -> String {
-    let mut lines = text.lines();
-    let Some(first) = lines.next() else {
+    if text.is_empty() {
         return "- [ ] ".to_string();
-    };
+    }
 
-    let trimmed = first.trim_start();
-    let indent = &first[..first.len().saturating_sub(trimmed.len())];
+    text.lines()
+        .map(set_task_list_line_markup)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn set_task_list_line_markup(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len().saturating_sub(trimmed.len())];
     let unordered_markers = ["- ", "* ", "+ "];
-    let rest = if text.contains('\n') {
-        text[first.len()..].to_string()
-    } else {
-        String::new()
-    };
 
     let mut checked = false;
     let content = 'strip: {
         if let Some(rest) = strip_task_marker(trimmed) {
             checked = task_marker_is_checked(trimmed).unwrap_or(false);
             break 'strip rest;
+        }
+        if let Some(marker) = ordered_list_marker(trimmed) {
+            break 'strip &trimmed[marker.prefix_len..];
         }
         for marker in unordered_markers {
             if let Some(rest) = trimmed.strip_prefix(marker) {
@@ -551,7 +556,7 @@ pub(crate) fn set_task_list_markup(text: &str) -> String {
     };
 
     let marker = if checked { "- [x]" } else { "- [ ]" };
-    format!("{indent}{marker} {content}{rest}")
+    format!("{indent}{marker} {content}")
 }
 
 fn task_marker_is_checked(trimmed: &str) -> Option<bool> {
@@ -1785,6 +1790,18 @@ mod tests {
     }
 
     #[test]
+    fn adjusts_plus_task_list_markup() {
+        assert_eq!(
+            adjust_block_markup("+ [X] done", true),
+            Some("  + [X] done".to_string())
+        );
+        assert_eq!(
+            adjust_block_markup("  + [X] done", false),
+            Some("+ [X] done".to_string())
+        );
+    }
+
+    #[test]
     fn indents_list_inside_blockquote_without_deepening_quote() {
         let transform = adjust_quoted_list_markup_at_cursor("> - item", "> - item".len(), true)
             .expect("quoted list adjustment");
@@ -1925,6 +1942,12 @@ mod tests {
     }
 
     #[test]
+    fn set_list_markup_strips_plus_task_markers() {
+        assert_eq!(set_list_markup("+ [X] Done", false), "Done");
+        assert_eq!(set_list_markup("+ [X] Done", true), "1. Done");
+    }
+
+    #[test]
     fn set_task_list_markup_converts_typed_marker_to_task() {
         assert_eq!(set_task_list_markup("- [ ] task"), "- [ ] task");
         assert_eq!(set_task_list_markup("- [ ]"), "- [ ] ");
@@ -1932,6 +1955,14 @@ mod tests {
         assert_eq!(set_task_list_markup("+ [X] done"), "- [x] done");
         assert_eq!(set_task_list_markup("+ [X]"), "- [x] ");
         assert_eq!(set_task_list_markup("+ todo"), "- [ ] todo");
+    }
+
+    #[test]
+    fn set_task_list_markup_converts_each_line() {
+        assert_eq!(
+            set_task_list_markup("one\n* two\n3. three"),
+            "- [ ] one\n- [ ] two\n- [ ] three"
+        );
     }
 
     #[test]
