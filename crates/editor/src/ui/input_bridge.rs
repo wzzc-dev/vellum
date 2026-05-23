@@ -323,8 +323,10 @@ fn replace_selected_image_source(
 
 fn image_alt_source_end(text: &str, image_span: &crate::RenderSpan) -> Option<usize> {
     let alt_start = image_span.source_range.start.checked_add(2)?;
-    text[alt_start..]
-        .find(']')
+    let rest = &text[alt_start..];
+    rest
+        .char_indices()
+        .find_map(|(index, ch)| (ch == ']' && !is_escaped_byte(rest, index)).then_some(index))
         .map(|close| alt_start + close)
         .filter(|alt_end| *alt_end <= image_span.source_range.end)
 }
@@ -802,6 +804,194 @@ mod table_reconcile_tests {
                 affinity: SelectionAffinity::Upstream,
             }
         );
+    }
+
+    #[test]
+    fn reconcile_table_visible_input_change_escapes_typed_pipe_in_cell() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        let table_block = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| block.kind == BlockKind::Table)
+            .expect("table block");
+        let table = TableModel::parse(&snapshot.document_text[table_block.content_range.clone()]);
+        let role_cell = table
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("role cell");
+        let insert_at = table_block.content_range.start + role_cell.start + "Lead".len();
+        let visible_insert_at = snapshot.display_map.source_to_visible(insert_at);
+        let mut edited_visible = snapshot.display_map.visible_text.clone();
+        edited_visible.replace_range(visible_insert_at..visible_insert_at, " | Ops");
+
+        let (source_text, selection) = reconcile_visible_input_change(&snapshot, &edited_visible)
+            .expect("table edit should map");
+
+        assert_eq!(
+            source_text,
+            "| Name | Role |\n| --- | --- |\n| Ada | Lead \\| Ops |"
+        );
+        let rebuilt = TableModel::parse("| Name | Role |\n| --- | --- |\n| Ada | Lead \\| Ops |");
+        let rebuilt_role = rebuilt
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("rebuilt role cell");
+        assert_eq!(selection.cursor(), rebuilt_role.start + "Lead \\| Ops".len());
+        assert_eq!(selection.affinity, SelectionAffinity::Upstream);
+    }
+
+    #[test]
+    fn reconcile_table_visible_input_change_preserves_typed_backslash_before_pipe() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        let table_block = snapshot
+            .display_map
+            .blocks
+            .iter()
+            .find(|block| block.kind == BlockKind::Table)
+            .expect("table block");
+        let table = TableModel::parse(&snapshot.document_text[table_block.content_range.clone()]);
+        let role_cell = table
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("role cell");
+        let insert_at = table_block.content_range.start + role_cell.start + "Lead".len();
+        let visible_insert_at = snapshot.display_map.source_to_visible(insert_at);
+        let mut edited_visible = snapshot.display_map.visible_text.clone();
+        edited_visible.replace_range(visible_insert_at..visible_insert_at, r" \| Ops");
+
+        let (source_text, selection) = reconcile_visible_input_change(&snapshot, &edited_visible)
+            .expect("table edit should map");
+
+        assert_eq!(
+            source_text,
+            r"| Name | Role |
+| --- | --- |
+| Ada | Lead \\\| Ops |"
+        );
+
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source_text.clone(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        assert!(
+            snapshot.display_map.visible_text.contains(r"Lead \| Ops"),
+            "visible table text should preserve both the backslash and pipe"
+        );
+        let rebuilt = TableModel::parse(r"| Name | Role |
+| --- | --- |
+| Ada | Lead \\\| Ops |");
+        let rebuilt_role = rebuilt
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("rebuilt role cell");
+        assert_eq!(selection.cursor(), rebuilt_role.start + r"Lead \\\| Ops".len());
+        assert_eq!(selection.affinity, SelectionAffinity::Upstream);
+    }
+
+    #[test]
+    fn reconcile_table_visible_input_change_preserves_typed_backslash() {
+        let source = "| Name | Path |\n| --- | --- |\n| Ada | C: |";
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        let edited_visible = snapshot.display_map.visible_text.replacen("C:", r"C:\tmp", 1);
+
+        let (source_text, _) = reconcile_visible_input_change(&snapshot, &edited_visible)
+            .expect("table edit should map");
+
+        assert_eq!(
+            source_text,
+            r"| Name | Path |
+| --- | --- |
+| Ada | C:\\tmp |"
+        );
+
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source_text,
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        assert!(snapshot.display_map.visible_text.contains(r"C:\tmp"));
+    }
+
+    #[test]
+    fn reconcile_table_visible_input_change_preserves_existing_escaped_pipe() {
+        let source = "| Name | Role |\n| --- | --- |\n| Ada | Lead \\| Ops |";
+        let controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        let snapshot = controller.snapshot();
+        let edited_visible = snapshot.display_map.visible_text.replacen("Ops", "Ops!", 1);
+
+        let (source_text, selection) = reconcile_visible_input_change(&snapshot, &edited_visible)
+            .expect("table edit should map");
+
+        assert_eq!(
+            source_text,
+            "| Name | Role |\n| --- | --- |\n| Ada | Lead \\| Ops! |"
+        );
+        let rebuilt = TableModel::parse("| Name | Role |\n| --- | --- |\n| Ada | Lead \\| Ops! |");
+        let rebuilt_role = rebuilt
+            .cell_source_range(TableCellRef {
+                visible_row: 1,
+                column: 1,
+            })
+            .expect("rebuilt role cell");
+        assert_eq!(selection.cursor(), rebuilt_role.start + "Lead \\| Ops!".len());
+        assert_eq!(selection.affinity, SelectionAffinity::Upstream);
     }
 
     #[test]
@@ -1936,7 +2126,20 @@ fn table_block_for_visible_range<'a>(
 }
 
 fn normalize_table_cell_replacement(replacement: &str) -> String {
-    replacement.replace("\r\n", " ").replace(['\r', '\n'], " ")
+    let single_line = replacement.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    escape_visible_table_cell_text(&single_line)
+}
+
+fn escape_visible_table_cell_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\\"),
+            '|' => escaped.push_str(r"\|"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn normalize_table_local_range(
@@ -2302,6 +2505,34 @@ mod tests {
 
         assert_eq!(updated, "See ![diagram](./assets/new.png \"Diagram\")");
         assert_eq!(selection.cursor(), "See ![diagram](./assets/new.png".len());
+    }
+
+    #[test]
+    fn replacing_image_source_handles_escaped_alt_close() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "See ![a\\]b](./assets/old.png \"Diagram\")".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![a\\]b".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        let snapshot = controller.snapshot();
+        let (updated, selection) = replace_selected_image_source(&snapshot, "./assets/new.png")
+            .expect("selected image alt should update source");
+
+        assert_eq!(updated, "See ![a\\]b](./assets/new.png \"Diagram\")");
+        assert_eq!(selection.cursor(), "See ![a\\]b](./assets/new.png".len());
     }
 
     #[test]

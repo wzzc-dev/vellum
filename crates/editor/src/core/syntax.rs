@@ -681,9 +681,9 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
         }
 
         if rest.starts_with('[')
-            && let Some(close) = rest.find(']')
+            && let Some(close) = find_unescaped_char(rest, ']')
             && rest[close + 1..].starts_with('(')
-            && let Some(end_paren) = rest[close + 2..].find(')')
+            && let Some(end_paren) = find_unescaped_char(&rest[close + 2..], ')')
         {
             let mut link = style.clone();
             link.link = true;
@@ -693,7 +693,7 @@ fn parse_inline_segments_into(text: &str, style: &InlineStyle, segments: &mut Ve
         }
 
         if rest.starts_with('<')
-            && let Some(close) = rest.find('>')
+            && let Some(close) = find_unescaped_char(rest, '>')
             && close > 1
             && rest[1..close].contains([':', '@'])
         {
@@ -746,6 +746,22 @@ fn push_inline_text(segments: &mut Vec<InlineSegment>, text: String, style: &Inl
         text,
         style: style.clone(),
     });
+}
+
+fn find_unescaped_char(text: &str, needle: char) -> Option<usize> {
+    text.char_indices()
+        .find_map(|(index, ch)| (ch == needle && !is_escaped_byte(text, index)).then_some(index))
+}
+
+fn is_escaped_byte(text: &str, index: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut slash_count = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slash_count += 1;
+        cursor -= 1;
+    }
+    slash_count % 2 == 1
 }
 
 fn find_child_by_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
@@ -1160,6 +1176,25 @@ mod tests {
         assert_eq!(content[5].text, "delta");
         assert!(content[7].style.link);
         assert_eq!(content[7].text, "link");
+    }
+
+    #[test]
+    fn inline_preview_link_ignores_escaped_label_and_target_closers() {
+        let source = Rope::from_str(r"Read [a\]b](https://example.com/a\)b) now");
+        let mut syntax = SyntaxState::from_source(&source);
+        let seeds = syntax.block_seeds(&source);
+        let preview = syntax
+            .preview_for_content_range(&seeds[0].content_range)
+            .expect("preview");
+
+        let PreviewBlock::Paragraph { content } = preview else {
+            panic!("expected paragraph preview");
+        };
+
+        assert_eq!(content[0].text, "Read ");
+        assert!(content[1].style.link);
+        assert_eq!(content[1].text, "a]b");
+        assert_eq!(content[2].text, " now");
     }
 
     #[test]

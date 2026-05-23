@@ -643,11 +643,8 @@ pub(crate) fn detect_auto_format(kind: &BlockKind, text: &str) -> Option<AutoFor
         return Some(action);
     }
 
-    if trimmed.len() >= 3 {
-        let first = trimmed.chars().next()?;
-        if (first == '-' || first == '*' || first == '_') && trimmed.chars().all(|c| c == first) {
-            return Some(AutoFormatAction::HorizontalRule);
-        }
+    if is_thematic_break_marker(trimmed) {
+        return Some(AutoFormatAction::HorizontalRule);
     }
 
     {
@@ -813,11 +810,11 @@ pub(crate) fn pipe_table_enter_transform(
 }
 
 fn normalized_pipe_table_header(text: &str) -> Option<String> {
-    if text.starts_with('|') && text.ends_with('|') {
-        return Some(text.to_string());
+    let trimmed = text.trim();
+    if trimmed.starts_with('|') && trimmed.ends_with('|') {
+        return Some(trimmed.to_string());
     }
 
-    let trimmed = text.trim();
     if trimmed.starts_with('|') || trimmed.ends_with('|') || unescaped_pipe_count(trimmed) == 0 {
         return None;
     }
@@ -939,10 +936,32 @@ fn thematic_break_enter_transform(text: &str, cursor_offset: usize) -> SemanticE
     if cursor_offset < text.len() {
         return split_block_transform(text, cursor_offset);
     }
+    let text = text.trim();
     SemanticEnterTransform {
         replacement: format!("{text}\n\n"),
         cursor_offset: text.len() + 2,
     }
+}
+
+pub(crate) fn is_thematic_break_marker(text: &str) -> bool {
+    let mut marker = None;
+    let mut marker_count = 0usize;
+
+    for ch in text.chars() {
+        if ch == ' ' || ch == '\t' {
+            continue;
+        }
+        if ch != '-' && ch != '*' && ch != '_' {
+            return false;
+        }
+        if marker.is_some_and(|marker| marker != ch) {
+            return false;
+        }
+        marker = Some(ch);
+        marker_count += 1;
+    }
+
+    marker_count >= 3
 }
 
 fn toc_enter_transform(text: &str, cursor_offset: usize) -> SemanticEnterTransform {
@@ -1111,9 +1130,9 @@ fn code_fence_enter_transform(text: &str, cursor_offset: usize) -> Option<Semant
         && cursor_offset == line_end
         && let Some(marker) = opening_fence_marker(trimmed)
     {
-        let replacement = format!("{line}\n\n{marker}");
+        let replacement = format!("{trimmed}\n\n{marker}");
         return Some(SemanticEnterTransform {
-            cursor_offset: line.len() + 1,
+            cursor_offset: trimmed.len() + 1,
             replacement,
         });
     }
@@ -2064,6 +2083,15 @@ mod tests {
     }
 
     #[test]
+    fn pipe_table_enter_accepts_outer_pipes_with_surrounding_spaces() {
+        let transform =
+            pipe_table_enter_transform(&BlockKind::Paragraph, "  | a | b |  ", None, 13).unwrap();
+
+        assert_eq!(transform.replacement, "| a | b |\n| --- | --- |\n|  |  |");
+        assert_eq!(transform.cursor_offset, "| a | b |\n| --- | --- |\n|".len());
+    }
+
+    #[test]
     fn pipe_table_enter_does_not_trigger_for_invalid_shapes() {
         assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "| a |", None, 5).is_none());
         assert!(pipe_table_enter_transform(&BlockKind::Paragraph, "a \\| b", None, 6).is_none());
@@ -2368,6 +2396,19 @@ mod tests {
             detect_auto_format(&BlockKind::Paragraph, "------"),
             Some(AutoFormatAction::HorizontalRule)
         );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "  * * *  "),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- - -"),
+            Some(AutoFormatAction::HorizontalRule)
+        );
+        assert_eq!(
+            detect_auto_format(&BlockKind::Paragraph, "- -"),
+            Some(AutoFormatAction::BulletList)
+        );
+        assert_eq!(detect_auto_format(&BlockKind::Paragraph, "--x"), None);
     }
 
     #[test]
@@ -2400,6 +2441,15 @@ mod tests {
                 info: "js".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn code_fence_block_enter_trims_surrounding_marker_spaces() {
+        let transform = code_fence_enter_transform("  ```rust  ", "  ```rust  ".len())
+            .expect("code fence transform");
+
+        assert_eq!(transform.replacement, "```rust\n\n```");
+        assert_eq!(transform.cursor_offset, "```rust\n".len());
     }
 
     #[test]

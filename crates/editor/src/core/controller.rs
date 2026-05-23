@@ -19,9 +19,9 @@ use super::{
         adjust_quoted_list_markup_at_cursor, adjust_selected_list_markup,
         adjust_selected_quoted_list_markup, byte_offset_for_line_column, clamp_to_char_boundary,
         compute_document_diff, count_document_words, detect_auto_format,
-        line_column_for_byte_offset, opening_fence_marker, pipe_table_enter_transform,
-        semantic_enter_transform, set_blockquote_markup, set_heading_markup, set_list_markup,
-        set_task_list_markup,
+        is_thematic_break_marker, line_column_for_byte_offset, opening_fence_marker,
+        pipe_table_enter_transform, semantic_enter_transform, set_blockquote_markup,
+        set_heading_markup, set_list_markup, set_task_list_markup,
     },
 };
 
@@ -1172,6 +1172,21 @@ impl EditorController {
         {
             return effect;
         }
+        if !plain
+            && range.is_empty()
+            && let Some(effect) = self.close_thematic_break_marker_line(range.start)
+        {
+            return effect;
+        }
+        if !plain
+            && range.is_empty()
+            && current_block
+                .as_ref()
+                .is_some_and(|block| matches!(block.kind, BlockKind::Raw | BlockKind::Paragraph))
+            && let Some(effect) = self.close_math_block_marker_line(range.start)
+        {
+            return effect;
+        }
 
         if !plain
             && range.is_empty()
@@ -1485,7 +1500,8 @@ impl EditorController {
                 && document_text[..range.start].ends_with('[')
                 && range.end < document_text.len()
                 && document_text[range.end..].starts_with("](")
-                && let Some(close_offset) = document_text[range.end + 2..].find(')')
+                && let Some(close_offset) =
+                    find_unescaped_char(&document_text[range.end + 2..], ')')
             {
                 let label = selected_text;
                 let edit_start = range.start - 1;
@@ -1554,7 +1570,8 @@ impl EditorController {
                 && document_text[..range.start].ends_with("![")
                 && range.end < document_text.len()
                 && document_text[range.end..].starts_with("](")
-                && let Some(close_offset) = document_text[range.end + 2..].find(')')
+                && let Some(close_offset) =
+                    find_unescaped_char(&document_text[range.end + 2..], ')')
             {
                 let alt = selected_text;
                 let edit_start = range.start - 2;
@@ -1688,14 +1705,56 @@ impl EditorController {
             return None;
         }
         let line = &text[line_start..line_end];
-        let marker = opening_fence_marker(line.trim())?;
-        let replacement = format!("{line}\n\n{marker}");
-        let selection_after = SelectionState::collapsed(line_start + line.len() + 1);
+        let trimmed = line.trim();
+        let marker = opening_fence_marker(trimmed)?;
+        let replacement = format!("{trimmed}\n\n{marker}");
+        let selection_after = SelectionState::collapsed(line_start + trimmed.len() + 1);
         Some(self.apply_edit(
             line_start..line_end,
             replacement,
             selection_after,
             "Inserted code fence",
+        ))
+    }
+
+    fn close_thematic_break_marker_line(&mut self, cursor: usize) -> Option<EditorEffects> {
+        let text = self.document.text();
+        let cursor = clamp_to_char_boundary(&text, cursor);
+        let (line_start, line_end) = line_bounds_in_text(&text, cursor);
+        if cursor != line_end {
+            return None;
+        }
+        let line = &text[line_start..line_end];
+        if !is_thematic_break_marker(line.trim()) {
+            return None;
+        }
+        let selection_after = SelectionState::collapsed(line_start + "---\n\n".len());
+        Some(self.apply_edit(
+            line_start..line_end,
+            "---\n\n".to_string(),
+            selection_after,
+            "Inserted horizontal rule",
+        ))
+    }
+
+    fn close_math_block_marker_line(&mut self, cursor: usize) -> Option<EditorEffects> {
+        let text = self.document.text();
+        let cursor = clamp_to_char_boundary(&text, cursor);
+        let (line_start, line_end) = line_bounds_in_text(&text, cursor);
+        if cursor != line_end {
+            return None;
+        }
+        let line = &text[line_start..line_end];
+        if line.trim() != "$$" {
+            return None;
+        }
+        let template = "$$\n$$\n\n";
+        let selection_after = SelectionState::collapsed(line_start + "$$\n".len());
+        Some(self.apply_edit(
+            line_start..line_end,
+            template.to_string(),
+            selection_after,
+            "Inserted math block",
         ))
     }
 
@@ -3108,12 +3167,12 @@ fn selected_markdown_link_label(text: &str) -> Option<String> {
         return None;
     }
 
-    let close_label = text.find("](")?;
+    let close_label = find_unescaped_markdown_label_close(text)?;
     if close_label == 0 || close_label + 2 >= text.len().saturating_sub(1) {
         return None;
     }
 
-    Some(text[1..close_label].to_string())
+    Some(unescape_markdown_label(&text[1..close_label]))
 }
 
 fn selected_markdown_image_alt(text: &str) -> Option<String> {
@@ -3121,12 +3180,52 @@ fn selected_markdown_image_alt(text: &str) -> Option<String> {
         return None;
     }
 
-    let close_alt = text.find("](")?;
+    let close_alt = find_unescaped_markdown_label_close(text)?;
     if close_alt <= 1 || close_alt + 2 >= text.len().saturating_sub(1) {
         return None;
     }
 
-    Some(text[2..close_alt].to_string())
+    Some(unescape_markdown_label(&text[2..close_alt]))
+}
+
+fn find_unescaped_markdown_label_close(text: &str) -> Option<usize> {
+    text.char_indices().find_map(|(index, ch)| {
+        (ch == ']'
+            && text[index + ch.len_utf8()..].starts_with('(')
+            && !is_escaped_byte(text, index))
+        .then_some(index)
+    })
+}
+
+fn find_unescaped_char(text: &str, needle: char) -> Option<usize> {
+    text.char_indices()
+        .find_map(|(index, ch)| (ch == needle && !is_escaped_byte(text, index)).then_some(index))
+}
+
+fn unescape_markdown_label(text: &str) -> String {
+    let mut unescaped = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(next) = chars.next()
+        {
+            unescaped.push(next);
+            continue;
+        }
+        unescaped.push(ch);
+    }
+    unescaped
+}
+
+fn is_escaped_byte(text: &str, index: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut slash_count = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slash_count += 1;
+        cursor -= 1;
+    }
+    slash_count % 2 == 1
 }
 
 fn file_modified_at(path: &Path) -> Option<SystemTime> {
@@ -5310,6 +5409,40 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_spaced_pipe_row_builds_trimmed_table() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "  | Name | Role |  ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("  | Name | Role |  ".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            "| Name | Role |\n| --- | --- |\n|  |  |"
+        );
+        let table = crate::core::table::TableModel::parse(
+            "| Name | Role |\n| --- | --- |\n|  |  |",
+        );
+        let first_body_cell = table
+            .cell_source_range(crate::core::table::TableCellRef {
+                visible_row: 1,
+                column: 0,
+            })
+            .expect("first body cell");
+        assert_eq!(snapshot.selection.cursor(), first_body_cell.start);
+    }
+
+    #[test]
     fn navigate_table_forward_appends_row_from_last_cell() {
         let source = "| Name | Role |\n| --- | --- |\n| Ada | Eng |";
         let mut controller = EditorController::new(
@@ -5826,6 +5959,32 @@ mod tests {
     }
 
     #[test]
+    fn enter_after_spaced_horizontal_rule_marker_normalizes_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "  * * *  ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("  * * *  ".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "---\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("---\n\n".len()));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::ThematicBreak
+        ));
+    }
+
+    #[test]
     fn insert_code_fence_places_cursor_on_empty_body_line() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -5903,6 +6062,32 @@ mod tests {
         );
         controller.dispatch(EditCommand::SetSelection {
             selection: SelectionState::collapsed("```rust".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "```rust\n\n```");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("```rust\n".len()));
+        assert!(matches!(
+            snapshot.blocks[0].kind,
+            crate::BlockKind::CodeFence { ref language } if language.as_deref() == Some("rust")
+        ));
+    }
+
+    #[test]
+    fn enter_after_spaced_code_fence_trims_opening_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "  ```rust  ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("  ```rust  ".len()),
         });
 
         controller.dispatch(EditCommand::InsertBreak { plain: false });
@@ -6491,12 +6676,66 @@ mod tests {
     }
 
     #[test]
+    fn insert_link_unwraps_escaped_selected_markdown_link_label() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"Read [a\]b](https://example.com)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read ".len(),
+                head_byte: r"Read [a\]b](https://example.com)".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read a]b");
+        assert_eq!(snapshot.selection.range(), "Read ".len().."Read a]b".len());
+    }
+
+    #[test]
     fn insert_link_unwraps_selected_label_inside_markdown_link() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
                 suggested_path: None,
                 text: "Read [docs](https://example.com)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read [".len(),
+                head_byte: "Read [docs".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "Read docs");
+        assert_eq!(snapshot.selection.range(), "Read ".len().."Read docs".len());
+    }
+
+    #[test]
+    fn insert_link_unwraps_selected_label_with_escaped_destination_close() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"Read [docs](https://example.com/a\)b)".to_string(),
                 modified_at: None,
             },
             SyncPolicy::default(),
@@ -6717,12 +6956,66 @@ mod tests {
     }
 
     #[test]
+    fn insert_image_unwraps_escaped_selected_markdown_image_alt() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"See ![a\]b](./assets/diagram.png)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ".len(),
+                head_byte: r"See ![a\]b](./assets/diagram.png)".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See a]b");
+        assert_eq!(snapshot.selection.range(), "See ".len().."See a]b".len());
+    }
+
+    #[test]
     fn insert_image_unwraps_selected_alt_inside_markdown_image() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
                 path: None,
                 suggested_path: None,
                 text: "See ![diagram](./assets/diagram.png)".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ![".len(),
+                head_byte: "See ![diagram".len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "See diagram");
+        assert_eq!(snapshot.selection.range(), "See ".len().."See diagram".len());
+    }
+
+    #[test]
+    fn insert_image_unwraps_selected_alt_with_escaped_source_close() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: r"See ![diagram](./assets/old\)name.png)".to_string(),
                 modified_at: None,
             },
             SyncPolicy::default(),
@@ -6835,6 +7128,29 @@ mod tests {
         );
         controller.dispatch(EditCommand::SetSelection {
             selection: SelectionState::collapsed("$$".len()),
+        });
+
+        controller.dispatch(EditCommand::InsertBreak { plain: false });
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, "$$\n$$\n\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("$$\n".len()));
+        assert!(matches!(snapshot.blocks[0].kind, crate::BlockKind::MathBlock));
+    }
+
+    #[test]
+    fn enter_after_spaced_math_marker_trims_opening_line() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: "  $$  ".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState::collapsed("  $$  ".len()),
         });
 
         controller.dispatch(EditCommand::InsertBreak { plain: false });

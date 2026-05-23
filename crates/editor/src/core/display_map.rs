@@ -1791,13 +1791,13 @@ fn parse_inline_tokens_into(
         }
 
         if rest.starts_with("![")
-            && let Some(close) = rest.find(']')
+            && let Some(close) = find_unescaped_char(rest, ']')
             && rest[close + 1..].starts_with('(')
-            && let Some(close_paren) = rest[close + 2..].find(')')
+            && let Some(close_paren) = find_unescaped_char(&rest[close + 2..], ')')
         {
             let source_end = close + 3 + close_paren;
             let source = &rest[..source_end];
-            let alt = rest[2..close].to_string();
+            let alt = unescape_markdown_label(&rest[2..close]);
             let raw_target = &rest[close + 2..close + 2 + close_paren];
             let (src, title) = parse_link_destination_and_title(raw_target);
             tokens.push(InlineToken {
@@ -1857,10 +1857,10 @@ fn parse_inline_tokens_into(
         }
 
         if rest.starts_with("[^")
-            && let Some(close) = rest.find(']')
+            && let Some(close) = find_unescaped_char(rest, ']')
         {
             let source = &rest[..close + 1];
-            let label = &rest[2..close];
+            let label = unescape_markdown_label(&rest[2..close]);
             tokens.push(InlineToken {
                 local_range: base_offset + offset..base_offset + offset + source.len(),
                 reveal_range: Some(offset..offset + source.len()),
@@ -1872,7 +1872,7 @@ fn parse_inline_tokens_into(
                     ..style
                 },
                 meta: Some(RenderSpanMeta::ReferenceLink {
-                    label: label.to_string(),
+                    label,
                 }),
             });
             offset += source.len();
@@ -1880,9 +1880,9 @@ fn parse_inline_tokens_into(
         }
 
         if rest.starts_with('[')
-            && let Some(close) = rest.find(']')
+            && let Some(close) = find_unescaped_char(rest, ']')
             && rest[close + 1..].starts_with('(')
-            && let Some(close_paren) = rest[close + 2..].find(')')
+            && let Some(close_paren) = find_unescaped_char(&rest[close + 2..], ')')
         {
             let inner_start = offset + 1;
             let inner_end = offset + close;
@@ -2103,10 +2103,34 @@ fn push_escaped_text_token(
     });
 }
 
+fn find_unescaped_char(text: &str, needle: char) -> Option<usize> {
+    text.char_indices()
+        .find_map(|(index, ch)| (ch == needle && !is_escaped_byte(text, index)).then_some(index))
+}
+
+fn is_escaped_byte(text: &str, index: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut slash_count = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slash_count += 1;
+        cursor -= 1;
+    }
+    slash_count % 2 == 1
+}
+
 fn parse_link_destination_and_title(raw: &str) -> (String, Option<String>) {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return (String::new(), None);
+    }
+
+    if let Some(after_open) = trimmed.strip_prefix('<')
+        && let Some(close) = find_unescaped_char(after_open, '>')
+    {
+        let target = after_open[..close].to_string();
+        let title = parse_link_title(&after_open[close + 1..]);
+        return (target, title);
     }
 
     let mut parts = trimmed.splitn(2, char::is_whitespace);
@@ -2115,12 +2139,29 @@ fn parse_link_destination_and_title(raw: &str) -> (String, Option<String>) {
         .unwrap_or_default()
         .trim_matches(['<', '>'])
         .to_string();
-    let title = parts.next().and_then(|rest| {
-        let title = rest.trim().trim_matches(['"', '\'', '(', ')']).to_string();
-        (!title.is_empty()).then_some(title)
-    });
+    let title = parts.next().and_then(parse_link_title);
 
     (target, title)
+}
+
+fn parse_link_title(raw: &str) -> Option<String> {
+    let title = raw.trim().trim_matches(['"', '\'', '(', ')']).to_string();
+    (!title.is_empty()).then_some(title)
+}
+
+fn unescape_markdown_label(raw: &str) -> String {
+    let mut unescaped = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(next) = chars.next()
+        {
+            unescaped.push(next);
+            continue;
+        }
+        unescaped.push(ch);
+    }
+    unescaped
 }
 
 fn footnote_definition_parts(text: &str) -> (usize, usize) {
@@ -2525,6 +2566,20 @@ mod tests {
     }
 
     #[test]
+    fn footnote_reference_ignores_escaped_label_close() {
+        let doc = DocumentBuffer::from_text(r"Use note[^a\]b] now");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "Use note[a]b] now");
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::ReferenceLink { ref label }) if label == "a]b"
+            )
+        }));
+    }
+
+    #[test]
     fn visible_to_source_returns_monotonic_hit_result() {
         let doc = DocumentBuffer::from_text("# Heading");
         let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
@@ -2744,6 +2799,70 @@ mod tests {
                 .iter()
                 .any(|span| span.hidden && span.source_text == "`")
         );
+    }
+
+    #[test]
+    fn link_display_map_ignores_escaped_label_and_target_closers() {
+        let doc = DocumentBuffer::from_text(r"[a\]b](https://example.com/a\)b)");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "a]b");
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Link { ref target, .. }) if target == r"https://example.com/a\)b"
+            )
+        }));
+    }
+
+    #[test]
+    fn link_display_map_keeps_spaced_angle_target() {
+        let doc = DocumentBuffer::from_text(r#"[file](<./my file.md> "Local file")"#);
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "file");
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Link { ref target, ref title })
+                    if target == "./my file.md" && title.as_deref() == Some("Local file")
+            )
+        }));
+    }
+
+    #[test]
+    fn image_display_map_ignores_escaped_alt_and_source_closers() {
+        let doc = DocumentBuffer::from_text(r"![a\]b](./image\)name.png)");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "[image: a]b]");
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref alt, .. }) if alt == "a]b"
+            )
+        }));
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, .. }) if src == r"./image\)name.png"
+            )
+        }));
+    }
+
+    #[test]
+    fn image_display_map_keeps_spaced_angle_source() {
+        let doc = DocumentBuffer::from_text(r#"![diagram](<./my image.png> "Diagram")"#);
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.visible_text, "[image: diagram]");
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, ref title, .. })
+                    if src == "./my image.png" && title.as_deref() == Some("Diagram")
+            )
+        }));
     }
 
     #[test]
