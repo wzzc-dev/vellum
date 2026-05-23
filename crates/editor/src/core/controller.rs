@@ -1385,6 +1385,18 @@ impl EditorController {
         let range = self.selection.range();
         let selected_text = self.document.text_for_range(range.clone());
         let url_placeholder = "https://";
+        if is_url_like(&selected_text) {
+            let label_placeholder = "text";
+            let destination = Self::escape_link_destination(&selected_text);
+            let replacement = format!("[{label_placeholder}]({destination})");
+            let selection_after = SelectionState {
+                anchor_byte: range.start + 1 + label_placeholder.len(),
+                head_byte: range.start + 1,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            };
+            return self.apply_edit(range, replacement, selection_after, "Inserted link");
+        }
         let raw_label = if selected_text.is_empty() {
             "text"
         } else {
@@ -1406,6 +1418,18 @@ impl EditorController {
         let range = self.selection.range();
         let selected_text = self.document.text_for_range(range.clone());
         let url_placeholder = "image.png";
+        if is_url_like(&selected_text) {
+            let alt_placeholder = "alt";
+            let destination = Self::escape_link_destination(&selected_text);
+            let replacement = format!("![{alt_placeholder}]({destination})");
+            let selection_after = SelectionState {
+                anchor_byte: range.start + 2 + alt_placeholder.len(),
+                head_byte: range.start + 2,
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            };
+            return self.apply_edit(range, replacement, selection_after, "Inserted image");
+        }
         let raw_alt = if selected_text.is_empty() {
             "alt"
         } else {
@@ -1466,6 +1490,10 @@ impl EditorController {
 
     fn escape_link_label(text: &str) -> String {
         text.replace('\\', r"\\").replace(']', r"\]")
+    }
+
+    fn escape_link_destination(text: &str) -> String {
+        text.replace('\\', r"\\").replace(')', r"\)")
     }
 
     fn adjust_current_block(&mut self, deepen: bool) -> EditorEffects {
@@ -2629,6 +2657,17 @@ fn next_footnote_label(text: &str) -> usize {
     }
 
     max_label + 1
+}
+
+fn is_url_like(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has_supported_scheme = lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:");
+    has_supported_scheme
+        && text
+            .chars()
+            .all(|ch| !ch.is_whitespace() && !ch.is_control())
 }
 
 fn file_modified_at(path: &Path) -> Option<SystemTime> {
@@ -4861,6 +4900,34 @@ mod tests {
     }
 
     #[test]
+    fn insert_link_with_selected_url_uses_it_as_destination() {
+        let source = "Read https://example.com/a)b";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "Read ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertLink);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.document_text, r"Read [text](https://example.com/a\)b)");
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "text");
+    }
+
+    #[test]
     fn insert_link_with_collapsed_selection_creates_editable_label_and_selects_url() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
@@ -4939,6 +5006,37 @@ mod tests {
             &snapshot.document_text[snapshot.selection.range()],
             "image.png"
         );
+    }
+
+    #[test]
+    fn insert_image_with_selected_url_uses_it_as_source() {
+        let source = "See https://example.com/image).png";
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: None,
+                suggested_path: None,
+                text: source.to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+        controller.dispatch(EditCommand::SetSelection {
+            selection: SelectionState {
+                anchor_byte: "See ".len(),
+                head_byte: source.len(),
+                preferred_column: None,
+                affinity: SelectionAffinity::Downstream,
+            },
+        });
+
+        controller.dispatch(EditCommand::InsertImage);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(
+            snapshot.document_text,
+            r"See ![alt](https://example.com/image\).png)"
+        );
+        assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
     }
 
     #[test]
