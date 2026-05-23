@@ -127,6 +127,27 @@ fn detect_link_paste_opportunity(
     Some(replacement.to_string())
 }
 
+fn detect_image_paste_opportunity(
+    old_visible: &str,
+    new_visible: &str,
+    old_selection: &SelectionState,
+) -> Option<String> {
+    if old_selection.is_collapsed() {
+        return None;
+    }
+
+    let (range, replacement) = compute_document_diff(old_visible, new_visible)?;
+    if range != old_selection.range() {
+        return None;
+    }
+
+    if !looks_like_image_path(&replacement) {
+        return None;
+    }
+
+    Some(replacement.to_string())
+}
+
 fn is_url_like(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let has_supported_scheme = lower.starts_with("http://")
@@ -144,6 +165,36 @@ fn markdown_link(label: &str, destination: &str) -> String {
         "[{}]({})",
         escape_link_label(label),
         escape_link_destination(destination)
+    )
+}
+
+fn markdown_image(alt: &str, destination: &str) -> String {
+    format!(
+        "![{}]({})",
+        escape_link_label(alt),
+        escape_link_destination(destination)
+    )
+}
+
+fn looks_like_image_path(text: &str) -> bool {
+    if text.trim() != text || text.chars().any(char::is_control) {
+        return false;
+    }
+
+    let candidate = text
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(text)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(text);
+    let Some((_, ext)) = candidate.rsplit_once('.') else {
+        return false;
+    };
+
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
     )
 }
 
@@ -318,8 +369,28 @@ impl MarkdownEditor {
                 &visible_text,
                 &mirrored_selection,
             );
+            let image_paste_opportunity = detect_image_paste_opportunity(
+                &self.snapshot.display_map.visible_text,
+                &visible_text,
+                &mirrored_selection,
+            );
 
-            if let Some(url) = link_paste_opportunity {
+            if let Some(path) = image_paste_opportunity {
+                self.syncing_input = true;
+                self.document_input.update(cx, |input, cx| {
+                    input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
+                });
+                self.syncing_input = false;
+
+                let selected_text = self
+                    .snapshot
+                    .document_text
+                    .get(self.snapshot.selection.range())
+                    .unwrap_or("");
+                let replacement = markdown_image(selected_text, &path);
+                self.controller
+                    .dispatch(EditCommand::ReplaceSelection { text: replacement })
+            } else if let Some(url) = link_paste_opportunity {
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
                     input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
@@ -1791,6 +1862,57 @@ mod tests {
     }
 
     #[test]
+    fn detects_image_path_paste_over_selection() {
+        let old_visible = "See diagram";
+        let new_visible = "See ./assets/diagram.png";
+        let selection = SelectionState {
+            anchor_byte: 4,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_image_paste_opportunity(old_visible, new_visible, &selection),
+            Some("./assets/diagram.png".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_image_url_paste_over_selection() {
+        let old_visible = "See diagram";
+        let new_visible = "See https://example.com/diagram.svg";
+        let selection = SelectionState {
+            anchor_byte: 4,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_image_paste_opportunity(old_visible, new_visible, &selection),
+            Some("https://example.com/diagram.svg".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_non_image_path_paste_over_selection() {
+        let old_visible = "See diagram";
+        let new_visible = "See ./assets/readme.md";
+        let selection = SelectionState {
+            anchor_byte: 4,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_image_paste_opportunity(old_visible, new_visible, &selection),
+            None
+        );
+    }
+
+    #[test]
     fn ignores_url_paste_with_surrounding_whitespace() {
         let old_visible = "Read docs";
         let new_visible = "Read  https://example.com ";
@@ -1993,6 +2115,14 @@ mod tests {
         assert_eq!(
             markdown_link(r"a\]b", r"https://example.com/a\)b"),
             r"[a\\\]b](https://example.com/a\\\)b)"
+        );
+    }
+
+    #[test]
+    fn escapes_smart_paste_image_parts() {
+        assert_eq!(
+            markdown_image(r"a\]b", r"./assets/my pic(1).png"),
+            r"![a\\\]b](./assets/my pic(1\).png)"
         );
     }
 
