@@ -8,6 +8,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the editor shows a quiet live preview view and the document remains editable.
 - Confirm the outline sidebar lists the top-level title and each section heading.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
+- Confirm the Mermaid block shows a structured preview when the cursor leaves it and returns to source editing when clicked.
 - Save, close the tab, reopen the file, and confirm the edits persist.
 
 ## Assets

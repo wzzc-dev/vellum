@@ -21,8 +21,8 @@ use gpui_component::{
 };
 
 use crate::{
-    BlockKind, EditCommand, RenderBlock, RenderSpan, RenderSpanKind, RenderSpanMeta,
-    SelectionState,
+    BlockKind, EditCommand, EmbeddedNodeKind, RenderBlock, RenderSpan, RenderSpanKind,
+    RenderSpanMeta, SelectionState,
     core::{
         controller::EditorSnapshot,
         table::{TABLE_COLUMN_GAP, TableModel, char_display_width, str_display_width},
@@ -151,6 +151,26 @@ enum ResolvedImageSource {
     Uri(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct MermaidPreview {
+    direction: Option<String>,
+    edges: Vec<MermaidEdge>,
+    unsupported_lines: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidEdge {
+    from: MermaidNode,
+    to: MermaidNode,
+    label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidNode {
+    id: String,
+    label: String,
+}
+
 #[derive(Debug, Clone)]
 struct TableSurfaceLayout {
     row_tops: Vec<gpui::Pixels>,
@@ -275,8 +295,10 @@ impl MarkdownEditor {
             .find(|(_, block)| block.id == block_id)
             .map(|(index, block)| (index, block.clone()))?;
 
-        let source_offset = if should_render_image_preview(&block, selection_range) {
+        let source_offset = if should_render_image_preview(&block, selection_range.clone()) {
             image_edit_cursor_offset(&block)
+        } else if should_render_mermaid_preview(&block, selection_range) {
+            mermaid_edit_cursor_offset(&block)
         } else {
             let local_visible_offset = visible_byte_offset_for_click_position(
                 &self.snapshot.display_map.blocks,
@@ -912,6 +934,7 @@ fn render_display_block(
     let show_table_toolbar =
         matches!(block.kind, BlockKind::Table) && selection_is_within_render_block(snapshot, block);
     let show_image_preview = should_render_image_preview(block, snapshot.selection.range());
+    let show_mermaid_preview = should_render_mermaid_preview(block, snapshot.selection.range());
 
     let text_content = if show_placeholder {
         div()
@@ -936,6 +959,7 @@ fn render_display_block(
             BlockKind::ThematicBreak => render_thematic_break(palette),
             BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
+            _ if show_mermaid_preview => render_mermaid_block(block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -1794,6 +1818,337 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
         .into_any_element()
 }
 
+fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyElement {
+    let source = rendered_text_for_block(block);
+    let preview = parse_mermaid_preview(&source);
+
+    let mut header = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.muted_text_color)
+                .child("Mermaid"),
+        );
+
+    if let Some(direction) = &preview.direction {
+        header = header.child(render_mermaid_chip(direction.clone(), palette));
+    }
+
+    if !preview.edges.is_empty() {
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!("{} links", preview.edges.len())),
+        );
+    }
+
+    let mut body = div().w_full().flex().flex_col().gap_2();
+    if preview.edges.is_empty() {
+        body = body.child(render_mermaid_source_fallback(&source, palette));
+    } else {
+        for edge in preview.edges.iter().take(8) {
+            body = body.child(render_mermaid_edge_row(edge, palette));
+        }
+        if preview.edges.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!("+{} more links", preview.edges.len() - 8)),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
+    }
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .px_3()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(header)
+        .child(body)
+        .into_any_element()
+}
+
+fn render_mermaid_edge_row(edge: &MermaidEdge, palette: RenderPalette) -> AnyElement {
+    let mut connector = div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .text_color(palette.muted_text_color)
+        .child(
+            div()
+                .font_family(MONOSPACE_FONT_FAMILY)
+                .text_size(px(BODY_FONT_SIZE))
+                .child("->"),
+        );
+
+    if let Some(label) = &edge.label {
+        connector = connector.child(render_mermaid_chip(label.clone(), palette));
+    }
+
+    div()
+        .w_full()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_2()
+        .py_1()
+        .child(render_mermaid_node_chip(&edge.from, palette))
+        .child(connector)
+        .child(render_mermaid_node_chip(&edge.to, palette))
+        .into_any_element()
+}
+
+fn render_mermaid_node_chip(node: &MermaidNode, palette: RenderPalette) -> AnyElement {
+    let label = if node.id == node.label {
+        node.label.clone()
+    } else {
+        format!("{} ({})", node.label, node.id)
+    };
+
+    div()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.05))
+        .px_2()
+        .py_1()
+        .text_size(px(BODY_FONT_SIZE))
+        .line_height(px(BODY_LINE_HEIGHT))
+        .text_color(palette.text_color)
+        .child(label)
+        .into_any_element()
+}
+
+fn render_mermaid_chip(label: String, palette: RenderPalette) -> AnyElement {
+    div()
+        .rounded(px(6.))
+        .bg(palette.text_color.opacity(0.06))
+        .px_2()
+        .py(px(2.))
+        .text_sm()
+        .line_height(px(BODY_LINE_HEIGHT))
+        .text_color(palette.muted_text_color)
+        .child(label)
+        .into_any_element()
+}
+
+fn render_mermaid_source_fallback(source: &str, palette: RenderPalette) -> AnyElement {
+    let source = if source.trim().is_empty() {
+        "Empty Mermaid diagram".to_string()
+    } else {
+        source.trim().to_string()
+    };
+
+    div()
+        .w_full()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.03))
+        .px_3()
+        .py_2()
+        .font_family(MONOSPACE_FONT_FAMILY)
+        .text_size(px(BODY_FONT_SIZE))
+        .line_height(px(BODY_LINE_HEIGHT))
+        .text_color(palette.text_color)
+        .child(source)
+        .into_any_element()
+}
+
+fn parse_mermaid_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if let Some(direction) = mermaid_direction(line) {
+            preview.direction = Some(direction);
+            continue;
+        }
+
+        if is_mermaid_non_edge_directive(line) {
+            continue;
+        }
+
+        if let Some(edge) = parse_mermaid_edge(line) {
+            preview.edges.push(edge);
+        } else {
+            preview.unsupported_lines += 1;
+        }
+    }
+
+    preview
+}
+
+fn mermaid_direction(line: &str) -> Option<String> {
+    let mut parts = line.split_whitespace();
+    let head = parts.next()?.trim_end_matches(';');
+    if !head.eq_ignore_ascii_case("graph") && !head.eq_ignore_ascii_case("flowchart") {
+        return None;
+    }
+
+    let direction = parts
+        .next()
+        .unwrap_or("TD")
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+    if direction.is_empty() {
+        Some("TD".to_string())
+    } else {
+        Some(direction.to_ascii_uppercase())
+    }
+}
+
+fn is_mermaid_non_edge_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "end"
+        || lower.starts_with("subgraph ")
+        || lower.starts_with("direction ")
+        || lower.starts_with("classdef ")
+        || lower.starts_with("class ")
+        || lower.starts_with("style ")
+        || lower.starts_with("linkstyle ")
+        || lower.starts_with("click ")
+        || lower.starts_with("acctitle")
+        || lower.starts_with("accdescr")
+}
+
+fn parse_mermaid_edge(line: &str) -> Option<MermaidEdge> {
+    let (line, pipe_label) = strip_mermaid_pipe_label(line);
+
+    if let Some(edge) = parse_mermaid_labeled_edge(&line, pipe_label.clone()) {
+        return Some(edge);
+    }
+
+    let (operator_start, operator_end) = find_mermaid_edge_operator(&line)?;
+    let from = parse_mermaid_node(&line[..operator_start])?;
+    let to = parse_mermaid_node(&line[operator_end..])?;
+
+    Some(MermaidEdge {
+        from,
+        to,
+        label: pipe_label,
+    })
+}
+
+fn parse_mermaid_labeled_edge(line: &str, pipe_label: Option<String>) -> Option<MermaidEdge> {
+    for operator in ["-->", "==>", "-.->", "--o", "--x"] {
+        let Some(operator_start) = line.find(operator) else {
+            continue;
+        };
+        let before = line[..operator_start].trim_end();
+        let after = line[operator_start + operator.len()..].trim_start();
+        let Some(label_start) = before.rfind("--") else {
+            continue;
+        };
+
+        let from = parse_mermaid_node(&before[..label_start])?;
+        let label = clean_mermaid_label(&before[label_start + 2..]);
+        if label.is_empty() || after.is_empty() {
+            continue;
+        }
+
+        return Some(MermaidEdge {
+            from,
+            to: parse_mermaid_node(after)?,
+            label: pipe_label.or(Some(label)),
+        });
+    }
+
+    None
+}
+
+fn strip_mermaid_pipe_label(line: &str) -> (String, Option<String>) {
+    let Some(first_pipe) = line.find('|') else {
+        return (line.to_string(), None);
+    };
+    let after_first = &line[first_pipe + 1..];
+    let Some(second_pipe) = after_first.find('|') else {
+        return (line.to_string(), None);
+    };
+
+    let label = clean_mermaid_label(&after_first[..second_pipe]);
+    let mut normalized = String::new();
+    normalized.push_str(&line[..first_pipe]);
+    normalized.push(' ');
+    normalized.push_str(&after_first[second_pipe + 1..]);
+
+    (
+        normalized,
+        if label.is_empty() { None } else { Some(label) },
+    )
+}
+
+fn find_mermaid_edge_operator(line: &str) -> Option<(usize, usize)> {
+    for operator in [
+        "<-->", "-.->", "-->", "==>", "---", "-.-", "~~~", "--o", "--x", "o--", "x--", "<--",
+    ] {
+        if let Some(start) = line.find(operator) {
+            return Some((start, start + operator.len()));
+        }
+    }
+    None
+}
+
+fn parse_mermaid_node(source: &str) -> Option<MermaidNode> {
+    let trimmed = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_class = trimmed.split(":::").next().unwrap_or(trimmed).trim();
+    let label_start = without_class.find(|ch| matches!(ch, '[' | '(' | '{'));
+    let id = label_start
+        .map(|start| clean_mermaid_label(&without_class[..start]))
+        .unwrap_or_else(|| clean_mermaid_label(without_class));
+    let label = label_start
+        .map(|start| clean_mermaid_label(&without_class[start..]))
+        .unwrap_or_default();
+
+    let id = if id.is_empty() { label.clone() } else { id };
+    let label = if label.is_empty() { id.clone() } else { label };
+
+    (!id.is_empty() || !label.is_empty()).then_some(MermaidNode { id, label })
+}
+
+fn clean_mermaid_label(source: &str) -> String {
+    source
+        .trim()
+        .trim_matches(|ch| matches!(ch, '[' | ']' | '(' | ')' | '{' | '}'))
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
 fn render_table_block(
     block: &RenderBlock,
     source_text: String,
@@ -2267,6 +2622,13 @@ fn should_render_image_preview(block: &RenderBlock, selection: std::ops::Range<u
     standalone_image_span(block).is_some() && !selection_touches_render_block(selection, block)
 }
 
+fn should_render_mermaid_preview(block: &RenderBlock, selection: std::ops::Range<usize>) -> bool {
+    matches!(
+        &block.embedded,
+        Some(EmbeddedNodeKind::Diagram { language }) if language.eq_ignore_ascii_case("mermaid")
+    ) && !selection_touches_render_block(selection, block)
+}
+
 fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
     let mut visible_spans = rendered_spans(block).filter(|span| !span.visible_text.is_empty());
     let span = visible_spans.next()?;
@@ -2281,6 +2643,16 @@ fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
 
 fn image_edit_cursor_offset(block: &RenderBlock) -> usize {
     (block.content_range.start + 1).min(block.content_range.end)
+}
+
+fn mermaid_edit_cursor_offset(block: &RenderBlock) -> usize {
+    block
+        .spans
+        .iter()
+        .find(|span| span.kind == RenderSpanKind::Text && !span.source_range.is_empty())
+        .map(|span| span.source_range.start)
+        .unwrap_or(block.content_range.start)
+        .min(block.content_range.end)
 }
 
 fn document_base_dir(snapshot: &EditorSnapshot) -> Option<&Path> {
@@ -3214,8 +3586,10 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        ResolvedImageSource, image_edit_cursor_offset, looks_like_image_uri, resolve_image_source,
-        selection_touches_render_block, should_render_image_preview, word_range_at_visible_offset,
+        MermaidEdge, MermaidNode, ResolvedImageSource, image_edit_cursor_offset,
+        looks_like_image_uri, mermaid_edit_cursor_offset, parse_mermaid_preview,
+        resolve_image_source, selection_touches_render_block, should_render_image_preview,
+        should_render_mermaid_preview, word_range_at_visible_offset,
     };
     use crate::{
         BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
@@ -3246,6 +3620,39 @@ mod tests {
                 }),
             }],
             embedded: Some(EmbeddedNodeKind::Image),
+            source_hash: 0,
+        }
+    }
+
+    fn mermaid_block(source: &str) -> RenderBlock {
+        let body_start = "```mermaid\n".len();
+        let body_end = body_start + source.len();
+        let source_end = body_end + "\n```".len();
+        RenderBlock {
+            id: 2,
+            kind: BlockKind::CodeFence {
+                language: Some("mermaid".to_string()),
+            },
+            source_range: 0..source_end,
+            content_range: 0..source_end,
+            visible_range: 0..source.len(),
+            visible_text: source.to_string(),
+            spans: vec![RenderSpan {
+                kind: RenderSpanKind::Text,
+                source_range: body_start..body_end,
+                visible_range: 0..source.len(),
+                source_text: source.to_string(),
+                visible_text: source.to_string(),
+                hidden: false,
+                style: RenderInlineStyle {
+                    code: true,
+                    ..RenderInlineStyle::default()
+                },
+                meta: None,
+            }],
+            embedded: Some(EmbeddedNodeKind::Diagram {
+                language: "mermaid".to_string(),
+            }),
             source_hash: 0,
         }
     }
@@ -3297,6 +3704,60 @@ mod tests {
     fn image_click_moves_cursor_inside_markdown_syntax() {
         let block = standalone_image_block("[image: alt]", "[image: alt]");
         assert_eq!(image_edit_cursor_offset(&block), 1);
+    }
+
+    #[test]
+    fn parses_common_mermaid_flowchart_edges() {
+        let preview = parse_mermaid_preview(
+            "graph TD\n  A[Start] -->|go| B(End)\n  B -- retry --> C{Choice}\n",
+        );
+
+        assert_eq!(preview.direction.as_deref(), Some("TD"));
+        assert_eq!(
+            preview.edges,
+            vec![
+                MermaidEdge {
+                    from: MermaidNode {
+                        id: "A".to_string(),
+                        label: "Start".to_string(),
+                    },
+                    to: MermaidNode {
+                        id: "B".to_string(),
+                        label: "End".to_string(),
+                    },
+                    label: Some("go".to_string()),
+                },
+                MermaidEdge {
+                    from: MermaidNode {
+                        id: "B".to_string(),
+                        label: "B".to_string(),
+                    },
+                    to: MermaidNode {
+                        id: "C".to_string(),
+                        label: "Choice".to_string(),
+                    },
+                    label: Some("retry".to_string()),
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn mermaid_preview_is_disabled_when_selection_touches_block() {
+        let block = mermaid_block("graph TD\n  A --> B\n");
+
+        assert!(should_render_mermaid_preview(&block, 100..100));
+        assert!(should_render_mermaid_preview(&block, 0..0));
+        assert!(selection_touches_render_block(12..12, &block));
+        assert!(!should_render_mermaid_preview(&block, 12..12));
+        assert!(!should_render_mermaid_preview(&block, 12..16));
+    }
+
+    #[test]
+    fn mermaid_preview_click_moves_cursor_to_diagram_body() {
+        let block = mermaid_block("graph TD\n  A --> B\n");
+        assert_eq!(mermaid_edit_cursor_offset(&block), "```mermaid\n".len());
     }
 
     #[test]
