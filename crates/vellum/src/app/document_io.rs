@@ -265,6 +265,19 @@ impl VellumApp {
     }
 
     pub(super) fn export_html_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.export_html_dialog_with_open(window, cx, false);
+    }
+
+    pub(super) fn export_print_html_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.export_html_dialog_with_open(window, cx, true);
+    }
+
+    fn export_html_dialog_with_open(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        open_after_export: bool,
+    ) {
         let current_dir = self.current_document_dir();
         let default_name = self.default_html_export_name();
         let document_text = self.editor_snapshot.document_text.clone();
@@ -284,7 +297,7 @@ impl VellumApp {
                     return;
                 };
 
-                let result = super::export::export_markdown_to_html_file(
+                let export_result = super::export::export_markdown_to_html_file(
                     &document_text,
                     &display_name,
                     current_dir.as_deref(),
@@ -292,7 +305,17 @@ impl VellumApp {
                 );
 
                 let _ = cx.update_window_entity(&view, |this, _, cx| {
-                    match result {
+                    match export_result {
+                        Ok(()) if open_after_export => match open_path_with_system(&path) {
+                            Ok(()) => this.set_status(format!(
+                                "Exported and opened HTML at {}. Use browser Print to save PDF.",
+                                path.display()
+                            )),
+                            Err(err) => this.set_status(format!(
+                                "Exported HTML to {} but could not open it: {err}",
+                                path.display()
+                            )),
+                        },
                         Ok(()) => {
                             this.set_status(format!("Exported HTML to {}", path.display()));
                         }

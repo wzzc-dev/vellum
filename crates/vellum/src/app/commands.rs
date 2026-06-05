@@ -145,6 +145,15 @@ impl VellumApp {
         self.export_html_dialog(window, cx);
     }
 
+    pub(super) fn on_export_print_html(
+        &mut self,
+        _: &ExportPrintHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_print_html_dialog(window, cx);
+    }
+
     pub(super) fn on_open_preferences(
         &mut self,
         _: &OpenPreferences,
@@ -391,6 +400,9 @@ impl VellumApp {
             }
             PaletteCommand::ExportHtml => {
                 self.export_html_dialog(window, cx);
+            }
+            PaletteCommand::ExportPrintHtml => {
+                self.export_print_html_dialog(window, cx);
             }
             PaletteCommand::OpenPreferences => self.open_preferences(window, cx),
             PaletteCommand::ThemeDefault => {

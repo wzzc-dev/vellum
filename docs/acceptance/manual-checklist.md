@@ -26,6 +26,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 ## Export And Print
 
 - Export HTML from the app.
+- Use Export and Open for Print from the app.
 - Confirm the exported HTML opens in a browser with the table of contents, table, code block, image, math, Mermaid diagram, and footnote present.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
 - Open the browser print dialog for the exported HTML and verify the preview uses a white page, document margins, wrapped code, and no clipped table or image.

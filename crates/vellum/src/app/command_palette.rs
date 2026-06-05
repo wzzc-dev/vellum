@@ -50,6 +50,7 @@ pub(crate) enum PaletteCommand {
     FindPanel,
     FindReplace,
     ExportHtml,
+    ExportPrintHtml,
     OpenPreferences,
     Undo,
     Redo,
@@ -351,6 +352,12 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         command: PaletteCommand::ExportHtml,
     },
     CommandItem {
+        label: "Export and Open for Print",
+        keywords: &["export", "html", "print", "pdf", "browser", "打印", "导出"],
+        description: "Export print-ready HTML and open it in the system browser",
+        command: PaletteCommand::ExportPrintHtml,
+    },
+    CommandItem {
         label: "Preferences",
         keywords: &["preferences", "settings", "config", "偏好", "设置"],
         description: "Open Vellum preferences",
@@ -488,5 +495,14 @@ mod tests {
             .map(|index| ALL_COMMANDS[index].command)
             .collect();
         assert!(commands.contains(&PaletteCommand::HtmlBlock));
+    }
+
+    #[test]
+    fn print_export_command_is_discoverable() {
+        let commands: Vec<_> = filter_commands("pdf")
+            .into_iter()
+            .map(|index| ALL_COMMANDS[index].command)
+            .collect();
+        assert!(commands.contains(&PaletteCommand::ExportPrintHtml));
     }
 }

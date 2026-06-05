@@ -54,6 +54,7 @@ actions!(
         SaveNow,
         SaveAs,
         ExportHtml,
+        ExportPrintHtml,
         OpenPreferences,
         Quit,
         ToggleSidebar,
@@ -186,6 +187,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-e", ExportHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-p", ExportPrintHtml, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-f", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-g", FindNextMatch, Some(APP_CONTEXT)),
@@ -208,6 +210,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-alt-e", ExportHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-p", ExportPrintHtml, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-h", OpenFindReplacePanel, Some(APP_CONTEXT)),
         KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
@@ -244,6 +247,12 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     cx.on_action(move |_: &ExportHtml, cx| {
         update_vellum_app_from_menu(window, cx, |this, window, cx| {
             this.export_html_dialog(window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &ExportPrintHtml, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.export_print_html_dialog(window, cx);
         });
     });
     let window = main_window;
@@ -292,6 +301,7 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
                 MenuItem::action("Save", SaveNow),
                 MenuItem::action("Save As...", SaveAs),
                 MenuItem::action("Export HTML...", ExportHtml),
+                MenuItem::action("Export and Open for Print...", ExportPrintHtml),
                 MenuItem::separator(),
                 MenuItem::action("Close Tab", CloseTab),
             ],
