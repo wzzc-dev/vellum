@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -208,6 +209,15 @@ fn rewrite_line_image_assets(
                 out.push_str(image.raw);
             }
             index += image.raw.len();
+        } else if let Some(image) = parse_html_image(rest) {
+            if let Some(destination) = assets.exported_destination(&image.destination)? {
+                out.push_str(&image.raw[..image.value_range.start]);
+                out.push_str(&escape_attr_value(&destination));
+                out.push_str(&image.raw[image.value_range.end..]);
+            } else {
+                out.push_str(image.raw);
+            }
+            index += image.raw.len();
         } else if let Some(ch) = rest.chars().next() {
             out.push(ch);
             index += ch.len_utf8();
@@ -346,6 +356,12 @@ struct MarkdownImage<'a> {
     title_suffix: &'a str,
 }
 
+struct HtmlImage<'a> {
+    raw: &'a str,
+    destination: String,
+    value_range: Range<usize>,
+}
+
 fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
     let after_open = rest.strip_prefix("![")?;
     let close_label = find_unescaped_char(after_open, ']')?;
@@ -361,6 +377,17 @@ fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
         label,
         destination,
         title_suffix,
+    })
+}
+
+fn parse_html_image(rest: &str) -> Option<HtmlImage<'_>> {
+    let raw_len = html_image_tag_len(rest)?;
+    let raw = &rest[..raw_len];
+    let value_range = html_attr_value_range(raw, "src")?;
+    Some(HtmlImage {
+        raw,
+        destination: decode_html_entities(&raw[value_range.clone()]),
+        value_range,
     })
 }
 
@@ -416,6 +443,103 @@ fn find_image_destination_close(text: &str) -> Option<usize> {
         }
     }
     None
+}
+
+fn html_image_tag_len(rest: &str) -> Option<usize> {
+    if !rest
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<img"))
+    {
+        return None;
+    }
+    let boundary = rest.as_bytes().get(4).copied();
+    if !matches!(boundary, Some(b'>') | Some(b'/') | Some(b' ' | b'\t' | b'\r' | b'\n')) {
+        return None;
+    }
+
+    html_tag_close(rest).map(|close| close + 1)
+}
+
+fn html_tag_close(tag: &str) -> Option<usize> {
+    let mut quote = None;
+    for (index, ch) in tag.char_indices() {
+        match quote {
+            Some(active_quote) if ch == active_quote => quote = None,
+            Some(_) => {}
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch == '>' => return Some(index),
+            None => {}
+        }
+    }
+    None
+}
+
+fn html_attr_value_range(tag: &str, attr: &str) -> Option<Range<usize>> {
+    let mut index = tag.find(char::is_whitespace).unwrap_or(tag.len());
+
+    while index < tag.len() {
+        index = skip_html_attr_space(tag, index);
+        if match tag.as_bytes().get(index) {
+            Some(byte) => matches!(byte, b'>' | b'/'),
+            None => true,
+        } {
+            index += 1;
+            continue;
+        }
+
+        let name_start = index;
+        while index < tag.len()
+            && !tag.as_bytes()[index].is_ascii_whitespace()
+            && !matches!(tag.as_bytes()[index], b'=' | b'/' | b'>')
+        {
+            index += 1;
+        }
+        if name_start == index {
+            index += tag[index..].chars().next()?.len_utf8();
+            continue;
+        }
+        let name = &tag[name_start..index];
+
+        index = skip_html_attr_space(tag, index);
+        if tag.as_bytes().get(index) != Some(&b'=') {
+            continue;
+        }
+        index += 1;
+        index = skip_html_attr_space(tag, index);
+
+        let value_start;
+        let value_end;
+        if let Some(quote @ (b'"' | b'\'')) = tag.as_bytes().get(index).copied() {
+            value_start = index + 1;
+            let close = tag[value_start..]
+                .bytes()
+                .position(|byte| byte == quote)?;
+            value_end = value_start + close;
+            index = value_end + 1;
+        } else {
+            value_start = index;
+            while index < tag.len()
+                && !tag.as_bytes()[index].is_ascii_whitespace()
+                && tag.as_bytes()[index] != b'>'
+            {
+                index += 1;
+            }
+            value_end = index;
+        }
+
+        if name.eq_ignore_ascii_case(attr) {
+            return Some(value_start..value_end);
+        }
+    }
+
+    None
+}
+
+fn skip_html_attr_space(tag: &str, mut index: usize) -> usize {
+    while index < tag.len() && tag.as_bytes()[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    index
 }
 
 fn unescape_markdown_destination(destination: &str) -> String {
@@ -2213,6 +2337,36 @@ mod tests {
     }
 
     #[test]
+    fn html_file_export_copies_raw_html_image_assets() {
+        let root = temp_export_dir("html-raw-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/raw.png"), b"raw").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "<img alt=\"Raw\" src='assets/raw.png' class=\"wide\">",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("alt=\"Raw\""));
+        assert!(html.contains("src='article_assets/raw.png'"));
+        assert!(html.contains("class=\"wide\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/raw.png")).unwrap(),
+            b"raw"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn html_file_export_copies_reference_image_assets() {
         let root = temp_export_dir("html-reference-assets");
         let source = root.join("source");
@@ -2272,6 +2426,32 @@ mod tests {
 
         let html = std::fs::read_to_string(&output).unwrap();
         assert!(html.contains("<code>![Hidden](assets/hidden.png)</code>"));
+        assert!(html.contains("src=\"https://example.com/remote.png\""));
+        assert!(!export_dir.join("article_assets").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_leaves_remote_raw_html_images_and_code_spans_alone() {
+        let root = temp_export_dir("html-raw-remote-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/hidden.png"), b"hidden").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "`<img src=\"assets/hidden.png\">`\n\n<img src=\"https://example.com/remote.png\" alt=\"Remote\">",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("<code>&lt;img src=&quot;assets/hidden.png&quot;&gt;</code>"));
         assert!(html.contains("src=\"https://example.com/remote.png\""));
         assert!(!export_dir.join("article_assets").exists());
 
