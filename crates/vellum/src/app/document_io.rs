@@ -2,7 +2,9 @@ use std::{fs, path::Path};
 
 use super::layout::next_untitled_path;
 use super::*;
-use crate::path::{clear_last_opened_path, read_last_opened_path, write_last_opened_path};
+use crate::path::{
+    clear_last_opened_path, read_last_opened_path, write_last_opened_path, write_recent_files,
+};
 use editor::FileSyncEvent;
 
 impl VellumApp {
@@ -397,6 +399,9 @@ impl VellumApp {
 
         for event in events {
             should_refresh_tree = true;
+            let active_path_before = self
+                .active_editor()
+                .and_then(|editor| editor.read(cx).document_path().cloned());
 
             match &event {
                 WorkspaceEvent::Removed(path) => {
@@ -418,6 +423,7 @@ impl VellumApp {
                     {
                         self.workspace.selected_file = Some(relocated_path);
                     }
+                    self.persist_relocated_paths(from, to, active_path_before.as_deref());
                 }
                 WorkspaceEvent::Changed(_) | WorkspaceEvent::Unknown => {}
             }
@@ -535,6 +541,17 @@ fn relocated_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
 
 fn path_is_or_descends(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
+}
+
+fn relocated_recent_files(files: &[PathBuf], from: &Path, to: &Path) -> Vec<PathBuf> {
+    let mut relocated_files = Vec::with_capacity(files.len());
+    for path in files {
+        let relocated = relocated_path(path, from, to).unwrap_or_else(|| path.clone());
+        if !relocated_files.contains(&relocated) {
+            relocated_files.push(relocated);
+        }
+    }
+    relocated_files
 }
 
 impl VellumApp {
@@ -781,6 +798,10 @@ impl VellumApp {
             return;
         }
 
+        let active_path_before = self
+            .active_editor()
+            .and_then(|editor| editor.read(cx).document_path().cloned());
+
         for tab in self.tabs.iter_mut() {
             let should_relocate = tab
                 .editor
@@ -810,6 +831,7 @@ impl VellumApp {
         {
             self.workspace.selected_file = Some(relocated_selected_file);
         }
+        self.persist_relocated_paths(&path, &new_path, active_path_before.as_deref());
 
         self.refresh_tree(cx);
         cx.notify();
@@ -853,6 +875,10 @@ impl VellumApp {
             return;
         }
 
+        let active_path_before = self
+            .active_editor()
+            .and_then(|editor| editor.read(cx).document_path().cloned());
+
         for tab in self.tabs.iter_mut() {
             let should_relocate = tab
                 .editor
@@ -881,9 +907,24 @@ impl VellumApp {
         {
             self.workspace.selected_file = Some(relocated_selected_file);
         }
+        self.persist_relocated_paths(&path, &new_path, active_path_before.as_deref());
 
         self.refresh_tree(cx);
         cx.notify();
+    }
+
+    fn persist_relocated_paths(&mut self, from: &Path, to: &Path, active_path: Option<&Path>) {
+        if let Some(relocated_active_path) =
+            active_path.and_then(|path| relocated_path(path, from, to))
+        {
+            let _ = write_last_opened_path(&relocated_active_path);
+        }
+
+        let updated_recent_files = relocated_recent_files(&self.recent_files, from, to);
+        if updated_recent_files != self.recent_files {
+            self.recent_files = updated_recent_files;
+            let _ = write_recent_files(&self.recent_files);
+        }
     }
 }
 
@@ -939,6 +980,27 @@ mod tests {
 
         assert!(removed_path_matches_document(&path, &root, true));
         assert!(!removed_path_matches_document(&path, &root, false));
+    }
+
+    #[test]
+    fn relocated_recent_files_updates_descendants_and_deduplicates() {
+        let from = PathBuf::from("workspace/drafts");
+        let to = PathBuf::from("workspace/archive");
+        let files = vec![
+            PathBuf::from("workspace/drafts/chapter-one/note.md"),
+            PathBuf::from("workspace/archive/chapter-one/note.md"),
+            PathBuf::from("workspace/drafts/intro.md"),
+            PathBuf::from("workspace/other.md"),
+        ];
+
+        assert_eq!(
+            relocated_recent_files(&files, &from, &to),
+            vec![
+                PathBuf::from("workspace/archive/chapter-one/note.md"),
+                PathBuf::from("workspace/archive/intro.md"),
+                PathBuf::from("workspace/other.md"),
+            ]
+        );
     }
 
     #[test]
