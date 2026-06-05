@@ -1098,8 +1098,9 @@ impl VellumApp {
                                             .gap_2()
                                             .child(
                                                 Button::new("preferences-font-size-decrease")
-                                                    .label("-")
+                                                    .icon(IconName::Minus)
                                                     .compact()
+                                                    .tooltip("Decrease font size")
                                                     .on_click(cx.listener(|this, _, _, cx| {
                                                         this.set_font_size_preference(
                                                             this.preferences
@@ -1124,8 +1125,9 @@ impl VellumApp {
                                             )
                                             .child(
                                                 Button::new("preferences-font-size-increase")
-                                                    .label("+")
+                                                    .icon(IconName::Plus)
                                                     .compact()
+                                                    .tooltip("Increase font size")
                                                     .on_click(cx.listener(|this, _, _, cx| {
                                                         this.set_font_size_preference(
                                                             this.preferences
