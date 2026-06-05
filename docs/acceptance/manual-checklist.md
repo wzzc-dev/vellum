@@ -9,6 +9,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the front matter renders as a metadata preview and returns to source editing when clicked.
 - Confirm the outline sidebar lists the top-level title and each section heading.
 - Confirm the `[toc]` block renders a table of contents from the document headings and returns to source editing when clicked.
+- Confirm clicking a heading inside the rendered `[toc]` block moves the cursor to that heading.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
 - Confirm the Mermaid block shows a structured preview when the cursor leaves it and returns to source editing when clicked.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.

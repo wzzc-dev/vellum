@@ -182,6 +182,7 @@ struct MermaidNode {
 struct TocPreviewEntry {
     depth: u8,
     title: String,
+    source_offset: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -995,7 +996,7 @@ fn render_display_block(
             BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if show_mermaid_preview => render_mermaid_block(block, palette),
-            _ if show_toc_preview => render_toc_block(display_blocks.as_ref(), palette),
+            _ if show_toc_preview => render_toc_block(view, display_blocks.as_ref(), palette),
             _ if show_footnote_preview => render_footnote_block(block, palette, window),
             _ if show_front_matter_preview => render_front_matter_block(block, palette),
             _ if empty_line_count.is_some() => {
@@ -2129,7 +2130,11 @@ fn footnote_body_styled_text(
     }
 }
 
-fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElement {
+fn render_toc_block(
+    view: &Entity<MarkdownEditor>,
+    blocks: &[RenderBlock],
+    palette: RenderPalette,
+) -> AnyElement {
     let entries = collect_toc_preview_entries(blocks);
 
     let mut body = div().w_full().flex().flex_col().gap_1();
@@ -2143,7 +2148,7 @@ fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElemen
         );
     } else {
         for entry in &entries {
-            body = body.child(render_toc_entry(entry, palette));
+            body = body.child(render_toc_entry(view, entry, palette));
         }
     }
 
@@ -2169,17 +2174,35 @@ fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElemen
         .into_any_element()
 }
 
-fn render_toc_entry(entry: &TocPreviewEntry, palette: RenderPalette) -> AnyElement {
+fn render_toc_entry(
+    view: &Entity<MarkdownEditor>,
+    entry: &TocPreviewEntry,
+    palette: RenderPalette,
+) -> AnyElement {
     let depth = entry.depth.saturating_sub(1).min(5) as f32;
     let marker_size = if entry.depth <= 2 { 5. } else { 4. };
+    let source_offset = entry.source_offset;
 
     div()
+        .id(("toc-entry", source_offset))
         .w_full()
         .flex()
         .items_center()
         .gap_2()
         .pl(px(depth * 14.))
         .py(px(1.))
+        .on_mouse_down(MouseButton::Left, move |_, _, app: &mut App| {
+            app.stop_propagation();
+        })
+        .on_click({
+            let view = view.clone();
+            move |_, window, app: &mut App| {
+                app.stop_propagation();
+                let _ = view.update(app, |this, cx| {
+                    this.select_source_offset(source_offset, window, cx);
+                });
+            }
+        })
         .child(
             div()
                 .w(px(marker_size))
@@ -2214,6 +2237,7 @@ fn collect_toc_preview_entries(blocks: &[RenderBlock]) -> Vec<TocPreviewEntry> {
             Some(TocPreviewEntry {
                 depth: *depth,
                 title: heading_title_for_toc(block),
+                source_offset: block.content_range.start,
             })
         })
         .collect()
@@ -4302,18 +4326,20 @@ mod tests {
     }
 
     fn heading_block(id: u64, depth: u8, marker: &str, title: &str) -> RenderBlock {
+        let source_start = id as usize * 10;
         let visible_text = format!("{marker}{title}");
+        let source_end = source_start + visible_text.len();
         RenderBlock {
             id,
             kind: BlockKind::Heading { depth },
-            source_range: 0..visible_text.len(),
-            content_range: 0..visible_text.len(),
+            source_range: source_start..source_end,
+            content_range: source_start..source_end,
             visible_range: 0..visible_text.len(),
             visible_text: visible_text.clone(),
             spans: vec![
                 RenderSpan {
                     kind: RenderSpanKind::HiddenSyntax,
-                    source_range: 0..marker.len(),
+                    source_range: source_start..source_start + marker.len(),
                     visible_range: 0..marker.len(),
                     source_text: marker.to_string(),
                     visible_text: marker.to_string(),
@@ -4323,7 +4349,7 @@ mod tests {
                 },
                 RenderSpan {
                     kind: RenderSpanKind::Text,
-                    source_range: marker.len()..visible_text.len(),
+                    source_range: source_start + marker.len()..source_end,
                     visible_range: marker.len()..visible_text.len(),
                     source_text: title.to_string(),
                     visible_text: title.to_string(),
@@ -4688,10 +4714,12 @@ mod tests {
                 TocPreviewEntry {
                     depth: 1,
                     title: "Title".to_string(),
+                    source_offset: 40,
                 },
                 TocPreviewEntry {
                     depth: 2,
                     title: "Section".to_string(),
+                    source_offset: 50,
                 },
             ]
         );
