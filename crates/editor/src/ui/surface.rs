@@ -177,6 +177,12 @@ struct TocPreviewEntry {
     title: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FootnotePreview {
+    label: String,
+    body: String,
+}
+
 #[derive(Debug, Clone)]
 struct TableSurfaceLayout {
     row_tops: Vec<gpui::Pixels>,
@@ -305,8 +311,10 @@ impl MarkdownEditor {
             image_edit_cursor_offset(&block)
         } else if should_render_mermaid_preview(&block, selection_range.clone()) {
             mermaid_edit_cursor_offset(&block)
-        } else if should_render_toc_preview(&block, selection_range) {
+        } else if should_render_toc_preview(&block, selection_range.clone()) {
             toc_edit_cursor_offset(&block)
+        } else if should_render_footnote_preview(&block, selection_range) {
+            footnote_edit_cursor_offset(&block)
         } else {
             let local_visible_offset = visible_byte_offset_for_click_position(
                 &self.snapshot.display_map.blocks,
@@ -944,6 +952,7 @@ fn render_display_block(
     let show_image_preview = should_render_image_preview(block, snapshot.selection.range());
     let show_mermaid_preview = should_render_mermaid_preview(block, snapshot.selection.range());
     let show_toc_preview = should_render_toc_preview(block, snapshot.selection.range());
+    let show_footnote_preview = should_render_footnote_preview(block, snapshot.selection.range());
 
     let text_content = if show_placeholder {
         div()
@@ -970,6 +979,7 @@ fn render_display_block(
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if show_mermaid_preview => render_mermaid_block(block, palette),
             _ if show_toc_preview => render_toc_block(display_blocks.as_ref(), palette),
+            _ if show_footnote_preview => render_footnote_block(block, palette, window),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -1826,6 +1836,153 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
             )
         })
         .into_any_element()
+}
+
+fn render_footnote_block(
+    block: &RenderBlock,
+    palette: RenderPalette,
+    window: &Window,
+) -> AnyElement {
+    let preview = footnote_preview(block);
+    let body = footnote_body_styled_text(block, palette, window)
+        .unwrap_or_else(|| StyledText::new(preview.body.clone()));
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .px_3()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(palette.muted_text_color)
+                        .child("Footnote"),
+                )
+                .child(render_footnote_label_chip(preview.label, palette)),
+        )
+        .child(
+            div()
+                .w_full()
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .text_color(palette.text_color)
+                .child(body),
+        )
+        .into_any_element()
+}
+
+fn render_footnote_label_chip(label: String, palette: RenderPalette) -> AnyElement {
+    div()
+        .rounded(px(6.))
+        .bg(palette.text_color.opacity(0.06))
+        .px_2()
+        .py(px(2.))
+        .text_sm()
+        .line_height(px(BODY_LINE_HEIGHT))
+        .text_color(palette.muted_text_color)
+        .child(label)
+        .into_any_element()
+}
+
+fn footnote_preview(block: &RenderBlock) -> FootnotePreview {
+    let label = footnote_label(block).unwrap_or_else(|| "?".to_string());
+    let body = footnote_body_text(block);
+    FootnotePreview { label, body }
+}
+
+fn footnote_label(block: &RenderBlock) -> Option<String> {
+    block
+        .spans
+        .iter()
+        .find_map(|span| extract_footnote_label(&span.source_text))
+        .filter(|label| !label.is_empty())
+}
+
+fn extract_footnote_label(source: &str) -> Option<String> {
+    let rest = source.trim_start().strip_prefix("[^")?;
+    let mut label = String::new();
+    let mut escaped = false;
+    for ch in rest.chars() {
+        if escaped {
+            label.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == ']' {
+            return Some(label);
+        } else {
+            label.push(ch);
+        }
+    }
+    None
+}
+
+fn footnote_body_text(block: &RenderBlock) -> String {
+    let body = rendered_spans(block)
+        .filter(|span| {
+            !span.visible_text.is_empty()
+                && !span.hidden
+                && !span.source_range.is_empty()
+                && span.source_range.start >= block.content_range.start
+        })
+        .map(|span| span.visible_text.as_str())
+        .collect::<String>()
+        .trim()
+        .to_string();
+
+    if body.is_empty() {
+        "Empty footnote".to_string()
+    } else {
+        body
+    }
+}
+
+fn footnote_body_styled_text(
+    block: &RenderBlock,
+    palette: RenderPalette,
+    window: &Window,
+) -> Option<StyledText> {
+    let base_style = base_text_style_for_block(block, palette.text_color, window);
+    let base_font_size = px(block_presentation(&block.kind).font_size);
+    let mut text = String::new();
+    let mut runs = Vec::new();
+
+    for span in rendered_spans(block).filter(|span| {
+        !span.visible_text.is_empty()
+            && !span.hidden
+            && !span.source_range.is_empty()
+            && span.source_range.start >= block.content_range.start
+    }) {
+        let mut style = base_style.clone();
+        apply_fragment_style(
+            &mut style,
+            span.kind.clone(),
+            span.style,
+            span.meta.as_ref(),
+            palette,
+            base_font_size,
+        );
+        text.push_str(&span.visible_text);
+        runs.push(style.to_run(span.visible_text.len()));
+    }
+
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(StyledText::new(text).with_runs(runs))
+    }
 }
 
 fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElement {
@@ -2753,6 +2910,14 @@ fn should_render_toc_preview(block: &RenderBlock, selection: std::ops::Range<usi
         && !selection_touches_render_block(selection, block)
 }
 
+fn should_render_footnote_preview(
+    block: &RenderBlock,
+    selection: std::ops::Range<usize>,
+) -> bool {
+    matches!(&block.embedded, Some(EmbeddedNodeKind::FootnoteDefinition))
+        && !selection_touches_render_block(selection, block)
+}
+
 fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
     let mut visible_spans = rendered_spans(block).filter(|span| !span.visible_text.is_empty());
     let span = visible_spans.next()?;
@@ -2781,6 +2946,16 @@ fn mermaid_edit_cursor_offset(block: &RenderBlock) -> usize {
 
 fn toc_edit_cursor_offset(block: &RenderBlock) -> usize {
     block.content_range.start
+}
+
+fn footnote_edit_cursor_offset(block: &RenderBlock) -> usize {
+    block
+        .spans
+        .iter()
+        .find(|span| !span.hidden && !span.source_range.is_empty())
+        .map(|span| span.source_range.start)
+        .unwrap_or(block.content_range.start)
+        .min(block.content_range.end)
 }
 
 fn document_base_dir(snapshot: &EditorSnapshot) -> Option<&Path> {
@@ -3714,10 +3889,11 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        MermaidEdge, MermaidNode, ResolvedImageSource, TocPreviewEntry,
-        collect_toc_preview_entries, image_edit_cursor_offset, looks_like_image_uri,
-        mermaid_edit_cursor_offset, parse_mermaid_preview, resolve_image_source,
-        selection_touches_render_block, should_render_image_preview, should_render_mermaid_preview,
+        FootnotePreview, MermaidEdge, MermaidNode, ResolvedImageSource, TocPreviewEntry,
+        collect_toc_preview_entries, footnote_edit_cursor_offset, footnote_preview,
+        image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
+        parse_mermaid_preview, resolve_image_source, selection_touches_render_block,
+        should_render_footnote_preview, should_render_image_preview, should_render_mermaid_preview,
         should_render_toc_preview, toc_edit_cursor_offset, word_range_at_visible_offset,
     };
     use crate::{
@@ -3856,6 +4032,71 @@ mod tests {
                 },
             ],
             embedded: None,
+            source_hash: 0,
+        }
+    }
+
+    fn footnote_block(label_source: &str, body: &str) -> RenderBlock {
+        let source_start = 20usize;
+        let label_text = format!("[^{label_source}]:");
+        let label_end = source_start + label_text.len();
+        let body_start = label_end + 1;
+        let source_end = body_start + body.len();
+        let visible_text = format!("Footnote {body}");
+
+        RenderBlock {
+            id: 6,
+            kind: BlockKind::FootnoteDefinition,
+            source_range: source_start..source_end,
+            content_range: source_start..source_end,
+            visible_range: 0..visible_text.len(),
+            visible_text: visible_text.clone(),
+            spans: vec![
+                RenderSpan {
+                    kind: RenderSpanKind::HiddenSyntax,
+                    source_range: source_start..label_end,
+                    visible_range: 0..0,
+                    source_text: label_text,
+                    visible_text: String::new(),
+                    hidden: true,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: source_start..source_start,
+                    visible_range: 0.."Footnote".len(),
+                    source_text: String::new(),
+                    visible_text: "Footnote".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle {
+                        strong: true,
+                        ..RenderInlineStyle::default()
+                    },
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: source_start..source_start,
+                    visible_range: "Footnote".len().."Footnote ".len(),
+                    source_text: String::new(),
+                    visible_text: " ".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: body_start..source_end,
+                    visible_range: "Footnote ".len()..visible_text.len(),
+                    source_text: body.to_string(),
+                    visible_text: body.to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+            ],
+            embedded: Some(EmbeddedNodeKind::FootnoteDefinition),
             source_hash: 0,
         }
     }
@@ -4001,6 +4242,43 @@ mod tests {
     fn toc_preview_click_moves_cursor_to_marker() {
         let block = toc_block();
         assert_eq!(toc_edit_cursor_offset(&block), 10);
+    }
+
+    #[test]
+    fn footnote_preview_extracts_label_and_body() {
+        let block = footnote_block("note", "Body text");
+
+        assert_eq!(
+            footnote_preview(&block),
+            FootnotePreview {
+                label: "note".to_string(),
+                body: "Body text".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn footnote_preview_unescapes_label_close() {
+        let block = footnote_block(r"a\]b", "Escaped label");
+
+        assert_eq!(footnote_preview(&block).label, "a]b");
+    }
+
+    #[test]
+    fn footnote_preview_is_disabled_when_selection_touches_block() {
+        let block = footnote_block("note", "Body text");
+
+        assert!(should_render_footnote_preview(&block, 0..0));
+        assert!(should_render_footnote_preview(&block, 80..80));
+        assert!(selection_touches_render_block(24..24, &block));
+        assert!(!should_render_footnote_preview(&block, 24..24));
+        assert!(!should_render_footnote_preview(&block, 20..28));
+    }
+
+    #[test]
+    fn footnote_preview_click_moves_cursor_to_body() {
+        let block = footnote_block("note", "Body text");
+        assert_eq!(footnote_edit_cursor_offset(&block), "[^note]: ".len() + 20);
     }
 
     #[test]

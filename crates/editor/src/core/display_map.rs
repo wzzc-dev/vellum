@@ -1868,7 +1868,7 @@ fn parse_inline_tokens_into(
                 visible_text: format!("[{label}]"),
                 hidden: false,
                 style: RenderInlineStyle {
-                    code: true,
+                    superscript: true,
                     ..style
                 },
                 meta: Some(RenderSpanMeta::ReferenceLink {
@@ -2547,7 +2547,9 @@ mod tests {
             map.blocks[0]
                 .spans
                 .iter()
-                .any(|span| matches!(span.meta, Some(RenderSpanMeta::ReferenceLink { .. })))
+                .any(|span| matches!(span.meta, Some(RenderSpanMeta::ReferenceLink { .. }))
+                    && span.style.superscript
+                    && !span.style.code)
         );
         assert!(
             map.blocks[0]

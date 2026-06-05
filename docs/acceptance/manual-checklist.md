@@ -10,6 +10,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the `[toc]` block renders a table of contents from the document headings and returns to source editing when clicked.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
 - Confirm the Mermaid block shows a structured preview when the cursor leaves it and returns to source editing when clicked.
+- Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
 
 ## Assets
