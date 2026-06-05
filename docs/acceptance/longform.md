@@ -81,6 +81,15 @@ E &= mc^2
 \end{aligned}
 $$
 
+Piecewise math should keep conditions readable in preview and export:
+
+$$
+\begin{cases}
+x^2 & x > 0 \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
 ## Mermaid Diagrams
 
 ```mermaid

@@ -80,6 +80,14 @@ pub enum MathNode {
     Matrix {
         rows: Vec<Vec<MathNode>>,
     },
+    DelimitedMatrix {
+        rows: Vec<Vec<MathNode>>,
+        left: String,
+        right: String,
+    },
+    Cases {
+        rows: Vec<Vec<MathNode>>,
+    },
 }
 
 pub fn parse_math(source: &str) -> MathNodeTree {
@@ -311,7 +319,20 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
         "begin" => {
             let (env_name, body_start) = parse_env_name(chars, i);
             let (env_end, rows) = parse_env_body(chars, body_start, &env_name);
-            (vec![MathNode::Matrix { rows }], env_end)
+            if is_cases_environment(&env_name) {
+                (vec![MathNode::Cases { rows }], env_end)
+            } else if let Some((left, right)) = delimited_matrix_environment(&env_name) {
+                (
+                    vec![MathNode::DelimitedMatrix {
+                        rows,
+                        left: left.to_string(),
+                        right: right.to_string(),
+                    }],
+                    env_end,
+                )
+            } else {
+                (vec![MathNode::Matrix { rows }], env_end)
+            }
         }
         "left" | "right" | "bigl" | "bigr" | "Bigl" | "Bigr" | "biggl" | "biggr" => {
             if i < len {
@@ -433,6 +454,21 @@ fn parse_env_body(chars: &[char], start: usize, env_name: &str) -> (usize, Vec<V
     (end, rows)
 }
 
+fn is_cases_environment(env_name: &str) -> bool {
+    matches!(env_name, "cases" | "dcases" | "cases*")
+}
+
+fn delimited_matrix_environment(env_name: &str) -> Option<(&'static str, &'static str)> {
+    match env_name {
+        "pmatrix" => Some(("(", ")")),
+        "bmatrix" => Some(("[", "]")),
+        "Bmatrix" => Some(("{", "}")),
+        "vmatrix" => Some(("|", "|")),
+        "Vmatrix" => Some(("‖", "‖")),
+        _ => None,
+    }
+}
+
 fn starts_with_chars(chars: &[char], start: usize, needle: &[char]) -> bool {
     start + needle.len() <= chars.len() && chars[start..start + needle.len()] == *needle
 }
@@ -525,18 +561,47 @@ pub fn node_to_text(node: &MathNode) -> String {
             format!("‾{}", text)
         }
         MathNode::Matrix { rows } => {
-            let row_strs: Vec<String> = rows
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(node_to_text)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .collect();
-            row_strs.join("; ")
+            matrix_rows_to_text(rows)
+        }
+        MathNode::DelimitedMatrix { rows, left, right } => {
+            format!("{left}{}{right}", matrix_rows_to_text(rows))
+        }
+        MathNode::Cases { rows } => {
+            format!("{{ {} }}", cases_rows_to_text(rows))
         }
     }
+}
+
+fn matrix_rows_to_text(rows: &[Vec<MathNode>]) -> String {
+    rows.iter()
+        .map(|row| row.iter().map(node_to_text).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn cases_rows_to_text(rows: &[Vec<MathNode>]) -> String {
+    rows.iter()
+        .map(|row| {
+            let expression = row.first().map(node_to_text).unwrap_or_default();
+            let condition = row
+                .iter()
+                .skip(1)
+                .map(node_to_text)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
+
+            if condition.is_empty() {
+                expression
+            } else if condition.starts_with("if ") || condition.starts_with("for ") {
+                format!("{expression} {condition}")
+            } else {
+                format!("{expression} if {condition}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn to_unicode_superscript(text: &str) -> Option<String> {
@@ -972,6 +1037,41 @@ mod tests {
             _ => panic!("expected matrix"),
         }
         assert_eq!(math_tree_to_display_text(&tree), "a = b; c = d");
+    }
+
+    #[test]
+    fn display_text_for_cases_environment_keeps_conditions() {
+        let tree = parse_math(
+            "\\begin{cases}\nx^2 & x > 0 \\\\\n0 & \\text{otherwise}\n\\end{cases}",
+        );
+
+        match &tree.nodes[0] {
+            MathNode::Cases { rows } => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            }
+            _ => panic!("expected cases"),
+        }
+        assert_eq!(
+            math_tree_to_display_text(&tree),
+            "{ x² if x > 0; 0 if otherwise }"
+        );
+    }
+
+    #[test]
+    fn display_text_for_delimited_matrix_keeps_outer_brackets() {
+        let tree = parse_math("\\begin{bmatrix}a & b \\\\ c & d\\end{bmatrix}");
+
+        match &tree.nodes[0] {
+            MathNode::DelimitedMatrix { rows, left, right } => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(left, "[");
+                assert_eq!(right, "]");
+            }
+            _ => panic!("expected delimited matrix"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "[a b; c d]");
     }
 
     #[test]

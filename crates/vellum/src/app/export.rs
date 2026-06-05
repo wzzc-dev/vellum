@@ -3986,6 +3986,21 @@ mod tests {
     }
 
     #[test]
+    fn math_export_includes_cases_fallback() {
+        let html = export_markdown_to_html(
+            "$$\n\\begin{cases}\nx^2 & x > 0 \\\\\n0 & \\text{otherwise}\n\\end{cases}\n$$",
+            "Math",
+        )
+        .unwrap();
+
+        assert!(html.contains(
+            "<div class=\"math-fallback math-block-fallback\">{ x² if x &gt; 0; 0 if otherwise }</div>"
+        ));
+        assert!(html.contains("\\begin{cases}"));
+        assert!(html.contains("mathjax@3"));
+    }
+
+    #[test]
     fn math_runtime_is_not_loaded_for_code_only_math_markers() {
         let html = export_markdown_to_html("`$x$`", "Math").unwrap();
         assert!(!html.contains("mathjax@3"));
