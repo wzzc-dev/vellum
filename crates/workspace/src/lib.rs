@@ -7,9 +7,12 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use gpui_component::tree::TreeItem;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
+use notify::{
+    Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+    event::{ModifyKind, RenameMode},
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceEvent {
     Changed(PathBuf),
     Removed(PathBuf),
@@ -87,10 +90,16 @@ impl WorkspaceState {
 }
 
 fn map_workspace_event(event: Event) -> WorkspaceEvent {
-    if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.len() >= 2 {
-        return WorkspaceEvent::Relocated {
-            from: event.paths[0].clone(),
-            to: event.paths[1].clone(),
+    if let EventKind::Modify(ModifyKind::Name(mode)) = event.kind {
+        return match (mode, event.paths.as_slice()) {
+            (RenameMode::Both, [from, to, ..]) => WorkspaceEvent::Relocated {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            (RenameMode::From, [path, ..]) => WorkspaceEvent::Removed(path.clone()),
+            (RenameMode::To, [path, ..]) => WorkspaceEvent::Changed(path.clone()),
+            (_, [path, ..]) => WorkspaceEvent::Changed(path.clone()),
+            _ => WorkspaceEvent::Unknown,
         };
     }
 
@@ -162,4 +171,51 @@ pub fn is_markdown_path(path: &Path) -> bool {
                 || ext.eq_ignore_ascii_case("mdown")
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name_event(mode: RenameMode, paths: &[&str]) -> Event {
+        paths.iter().fold(
+            Event::new(EventKind::Modify(ModifyKind::Name(mode))),
+            |event, path| event.add_path(PathBuf::from(path)),
+        )
+    }
+
+    #[test]
+    fn maps_paired_rename_to_relocation() {
+        assert_eq!(
+            map_workspace_event(name_event(RenameMode::Both, &["old.md", "new.md"])),
+            WorkspaceEvent::Relocated {
+                from: PathBuf::from("old.md"),
+                to: PathBuf::from("new.md"),
+            }
+        );
+    }
+
+    #[test]
+    fn maps_single_rename_from_to_removed() {
+        assert_eq!(
+            map_workspace_event(name_event(RenameMode::From, &["old.md"])),
+            WorkspaceEvent::Removed(PathBuf::from("old.md"))
+        );
+    }
+
+    #[test]
+    fn maps_single_rename_to_to_changed() {
+        assert_eq!(
+            map_workspace_event(name_event(RenameMode::To, &["new.md"])),
+            WorkspaceEvent::Changed(PathBuf::from("new.md"))
+        );
+    }
+
+    #[test]
+    fn maps_unclassified_rename_with_path_to_changed() {
+        assert_eq!(
+            map_workspace_event(name_event(RenameMode::Any, &["note.md"])),
+            WorkspaceEvent::Changed(PathBuf::from("note.md"))
+        );
+    }
 }
