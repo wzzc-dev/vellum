@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use super::{
     code_highlight::{CodeHighlighter, CodeTokenType},
@@ -202,11 +202,18 @@ impl DisplayMap {
         selection: Option<&SelectionModel>,
         hidden_syntax_policy: HiddenSyntaxPolicy,
     ) -> Self {
+        let link_reference_definitions = collect_link_reference_definitions(document);
         let mut visible_text = String::new();
         let mut blocks = Vec::with_capacity(document.blocks().len());
 
         for (block_index, block) in document.blocks().iter().enumerate() {
-            let mut builder = BlockBuilder::new(block, document, selection, hidden_syntax_policy);
+            let mut builder = BlockBuilder::new(
+                block,
+                document,
+                selection,
+                hidden_syntax_policy,
+                &link_reference_definitions,
+            );
             builder.build();
             let mut render_block = builder.finish();
             render_block.source_hash =
@@ -256,6 +263,7 @@ impl DisplayMap {
         let prev_by_id: std::collections::HashMap<u64, &RenderBlock> =
             prev.blocks.iter().map(|b| (b.id, b)).collect();
 
+        let link_reference_definitions = collect_link_reference_definitions(document);
         let mut visible_text = String::new();
         let mut blocks = Vec::with_capacity(document.blocks().len());
 
@@ -270,6 +278,7 @@ impl DisplayMap {
                         && block.content_range == prev_block.content_range
                         && source_hash == prev_block.source_hash
                         && !selection_affects_block_changed(selection, &prev_block, block)
+                        && !block_may_contain_reference_image(&source_text)
                 })
                 .unwrap_or(false);
 
@@ -302,8 +311,13 @@ impl DisplayMap {
                     source_hash: prev_block.source_hash,
                 }
             } else {
-                let mut builder =
-                    BlockBuilder::new(block, document, selection, hidden_syntax_policy);
+                let mut builder = BlockBuilder::new(
+                    block,
+                    document,
+                    selection,
+                    hidden_syntax_policy,
+                    &link_reference_definitions,
+                );
                 builder.build();
                 let mut rb = builder.finish();
                 rb.source_hash = source_hash;
@@ -739,6 +753,7 @@ struct BlockBuilder<'a> {
     document: &'a DocumentBuffer,
     selection: Option<&'a SelectionModel>,
     hidden_syntax_policy: HiddenSyntaxPolicy,
+    link_reference_definitions: &'a HashMap<String, LinkReferenceDefinition>,
     spans: Vec<RenderSpan>,
     visible_text: String,
 }
@@ -749,12 +764,14 @@ impl<'a> BlockBuilder<'a> {
         document: &'a DocumentBuffer,
         selection: Option<&'a SelectionModel>,
         hidden_syntax_policy: HiddenSyntaxPolicy,
+        link_reference_definitions: &'a HashMap<String, LinkReferenceDefinition>,
     ) -> Self {
         Self {
             block,
             document,
             selection,
             hidden_syntax_policy,
+            link_reference_definitions,
             spans: Vec::new(),
             visible_text: String::new(),
         }
@@ -1469,7 +1486,7 @@ impl<'a> BlockBuilder<'a> {
 
     fn visible_inline_text(&self, source_start: usize, text: &str) -> String {
         let mut visible = String::new();
-        for token in parse_inline_tokens(text) {
+        for token in parse_inline_tokens(text, self.link_reference_definitions) {
             let range =
                 source_start + token.local_range.start..source_start + token.local_range.end;
             let reveal_range = token.reveal_range.clone().map(|reveal_range| {
@@ -1490,7 +1507,7 @@ impl<'a> BlockBuilder<'a> {
     }
 
     fn push_inline_text(&mut self, source_start: usize, text: &str, style: RenderInlineStyle) {
-        for token in parse_inline_tokens(text) {
+        for token in parse_inline_tokens(text, self.link_reference_definitions) {
             let range =
                 source_start + token.local_range.start..source_start + token.local_range.end;
             let reveal_range = token.reveal_range.clone().map(|reveal_range| {
@@ -1676,9 +1693,52 @@ struct InlineToken {
     meta: Option<RenderSpanMeta>,
 }
 
-fn parse_inline_tokens(text: &str) -> Vec<InlineToken> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkReferenceDefinition {
+    destination: String,
+    title: Option<String>,
+}
+
+struct ReferenceImage {
+    source_len: usize,
+    alt: String,
+    destination: String,
+    title: Option<String>,
+}
+
+fn collect_link_reference_definitions(
+    document: &DocumentBuffer,
+) -> HashMap<String, LinkReferenceDefinition> {
+    let mut definitions = HashMap::new();
+
+    for block in document.blocks() {
+        if block.kind != BlockKind::LinkReferenceDefinition {
+            continue;
+        }
+
+        for line in document.block_text(block).lines() {
+            let Some((label, definition)) = parse_link_reference_definition(line) else {
+                continue;
+            };
+            definitions.entry(label).or_insert(definition);
+        }
+    }
+
+    definitions
+}
+
+fn parse_inline_tokens(
+    text: &str,
+    link_reference_definitions: &HashMap<String, LinkReferenceDefinition>,
+) -> Vec<InlineToken> {
     let mut tokens = Vec::new();
-    parse_inline_tokens_into(text, 0, RenderInlineStyle::default(), &mut tokens);
+    parse_inline_tokens_into(
+        text,
+        0,
+        RenderInlineStyle::default(),
+        link_reference_definitions,
+        &mut tokens,
+    );
     if tokens.is_empty() {
         tokens.push(InlineToken {
             local_range: 0..text.len(),
@@ -1697,6 +1757,7 @@ fn parse_inline_tokens_into(
     text: &str,
     base_offset: usize,
     style: RenderInlineStyle,
+    link_reference_definitions: &HashMap<String, LinkReferenceDefinition>,
     tokens: &mut Vec<InlineToken>,
 ) {
     let mut offset = 0usize;
@@ -1740,6 +1801,7 @@ fn parse_inline_tokens_into(
                     &text[inner_start..inner_end],
                     base_offset + inner_start,
                     nested,
+                    link_reference_definitions,
                     tokens,
                 );
                 push_hidden_marker(tokens, base_offset + inner_end, delimiter);
@@ -1762,6 +1824,7 @@ fn parse_inline_tokens_into(
                     &text[inner_start..inner_end],
                     base_offset + inner_start,
                     nested,
+                    link_reference_definitions,
                     tokens,
                 );
                 push_hidden_marker(tokens, base_offset + inner_end, delimiter);
@@ -1815,6 +1878,32 @@ fn parse_inline_tokens_into(
                     ..style
                 },
                 meta: Some(RenderSpanMeta::Image { src, alt, title }),
+            });
+            offset += source.len();
+            continue;
+        }
+
+        if let Some(reference_image) = parse_reference_image(rest, link_reference_definitions) {
+            let source = &rest[..reference_image.source_len];
+            tokens.push(InlineToken {
+                local_range: base_offset + offset..base_offset + offset + source.len(),
+                reveal_range: Some(offset..offset + source.len()),
+                source_text: source.to_string(),
+                visible_text: if reference_image.alt.is_empty() {
+                    format!("[image: {}]", reference_image.destination)
+                } else {
+                    format!("[image: {}]", reference_image.alt)
+                },
+                hidden: false,
+                style: RenderInlineStyle {
+                    link: true,
+                    ..style
+                },
+                meta: Some(RenderSpanMeta::Image {
+                    src: reference_image.destination,
+                    alt: reference_image.alt,
+                    title: reference_image.title,
+                }),
             });
             offset += source.len();
             continue;
@@ -1899,6 +1988,7 @@ fn parse_inline_tokens_into(
                     link: true,
                     ..style
                 },
+                link_reference_definitions,
                 tokens,
             );
             push_hidden_marker_with_reveal(
@@ -2011,6 +2101,46 @@ fn parse_inline_tokens_into(
         push_text_token(tokens, base_offset + offset, &rest[..next_special], style);
         offset += next_special;
     }
+}
+
+fn parse_reference_image(
+    rest: &str,
+    link_reference_definitions: &HashMap<String, LinkReferenceDefinition>,
+) -> Option<ReferenceImage> {
+    let after_open = rest.strip_prefix("![")?;
+    let alt_end = find_unescaped_char(after_open, ']')?;
+    let alt_source = &after_open[..alt_end];
+    let after_alt = &after_open[alt_end + 1..];
+
+    if after_alt.starts_with('(') {
+        return None;
+    }
+
+    let (label_source, source_len) = if let Some(after_ref_open) = after_alt.strip_prefix('[') {
+        let ref_end = find_unescaped_char(after_ref_open, ']')?;
+        let explicit_label = &after_ref_open[..ref_end];
+        let label_source = if explicit_label.is_empty() {
+            alt_source
+        } else {
+            explicit_label
+        };
+        (label_source, 2 + alt_end + 1 + 1 + ref_end + 1)
+    } else {
+        (alt_source, 2 + alt_end + 1)
+    };
+
+    let label = normalize_reference_label(&unescape_markdown_label(label_source));
+    if label.is_empty() {
+        return None;
+    }
+
+    let definition = link_reference_definitions.get(&label)?;
+    Some(ReferenceImage {
+        source_len,
+        alt: unescape_markdown_label(alt_source),
+        destination: definition.destination.clone(),
+        title: definition.title.clone(),
+    })
 }
 
 fn push_hidden_marker(tokens: &mut Vec<InlineToken>, offset: usize, marker: &str) {
@@ -2149,6 +2279,36 @@ fn parse_link_title(raw: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+fn parse_link_reference_definition(line: &str) -> Option<(String, LinkReferenceDefinition)> {
+    let trimmed = line.trim_start();
+    let after_open = trimmed.strip_prefix('[')?;
+    if after_open.starts_with('^') {
+        return None;
+    }
+    let label_end = find_unescaped_char(after_open, ']')?;
+    let label = normalize_reference_label(&unescape_markdown_label(&after_open[..label_end]));
+    if label.is_empty() {
+        return None;
+    }
+
+    let after_label = &after_open[label_end + 1..];
+    let raw_destination = after_label.strip_prefix(':')?.trim();
+    let (destination, title) = parse_link_destination_and_title(raw_destination);
+    if destination.is_empty() {
+        return None;
+    }
+
+    Some((label, LinkReferenceDefinition { destination, title }))
+}
+
+fn normalize_reference_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 fn unescape_markdown_label(raw: &str) -> String {
     let mut unescaped = String::with_capacity(raw.len());
     let mut chars = raw.chars();
@@ -2174,6 +2334,10 @@ fn footnote_definition_parts(text: &str) -> (usize, usize) {
         content_start += 1;
     }
     (label_end, content_start)
+}
+
+fn block_may_contain_reference_image(source_text: &str) -> bool {
+    source_text.contains("![")
 }
 
 fn callout_title(kind: &BlockKind) -> String {
@@ -2497,6 +2661,80 @@ mod tests {
             map.blocks[0].embedded,
             Some(EmbeddedNodeKind::Image)
         ));
+    }
+
+    #[test]
+    fn standalone_reference_images_are_marked_as_embedded_nodes() {
+        let doc = DocumentBuffer::from_text(concat!(
+            "![cover][cover]\n\n",
+            "![diagram][]\n\n",
+            "![shortcut]\n\n",
+            "[cover]: assets/cover.png \"Cover title\"\n",
+            "[diagram]: assets/diagram.png\n",
+            "[shortcut]: assets/shortcut.png\n",
+        ));
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        for block in &map.blocks[..3] {
+            assert!(matches!(block.embedded, Some(EmbeddedNodeKind::Image)));
+        }
+        assert!(map.blocks[0].visible_text.starts_with("[image: cover]"));
+        assert!(map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, ref title, .. })
+                    if src == "assets/cover.png" && title.as_deref() == Some("Cover title")
+            )
+        }));
+        assert!(map.blocks[1].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, .. }) if src == "assets/diagram.png"
+            )
+        }));
+        assert!(map.blocks[2].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, .. }) if src == "assets/shortcut.png"
+            )
+        }));
+    }
+
+    #[test]
+    fn reference_image_without_definition_stays_plain_text() {
+        let doc = DocumentBuffer::from_text("![missing][missing]");
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        assert_eq!(map.blocks[0].embedded, None);
+        assert_eq!(map.visible_text, "![missing][missing]");
+        assert!(
+            !map.blocks[0]
+                .spans
+                .iter()
+                .any(|span| matches!(span.meta, Some(RenderSpanMeta::Image { .. })))
+        );
+    }
+
+    #[test]
+    fn reference_image_updates_when_definition_changes_incrementally() {
+        let first_doc = DocumentBuffer::from_text("![cover][cover]\n\n[cover]: assets/old.png");
+        let first_map =
+            DisplayMap::from_document(&first_doc, None, HiddenSyntaxPolicy::SelectionAware);
+
+        let second_doc = DocumentBuffer::from_text("![cover][cover]\n\n[cover]: assets/new.png");
+        let second_map = DisplayMap::from_document_incremental(
+            &second_doc,
+            None,
+            HiddenSyntaxPolicy::SelectionAware,
+            Some(&first_map),
+        );
+
+        assert!(second_map.blocks[0].spans.iter().any(|span| {
+            matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, .. }) if src == "assets/new.png"
+            )
+        }));
     }
 
     #[test]
