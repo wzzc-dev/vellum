@@ -65,7 +65,7 @@ pub use core::{
     EditorController, EditorEffects, EditorSnapshot, EditorViewMode, EmbeddedNodeKind,
     FileSyncEvent, HiddenSyntaxPolicy, HitTestResult, OutlineItem, RenderBlock, RenderInlineStyle,
     RenderSpan, RenderSpanKind, RenderSpanMeta, SelectionAffinity, SelectionModel, SelectionState,
-    SyncPolicy, SyncState, Transaction,
+    SyncPolicy, SyncState, Transaction, math_source_to_display_text,
 };
 pub use ui::{EditorEvent, MarkdownEditor, bind_keys};
 pub use ui::theme::{SyntaxTheme, get_syntax_theme, set_syntax_theme};

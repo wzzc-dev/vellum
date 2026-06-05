@@ -543,6 +543,10 @@ pub fn math_tree_to_display_text(tree: &MathNodeTree) -> String {
     tree.nodes.iter().map(node_to_text).collect()
 }
 
+pub fn math_source_to_display_text(source: &str) -> String {
+    math_tree_to_display_text(&parse_math(source))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MathTokenType {
     Command,

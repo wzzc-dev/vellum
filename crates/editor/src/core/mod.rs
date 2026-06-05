@@ -12,7 +12,7 @@ pub(crate) mod table;
 pub mod text_ops;
 
 pub use code_highlight::CodeTokenType;
-pub use math_render::MathTokenType;
+pub use math_render::{MathTokenType, math_source_to_display_text};
 pub use controller::{
     BlockSnapshot, CaretPosition, ConflictState, DocumentSource, EditCommand, EditorController,
     EditorEffects, EditorSnapshot, EditorViewMode, FileSyncEvent, OutlineItem, SyncPolicy,

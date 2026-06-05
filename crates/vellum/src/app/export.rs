@@ -612,10 +612,21 @@ fn replace_inline_typora_markup_in_line(line: &str) -> String {
 
 fn render_math_block(source: &str) -> String {
     let source = source.trim();
+    let fallback = math_fallback_text(source);
     format!(
-        "<div class=\"math math-block\">&#92;[{}&#92;]</div>\n",
-        escape_html(source)
+        "<div class=\"math-block-wrap\"><div class=\"math-fallback math-block-fallback\">{}</div><div class=\"math math-block\">&#92;[{}&#92;]</div></div>\n",
+        escape_html(&fallback),
+        escape_html(source),
     )
+}
+
+fn math_fallback_text(source: &str) -> String {
+    let fallback = editor::math_source_to_display_text(source);
+    if fallback.trim().is_empty() {
+        source.trim().to_string()
+    } else {
+        fallback
+    }
 }
 
 fn render_mermaid_block(source: &str) -> String {
@@ -1070,8 +1081,9 @@ fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
     Some((
         raw,
         format!(
-            "<span class=\"math math-inline\">&#92;({}&#92;)</span>",
-            escape_html(inner.trim())
+            "<span class=\"math-inline-wrap\"><span class=\"math-fallback math-inline-fallback\">{}</span><span class=\"math math-inline\">&#92;({}&#92;)</span></span>",
+            escape_html(&math_fallback_text(inner.trim())),
+            escape_html(inner.trim()),
         ),
     ))
 }
@@ -1665,15 +1677,43 @@ table {{ border-collapse: collapse; width: 100%; }}
 th, td {{ border: 1px solid var(--rule); padding: .45em .65em; }}
 th {{ background: color-mix(in srgb, var(--code-bg) 76%, transparent); }}
 mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border-radius: 3px; }}
-.math-inline {{ font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif; white-space: nowrap; }}
+.math-inline-wrap {{ white-space: nowrap; }}
+.math-inline,
+.math-inline-fallback {{ font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif; }}
+.math {{
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}}
+body.math-rendered .math {{
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+}}
+body.math-rendered .math-fallback {{ display: none; }}
+.math-block-wrap {{ margin: 1.25em 0; }}
 .math-block {{
   display: block;
   overflow-x: auto;
-  margin: 1.25em 0;
+  margin: 0;
   padding: .85em 1em;
   text-align: center;
   background: color-mix(in srgb, var(--code-bg) 52%, transparent);
   border-radius: 6px;
+}}
+.math-block-fallback {{
+  display: block;
+  overflow-x: auto;
+  padding: .85em 1em;
+  text-align: center;
+  background: color-mix(in srgb, var(--code-bg) 52%, transparent);
+  border-radius: 6px;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
 }}
 .mermaid-diagram {{
   overflow-x: auto;
@@ -1730,7 +1770,7 @@ mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border
   }}
   main {{ width: auto; margin: 0; }}
   h1, h2, h3, h4, h5, h6 {{ break-after: avoid; page-break-after: avoid; }}
-  p, blockquote, pre, table, ul, ol, .math-block, .mermaid-diagram, .callout {{
+  p, blockquote, pre, table, ul, ol, .math-block-wrap, .mermaid-diagram, .callout {{
     break-inside: avoid;
     page-break-inside: avoid;
   }}
@@ -1773,7 +1813,12 @@ window.MathJax = {
     inlineMath: [["\\(", "\\)"]],
     displayMath: [["\\[", "\\]"]]
   },
-  svg: { fontCache: "global" }
+  svg: { fontCache: "global" },
+  startup: {
+    pageReady: () => MathJax.startup.defaultPageReady().then(() => {
+      document.body.classList.add("math-rendered");
+    })
+  }
 };
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
@@ -1913,8 +1958,10 @@ mod tests {
         assert!(html.contains("<table>"));
         assert!(html.contains("<code class=\"language-rust\">"));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
         assert!(html.contains("mathjax@3"));
+        assert!(html.contains("math-rendered"));
         assert!(html.contains("mermaid.esm.min.mjs"));
         assert!(html.contains("<svg class=\"mermaid-static\""));
         assert!(html.contains(">Export HTML<"));
@@ -2238,15 +2285,19 @@ mod tests {
             "Math",
         )
         .unwrap();
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
+        assert!(html.contains("<div class=\"math-fallback math-block-fallback\">∫₀¹ x² dx</div>"));
         assert!(html.contains("<div class=\"math math-block\">&#92;[\\int_0^1 x^2 dx&#92;]</div>"));
         assert!(html.contains("mathjax@3"));
+        assert!(html.contains("math-rendered"));
     }
 
     #[test]
     fn math_export_skips_code_and_escapes_html() {
         let html = export_markdown_to_html("`$x$` and $<x>$", "Math").unwrap();
         assert!(html.contains("<code>$x$</code>"));
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">&lt;x&gt;</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(&lt;x&gt;\\)</span>"));
     }
 
