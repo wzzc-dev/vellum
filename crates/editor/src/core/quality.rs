@@ -133,6 +133,17 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
     assert!(
         map.blocks
             .iter()
+            .flat_map(|block| &block.spans)
+            .any(|span| matches!(
+                span.meta,
+                Some(RenderSpanMeta::Image { ref src, .. })
+                    if src == "assets/reference-diagram.svg"
+            )),
+        "longform sample should include a referenced local image"
+    );
+    assert!(
+        map.blocks
+            .iter()
             .any(|block| matches!(block.kind, BlockKind::Table)),
         "longform sample should include a table"
     );

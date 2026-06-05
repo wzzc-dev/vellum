@@ -2164,6 +2164,8 @@ mod tests {
         assert!(html.contains("<table>"));
         assert!(html.contains("<code class=\"language-rust\">"));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
+        assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
+        assert!(html.contains("title=\"Referenced local diagram\""));
         assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
         assert!(html.contains("a² + b² = c²; E = mc²"));
@@ -2177,6 +2179,7 @@ mod tests {
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
+        assert!(root.join("longform_assets/reference-diagram.svg").is_file());
 
         std::fs::remove_dir_all(root).unwrap();
     }

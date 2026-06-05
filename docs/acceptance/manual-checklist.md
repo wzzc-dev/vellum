@@ -18,6 +18,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 ## Assets
 
 - Confirm the local cover image renders from `docs/acceptance/assets/cover.svg`.
+- Confirm the referenced local diagram renders from `docs/acceptance/assets/reference-diagram.svg`.
 - Paste or drop a test image into the document.
 - Confirm the inserted image is written under the configured image asset folder and the Markdown path is document-relative.
 

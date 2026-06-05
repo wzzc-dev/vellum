@@ -13,6 +13,10 @@ This document is a compact end-to-end sample for longform writing. It exercises 
 
 ![Acceptance cover](assets/cover.svg)
 
+![Referenced local diagram][asset-diagram]
+
+[asset-diagram]: assets/reference-diagram.svg "Referenced local diagram"
+
 ## Editing Blocks
 
 - Draft the introduction.

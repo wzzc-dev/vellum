@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="260" viewBox="0 0 720 260" role="img" aria-labelledby="title desc">
+  <title id="title">Referenced local diagram</title>
+  <desc id="desc">A compact three-step local asset workflow used by the acceptance document.</desc>
+  <rect width="720" height="260" rx="18" fill="#f5f7fb"/>
+  <g fill="#ffffff" stroke="#c8d0dd" stroke-width="2">
+    <rect x="58" y="78" width="150" height="86" rx="10"/>
+    <rect x="285" y="78" width="150" height="86" rx="10"/>
+    <rect x="512" y="78" width="150" height="86" rx="10"/>
+  </g>
+  <g fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M214 121 H278"/>
+    <path d="M441 121 H505"/>
+    <path d="M266 109 L278 121 L266 133"/>
+    <path d="M493 109 L505 121 L493 133"/>
+  </g>
+  <g fill="#172033" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">
+    <text x="133" y="118">Reference</text>
+    <text x="360" y="118">Resolve</text>
+    <text x="587" y="118">Export</text>
+  </g>
+  <g fill="#526070" font-family="Arial, Helvetica, sans-serif" font-size="13" text-anchor="middle">
+    <text x="133" y="142">label and definition</text>
+    <text x="360" y="142">document-relative path</text>
+    <text x="587" y="142">copied asset</text>
+  </g>
+</svg>
