@@ -11,6 +11,8 @@ tags: [acceptance, export]
 
 This document is a compact end-to-end sample for longform writing. It exercises headings, outline entries, lists, tables, code, local images, inline math, block math, diagrams, footnotes, and a generated table of contents.
 
+The exported article should keep local companion links portable, such as the [acceptance appendix](assets/appendix.md#notes).
+
 ![Acceptance cover](assets/cover.svg#acceptance-cover)
 
 ![Referenced local diagram][asset-diagram]

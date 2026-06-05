@@ -27,7 +27,7 @@ pub(super) fn export_markdown_to_html_file(
     output_path: &Path,
 ) -> Result<()> {
     let markdown = match source_dir {
-        Some(source_dir) => rewrite_local_image_assets(markdown, source_dir, output_path)?,
+        Some(source_dir) => rewrite_local_assets(markdown, source_dir, output_path)?,
         None => markdown.to_string(),
     };
     let html = export_markdown_to_html(&markdown, title)?;
@@ -71,12 +71,12 @@ impl<'a> ExportAssetContext<'a> {
     }
 
     fn exported_destination(&mut self, destination: &str) -> Result<Option<String>> {
-        if should_leave_image_destination(destination) {
+        if should_leave_local_destination(destination) {
             return Ok(None);
         }
 
         let Some((source_path, reference_suffix)) =
-            local_image_source_path(self.source_dir, destination)
+            local_asset_source_path(self.source_dir, destination)
         else {
             return Ok(None);
         };
@@ -109,7 +109,7 @@ impl<'a> ExportAssetContext<'a> {
         let stem = source_path
             .file_stem()
             .and_then(|name| name.to_str())
-            .unwrap_or("image");
+            .unwrap_or("asset");
         let ext = source_path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -132,13 +132,9 @@ impl<'a> ExportAssetContext<'a> {
     }
 }
 
-fn rewrite_local_image_assets(
-    markdown: &str,
-    source_dir: &Path,
-    output_path: &Path,
-) -> Result<String> {
+fn rewrite_local_assets(markdown: &str, source_dir: &Path, output_path: &Path) -> Result<String> {
     let mut assets = ExportAssetContext::new(source_dir, output_path);
-    let image_reference_labels = collect_image_reference_labels(markdown);
+    let reference_labels = collect_asset_reference_labels(markdown);
     let mut out = String::with_capacity(markdown.len());
     let mut fence_marker: Option<FenceMarker> = None;
 
@@ -160,24 +156,26 @@ fn rewrite_local_image_assets(
             continue;
         }
 
-        out.push_str(&rewrite_line_image_assets(
-            line,
-            &mut assets,
-            &image_reference_labels,
-        )?);
+        out.push_str(&rewrite_line_assets(line, &mut assets, &reference_labels)?);
         out.push_str(newline);
     }
 
     Ok(out)
 }
 
-fn rewrite_line_image_assets(
+struct AssetReferenceLabels {
+    images: HashSet<String>,
+    links: HashSet<String>,
+}
+
+fn rewrite_line_assets(
     line: &str,
     assets: &mut ExportAssetContext<'_>,
-    image_reference_labels: &HashSet<String>,
+    reference_labels: &AssetReferenceLabels,
 ) -> Result<String> {
     if let Some(definition) = parse_reference_definition(line) {
-        if image_reference_labels.contains(&normalize_reference_label(definition.label)) {
+        let label = normalize_reference_label(definition.label);
+        if reference_labels.images.contains(&label) || reference_labels.links.contains(&label) {
             if let Some(destination) = assets.exported_destination(&definition.destination)? {
                 return Ok(format!(
                     "{}{}{}",
@@ -210,6 +208,18 @@ fn rewrite_line_image_assets(
                 out.push_str(image.raw);
             }
             index += image.raw.len();
+        } else if let Some(link) = parse_markdown_link(rest) {
+            if let Some(destination) = assets.exported_destination(&link.destination)? {
+                out.push('[');
+                out.push_str(link.label);
+                out.push_str("](");
+                out.push_str(&markdown_link_destination(&destination));
+                out.push_str(link.title_suffix);
+                out.push(')');
+            } else {
+                out.push_str(link.raw);
+            }
+            index += link.raw.len();
         } else if let Some(tag) = parse_html_asset_tag(rest) {
             if let Some(rewritten) = rewrite_html_asset_tag(&tag, assets)? {
                 out.push_str(&rewritten);
@@ -228,8 +238,11 @@ fn rewrite_line_image_assets(
     Ok(out)
 }
 
-fn collect_image_reference_labels(markdown: &str) -> HashSet<String> {
-    let mut labels = HashSet::new();
+fn collect_asset_reference_labels(markdown: &str) -> AssetReferenceLabels {
+    let mut labels = AssetReferenceLabels {
+        images: HashSet::new(),
+        links: HashSet::new(),
+    };
     let mut fence_marker: Option<FenceMarker> = None;
 
     for segment in markdown.split_inclusive('\n') {
@@ -247,13 +260,17 @@ fn collect_image_reference_labels(markdown: &str) -> HashSet<String> {
             continue;
         }
 
-        collect_image_reference_labels_from_line(line, &mut labels);
+        collect_asset_reference_labels_from_line(line, &mut labels);
     }
 
     labels
 }
 
-fn collect_image_reference_labels_from_line(line: &str, labels: &mut HashSet<String>) {
+fn collect_asset_reference_labels_from_line(line: &str, labels: &mut AssetReferenceLabels) {
+    if parse_reference_definition(line).is_some() {
+        return;
+    }
+
     let mut index = 0usize;
     while index < line.len() {
         let rest = &line[index..];
@@ -261,7 +278,10 @@ fn collect_image_reference_labels_from_line(line: &str, labels: &mut HashSet<Str
             let len = code_span_len(rest).unwrap_or(1);
             index += len;
         } else if let Some((raw_len, label)) = parse_image_reference_use(rest) {
-            labels.insert(label);
+            labels.images.insert(label);
+            index += raw_len;
+        } else if let Some((raw_len, label)) = parse_link_reference_use(rest) {
+            labels.links.insert(label);
             index += raw_len;
         } else if let Some(ch) = rest.chars().next() {
             index += ch.len_utf8();
@@ -301,6 +321,43 @@ fn parse_image_reference_use(rest: &str) -> Option<(usize, String)> {
             return None;
         }
         let raw_len = 2 + close_label + 1;
+        Some((raw_len, normalized))
+    }
+}
+
+fn parse_link_reference_use(rest: &str) -> Option<(usize, String)> {
+    if rest.starts_with("![") {
+        return None;
+    }
+    let after_open = rest.strip_prefix('[')?;
+    let close_label = find_unescaped_char(after_open, ']')?;
+    let label = &after_open[..close_label];
+    let after_label = &after_open[close_label + 1..];
+
+    if after_label.starts_with('(') {
+        return None;
+    }
+
+    if let Some(after_ref_open) = after_label.strip_prefix('[') {
+        let close_ref = find_unescaped_char(after_ref_open, ']')?;
+        let explicit_label = &after_ref_open[..close_ref];
+        let label = if explicit_label.is_empty() {
+            label
+        } else {
+            explicit_label
+        };
+        let normalized = normalize_reference_label(label);
+        if normalized.is_empty() {
+            return None;
+        }
+        let raw_len = 1 + close_label + 1 + 1 + close_ref + 1;
+        Some((raw_len, normalized))
+    } else {
+        let normalized = normalize_reference_label(label);
+        if normalized.is_empty() {
+            return None;
+        }
+        let raw_len = 1 + close_label + 1;
         Some((raw_len, normalized))
     }
 }
@@ -355,6 +412,13 @@ struct MarkdownImage<'a> {
     title_suffix: &'a str,
 }
 
+struct MarkdownLink<'a> {
+    raw: &'a str,
+    label: &'a str,
+    destination: String,
+    title_suffix: &'a str,
+}
+
 struct HtmlAssetTag<'a> {
     raw: &'a str,
     src_range: Option<Range<usize>>,
@@ -372,6 +436,27 @@ fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
     let (destination, title_suffix) = split_image_destination(inner)?;
     let raw_len = 2 + close_label + 1 + 1 + close_destination + 1;
     Some(MarkdownImage {
+        raw: &rest[..raw_len],
+        label,
+        destination,
+        title_suffix,
+    })
+}
+
+fn parse_markdown_link(rest: &str) -> Option<MarkdownLink<'_>> {
+    if rest.starts_with("![") {
+        return None;
+    }
+    let after_open = rest.strip_prefix('[')?;
+    let close_label = find_unescaped_char(after_open, ']')?;
+    let label = &after_open[..close_label];
+    let after_label = &after_open[close_label + 1..];
+    let destination_body = after_label.strip_prefix('(')?;
+    let close_destination = find_image_destination_close(destination_body)?;
+    let inner = &destination_body[..close_destination];
+    let (destination, title_suffix) = split_image_destination(inner)?;
+    let raw_len = 1 + close_label + 1 + 1 + close_destination + 1;
+    Some(MarkdownLink {
         raw: &rest[..raw_len],
         label,
         destination,
@@ -680,7 +765,7 @@ fn unescape_markdown_destination(destination: &str) -> String {
     out
 }
 
-fn should_leave_image_destination(destination: &str) -> bool {
+fn should_leave_local_destination(destination: &str) -> bool {
     let trimmed = destination.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return true;
@@ -692,31 +777,31 @@ fn should_leave_image_destination(destination: &str) -> bool {
         || lower.starts_with("mailto:")
 }
 
-fn local_image_source_path<'a>(
+fn local_asset_source_path<'a>(
     source_dir: &Path,
     destination: &'a str,
 ) -> Option<(PathBuf, &'a str)> {
-    let source_path = resolve_local_image_path(source_dir, destination);
+    let source_path = resolve_local_asset_path(source_dir, destination);
     if source_path.is_file() {
         return Some((source_path, ""));
     }
 
-    let (path_part, suffix) = split_local_image_reference_suffix(destination)?;
+    let (path_part, suffix) = split_local_asset_reference_suffix(destination)?;
     if path_part.trim().is_empty() {
         return None;
     }
-    let source_path = resolve_local_image_path(source_dir, path_part);
+    let source_path = resolve_local_asset_path(source_dir, path_part);
     source_path.is_file().then_some((source_path, suffix))
 }
 
-fn split_local_image_reference_suffix(destination: &str) -> Option<(&str, &str)> {
+fn split_local_asset_reference_suffix(destination: &str) -> Option<(&str, &str)> {
     let suffix_start = destination
         .char_indices()
         .find_map(|(index, ch)| matches!(ch, '?' | '#').then_some(index))?;
     Some((&destination[..suffix_start], &destination[suffix_start..]))
 }
 
-fn resolve_local_image_path(source_dir: &Path, destination: &str) -> PathBuf {
+fn resolve_local_asset_path(source_dir: &Path, destination: &str) -> PathBuf {
     let destination = destination.trim();
     let path = Path::new(destination);
     if path.is_absolute() {
@@ -2782,6 +2867,7 @@ mod tests {
         assert!(html.contains("src=\"longform_assets/cover.svg#acceptance-cover\""));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
+        assert!(html.contains("href=\"longform_assets/appendix.md#notes\""));
         assert!(
             html.contains(
                 "srcset=\"longform_assets/cover.svg 1x, longform_assets/reference-diagram.svg#workflow 2x\""
@@ -2805,6 +2891,7 @@ mod tests {
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
         assert!(root.join("longform_assets/reference-diagram.svg").is_file());
+        assert!(root.join("longform_assets/appendix.md").is_file());
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -3003,6 +3090,81 @@ mod tests {
     }
 
     #[test]
+    fn html_file_export_copies_local_attachment_links() {
+        let root = temp_export_dir("html-link-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(source.join("notes")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/report.pdf"), b"report").unwrap();
+        std::fs::write(source.join("notes/appendix.md"), b"# Appendix").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "[Report](assets/report.pdf \"Report\")\n\n",
+                "[Appendix](notes/appendix.md#summary)\n\n",
+                "[Remote](https://example.com/report.pdf)\n\n",
+                "[Same page](#draft)",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("href=\"article_assets/report.pdf\""));
+        assert!(html.contains("title=\"Report\""));
+        assert!(html.contains("href=\"article_assets/appendix.md#summary\""));
+        assert!(html.contains("href=\"https://example.com/report.pdf\""));
+        assert!(html.contains("href=\"#draft\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/report.pdf")).unwrap(),
+            b"report"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/appendix.md")).unwrap(),
+            b"# Appendix"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_reference_attachment_links() {
+        let root = temp_export_dir("html-reference-link-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/guide.pdf"), b"guide").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "[Guide][guide]\n\n",
+                "[Guide]: assets/guide.pdf?download=1#page-2 \"Guide PDF\"\n",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("href=\"article_assets/guide.pdf?download=1#page-2\""));
+        assert!(html.contains("title=\"Guide PDF\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/guide.pdf")).unwrap(),
+            b"guide"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn html_file_export_leaves_remote_images_and_code_spans_alone() {
         let root = temp_export_dir("html-remote-assets");
         let source = root.join("source");
@@ -3023,6 +3185,37 @@ mod tests {
         let html = std::fs::read_to_string(&output).unwrap();
         assert!(html.contains("<code>![Hidden](assets/hidden.png)</code>"));
         assert!(html.contains("src=\"https://example.com/remote.png\""));
+        assert!(!export_dir.join("article_assets").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_leaves_attachment_links_inside_code_alone() {
+        let root = temp_export_dir("html-link-code-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/report.pdf"), b"report").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "`[Hidden](assets/report.pdf)`\n\n",
+                "```md\n",
+                "[Hidden](assets/report.pdf)\n",
+                "```\n",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("<code>[Hidden](assets/report.pdf)</code>"));
+        assert!(html.contains("<code class=\"language-md\">"));
         assert!(!export_dir.join("article_assets").exists());
 
         std::fs::remove_dir_all(root).unwrap();
@@ -3055,7 +3248,7 @@ mod tests {
     }
 
     #[test]
-    fn html_file_export_ignores_reference_assets_without_image_uses() {
+    fn html_file_export_copies_reference_link_assets_without_image_uses() {
         let root = temp_export_dir("html-ignored-reference-assets");
         let source = root.join("source");
         let export_dir = root.join("export");
@@ -3084,10 +3277,15 @@ mod tests {
         .unwrap();
 
         let html = std::fs::read_to_string(&output).unwrap();
-        assert!(html.contains("<a href=\"assets/doc.png\">Document</a>"));
+        assert!(html.contains("<a href=\"article_assets/doc.png\">Document</a>"));
         assert!(html.contains("<code>![Hidden][hidden]</code>"));
         assert!(html.contains("<code class=\"language-md\">"));
-        assert!(!export_dir.join("article_assets").exists());
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/doc.png")).unwrap(),
+            b"doc"
+        );
+        assert!(!export_dir.join("article_assets/hidden.png").exists());
+        assert!(!export_dir.join("article_assets/fenced.png").exists());
 
         std::fs::remove_dir_all(root).unwrap();
     }
