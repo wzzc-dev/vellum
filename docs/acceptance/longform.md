@@ -11,7 +11,7 @@ tags: [acceptance, export]
 
 This document is a compact end-to-end sample for longform writing. It exercises headings, outline entries, lists, tables, code, local images, inline math, block math, diagrams, footnotes, and a generated table of contents.
 
-![Acceptance cover](assets/cover.svg)
+![Acceptance cover](assets/cover.svg#acceptance-cover)
 
 ![Referenced local diagram][asset-diagram]
 

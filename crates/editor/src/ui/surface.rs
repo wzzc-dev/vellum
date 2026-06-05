@@ -3632,13 +3632,14 @@ fn resolve_image_source(src: &str, base_dir: Option<&Path>) -> Option<ResolvedIm
         return Some(ResolvedImageSource::Uri(src.to_string()));
     }
 
-    let path = if let Some(rest) = src.strip_prefix("~/") {
+    let local_src = local_image_path_part(src);
+    let path = if let Some(rest) = local_src.strip_prefix("~/") {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .map(|home| home.join(rest))
-            .unwrap_or_else(|| PathBuf::from(src))
+            .unwrap_or_else(|| PathBuf::from(local_src))
     } else {
-        PathBuf::from(src)
+        PathBuf::from(local_src)
     };
 
     if path.is_absolute() {
@@ -3650,6 +3651,14 @@ fn resolve_image_source(src: &str, base_dir: Option<&Path>) -> Option<ResolvedIm
             .map(|base_dir| base_dir.join(&path))
             .unwrap_or(path),
     ))
+}
+
+fn local_image_path_part(src: &str) -> &str {
+    src.char_indices()
+        .find_map(|(index, ch)| matches!(ch, '?' | '#').then_some(index))
+        .filter(|index| *index > 0)
+        .map(|index| &src[..index])
+        .unwrap_or(src)
 }
 
 fn looks_like_image_uri(src: &str) -> bool {
@@ -4882,12 +4891,34 @@ mod tests {
     }
 
     #[test]
+    fn resolves_local_image_paths_without_reference_suffixes() {
+        let resolved = resolve_image_source(
+            "assets/cover.png?cache=1#hero",
+            Some(Path::new("/tmp/docs")),
+        );
+        assert_eq!(
+            resolved,
+            Some(ResolvedImageSource::Path(PathBuf::from(
+                "/tmp/docs/assets/cover.png"
+            )))
+        );
+
+        let resolved = resolve_image_source("/tmp/docs/assets/cover.png#hero", None);
+        assert_eq!(
+            resolved,
+            Some(ResolvedImageSource::Path(PathBuf::from(
+                "/tmp/docs/assets/cover.png"
+            )))
+        );
+    }
+
+    #[test]
     fn leaves_remote_image_urls_as_uris() {
-        let resolved = resolve_image_source("https://example.com/image.png", None);
+        let resolved = resolve_image_source("https://example.com/image.png?cache=1#hero", None);
         assert_eq!(
             resolved,
             Some(ResolvedImageSource::Uri(
-                "https://example.com/image.png".to_string()
+                "https://example.com/image.png?cache=1#hero".to_string()
             ))
         );
         assert!(looks_like_image_uri("https://example.com/image.png"));

@@ -2779,6 +2779,7 @@ mod tests {
         assert!(html.contains("<h2 id=\"editing-blocks\">Editing Blocks</h2>"));
         assert!(html.contains("<table>"));
         assert!(html.contains("<code class=\"language-rust\">"));
+        assert!(html.contains("src=\"longform_assets/cover.svg#acceptance-cover\""));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
         assert!(
