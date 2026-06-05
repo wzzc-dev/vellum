@@ -613,7 +613,7 @@ fn replace_inline_typora_markup_in_line(line: &str) -> String {
 fn render_math_block(source: &str) -> String {
     let source = source.trim();
     format!(
-        "<div class=\"math math-block\"><code>{}</code></div>\n",
+        "<div class=\"math math-block\">&#92;[{}&#92;]</div>\n",
         escape_html(source)
     )
 }
@@ -640,7 +640,7 @@ fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
     Some((
         raw,
         format!(
-            "<span class=\"math math-inline\"><code>{}</code></span>",
+            "<span class=\"math math-inline\">&#92;({}&#92;)</span>",
             escape_html(inner.trim())
         ),
     ))
@@ -1171,6 +1171,7 @@ fn slugify(value: &str) -> String {
 }
 
 fn wrap_html_document(body: &str, title: &str) -> String {
+    let scripts = html_enhancement_scripts(body);
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -1234,7 +1235,6 @@ table {{ border-collapse: collapse; width: 100%; }}
 th, td {{ border: 1px solid var(--rule); padding: .45em .65em; }}
 th {{ background: color-mix(in srgb, var(--code-bg) 76%, transparent); }}
 mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border-radius: 3px; }}
-.math code {{ background: transparent; padding: 0; }}
 .math-inline {{ font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif; white-space: nowrap; }}
 .math-block {{
   display: block;
@@ -1269,12 +1269,43 @@ mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border
 <main>
 {}
 </main>
+{}
 </body>
 </html>
 "#,
         escape_html(title),
-        body
+        body,
+        scripts
     )
+}
+
+fn html_enhancement_scripts(body: &str) -> String {
+    let mut scripts = String::new();
+    if body.contains("class=\"math ") {
+        scripts.push_str(
+            r#"<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [["\\(", "\\)"]],
+    displayMath: [["\\[", "\\]"]]
+  },
+  svg: { fontCache: "global" }
+};
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+"#,
+        );
+    }
+    if body.contains("class=\"mermaid\"") {
+        scripts.push_str(
+            r#"<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad: true, securityLevel: "strict" });
+</script>
+"#,
+        );
+    }
+    scripts
 }
 
 fn escape_html(value: &str) -> String {
@@ -1344,6 +1375,8 @@ mod tests {
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("<title>Draft &lt;One&gt;</title>"));
         assert!(html.contains("<h1 id=\"hello\">Hello</h1>"));
+        assert!(!html.contains("mathjax@3"));
+        assert!(!html.contains("mermaid.esm.min.mjs"));
     }
 
     #[test]
@@ -1659,15 +1692,22 @@ mod tests {
             "Math",
         )
         .unwrap();
-        assert!(html.contains("<span class=\"math math-inline\"><code>E = mc^2</code></span>"));
-        assert!(html.contains("<div class=\"math math-block\"><code>\\int_0^1 x^2 dx</code></div>"));
+        assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
+        assert!(html.contains("<div class=\"math math-block\">&#92;[\\int_0^1 x^2 dx&#92;]</div>"));
+        assert!(html.contains("mathjax@3"));
     }
 
     #[test]
     fn math_export_skips_code_and_escapes_html() {
         let html = export_markdown_to_html("`$x$` and $<x>$", "Math").unwrap();
         assert!(html.contains("<code>$x$</code>"));
-        assert!(html.contains("<span class=\"math math-inline\"><code>&lt;x&gt;</code></span>"));
+        assert!(html.contains("<span class=\"math math-inline\">\\(&lt;x&gt;\\)</span>"));
+    }
+
+    #[test]
+    fn math_runtime_is_not_loaded_for_code_only_math_markers() {
+        let html = export_markdown_to_html("`$x$`", "Math").unwrap();
+        assert!(!html.contains("mathjax@3"));
     }
 
     #[test]
@@ -1679,6 +1719,7 @@ mod tests {
         .unwrap();
         assert!(html.contains("<pre class=\"mermaid\">graph TD\n  A --&gt; B</pre>"));
         assert!(html.contains(".mermaid"));
+        assert!(html.contains("mermaid.esm.min.mjs"));
     }
 
     #[test]
