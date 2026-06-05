@@ -306,7 +306,7 @@ impl VellumApp {
 
                 let _ = cx.update_window_entity(&view, |this, _, cx| {
                     match export_result {
-                        Ok(()) if open_after_export => match open_path_with_system(&path) {
+                        Ok(()) if open_after_export => match open_html_with_system(&path) {
                             Ok(()) => this.set_status(format!(
                                 "Exported and opened HTML at {}. Use browser Print to save PDF.",
                                 path.display()
@@ -332,7 +332,7 @@ impl VellumApp {
     pub(super) fn open_preferences_file(&mut self, cx: &mut Context<Self>) {
         match super::preferences::ensure_preferences_file(&self.preferences) {
             Ok(path) => {
-                if let Err(err) = open_path_with_system(&path) {
+                if let Err(err) = open_text_with_system(&path) {
                     self.set_status(format!(
                         "Preferences saved at {} but could not be opened: {err}",
                         path.display()
@@ -463,27 +463,53 @@ impl VellumApp {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn open_path_with_system(path: &std::path::Path) -> Result<()> {
-    std::process::Command::new("open")
-        .arg("-t")
-        .arg(path)
-        .spawn()?;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SystemOpenKind {
+    Html,
+    Text,
+}
+
+fn open_html_with_system(path: &std::path::Path) -> Result<()> {
+    system_open_command(path, SystemOpenKind::Html).spawn()?;
     Ok(())
+}
+
+fn open_text_with_system(path: &std::path::Path) -> Result<()> {
+    system_open_command(path, SystemOpenKind::Text).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn system_open_command(path: &std::path::Path, kind: SystemOpenKind) -> std::process::Command {
+    let mut command = std::process::Command::new("open");
+    if kind == SystemOpenKind::Text {
+        command.arg("-t");
+    }
+    command.arg(path);
+    command
 }
 
 #[cfg(target_os = "windows")]
-fn open_path_with_system(path: &std::path::Path) -> Result<()> {
-    let mut command = std::process::Command::new("notepad");
-    command.arg(path).spawn()?;
-    Ok(())
+fn system_open_command(path: &std::path::Path, kind: SystemOpenKind) -> std::process::Command {
+    match kind {
+        SystemOpenKind::Html => {
+            let mut command = std::process::Command::new("cmd");
+            command.arg("/C").arg("start").arg("").arg(path);
+            command
+        }
+        SystemOpenKind::Text => {
+            let mut command = std::process::Command::new("notepad");
+            command.arg(path);
+            command
+        }
+    }
 }
 
 #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-fn open_path_with_system(path: &std::path::Path) -> Result<()> {
+fn system_open_command(path: &std::path::Path, _kind: SystemOpenKind) -> std::process::Command {
     let mut command = std::process::Command::new("xdg-open");
-    command.arg(path).spawn()?;
-    Ok(())
+    command.arg(path);
+    command
 }
 
 fn map_workspace_event_for_editor(event: &WorkspaceEvent) -> FileSyncEvent {
@@ -913,5 +939,62 @@ mod tests {
 
         assert!(removed_path_matches_document(&path, &root, true));
         assert!(!removed_path_matches_document(&path, &root, false));
+    }
+
+    #[test]
+    fn html_open_uses_system_html_handler() {
+        let (program, args) = command_parts(SystemOpenKind::Html, "draft.html");
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec!["draft.html"]);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(program, "cmd");
+            assert_eq!(args, vec!["/C", "start", "", "draft.html"]);
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec!["draft.html"]);
+        }
+    }
+
+    #[test]
+    fn text_open_uses_text_handler() {
+        let (program, args) = command_parts(SystemOpenKind::Text, "preferences.conf");
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec!["-t", "preferences.conf"]);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(program, "notepad");
+            assert_eq!(args, vec!["preferences.conf"]);
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec!["preferences.conf"]);
+        }
+    }
+
+    fn command_parts(kind: SystemOpenKind, path: &str) -> (String, Vec<String>) {
+        let command = system_open_command(Path::new(path), kind);
+        (
+            command.get_program().to_string_lossy().into_owned(),
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+        )
     }
 }
