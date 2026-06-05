@@ -1,6 +1,12 @@
 use std::time::Instant;
 
-use super::{DisplayMap, DocumentBuffer, HiddenSyntaxPolicy, RenderSpanKind, SelectionModel};
+use super::{
+    BlockKind, DisplayMap, DocumentBuffer, EmbeddedNodeKind, HiddenSyntaxPolicy, RenderSpanKind,
+    RenderSpanMeta, SelectionModel,
+};
+
+const LONGFORM_ACCEPTANCE_SAMPLE: &str =
+    include_str!("../../../../docs/acceptance/longform.md");
 
 const QUALITY_CORPUS: &[(&str, &str)] = &[
     (
@@ -23,6 +29,7 @@ const QUALITY_CORPUS: &[(&str, &str)] = &[
         "front_matter",
         "---\ntitle: Draft\nstatus: review\n---\n\n# Draft\n\nContent with ==highlight== and ^sup^ text.\n",
     ),
+    ("longform_acceptance", LONGFORM_ACCEPTANCE_SAMPLE),
 ];
 
 #[test]
@@ -97,6 +104,77 @@ fn quality_corpus_marks_embedded_surfaces() {
             .flat_map(|block| &block.spans)
             .any(|span| span.kind == RenderSpanKind::Text),
         "embedded-heavy documents still need text spans for mapping"
+    );
+}
+
+#[test]
+fn longform_acceptance_sample_covers_live_preview_surfaces() {
+    let document = DocumentBuffer::from_text(LONGFORM_ACCEPTANCE_SAMPLE);
+    let map = DisplayMap::from_document(&document, None, HiddenSyntaxPolicy::SelectionAware);
+
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.kind, BlockKind::YamlFrontMatter)),
+        "longform sample should include front matter metadata"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::Toc))),
+        "longform sample should include a TOC block"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::Image))),
+        "longform sample should include a local image block"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.kind, BlockKind::Table)),
+        "longform sample should include a table"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::CodeBlock { .. }))),
+        "longform sample should include a code fence"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::MathBlock))),
+        "longform sample should include a display math block"
+    );
+    assert!(
+        map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(EmbeddedNodeKind::Diagram { ref language }) if language == "mermaid"
+        )),
+        "longform sample should include a Mermaid diagram"
+    );
+    assert!(
+        map.blocks.iter().any(|block| matches!(
+            block.embedded,
+            Some(EmbeddedNodeKind::FootnoteDefinition)
+        )),
+        "longform sample should include a footnote definition"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .flat_map(|block| &block.spans)
+            .any(|span| matches!(span.meta, Some(RenderSpanMeta::Math { display: false, .. }))),
+        "longform sample should include inline math"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .flat_map(|block| &block.spans)
+            .any(|span| matches!(span.meta, Some(RenderSpanMeta::ReferenceLink { .. }))),
+        "longform sample should include a footnote reference"
     );
 }
 
