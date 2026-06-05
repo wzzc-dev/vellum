@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use super::layout::next_untitled_path;
 use super::*;
@@ -400,13 +400,23 @@ impl VellumApp {
 
             match &event {
                 WorkspaceEvent::Removed(path) => {
-                    if self.workspace.selected_file.as_ref() == Some(path) {
+                    if self
+                        .workspace
+                        .selected_file
+                        .as_ref()
+                        .is_some_and(|selected_file| path_is_or_descends(selected_file, path))
+                    {
                         self.workspace.selected_file = None;
                     }
                 }
                 WorkspaceEvent::Relocated { from, to } => {
-                    if self.workspace.selected_file.as_ref() == Some(from) {
-                        self.workspace.selected_file = Some(to.clone());
+                    if let Some(relocated_path) = self
+                        .workspace
+                        .selected_file
+                        .as_ref()
+                        .and_then(|selected_file| relocated_path(selected_file, from, to))
+                    {
+                        self.workspace.selected_file = Some(relocated_path);
                     }
                 }
                 WorkspaceEvent::Changed(_) | WorkspaceEvent::Unknown => {}
@@ -486,6 +496,19 @@ fn map_workspace_event_for_editor(event: &WorkspaceEvent) -> FileSyncEvent {
         },
         WorkspaceEvent::Unknown => FileSyncEvent::Unknown,
     }
+}
+
+fn relocated_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    let relative_path = path.strip_prefix(from).ok()?;
+    if relative_path.as_os_str().is_empty() {
+        Some(to.to_path_buf())
+    } else {
+        Some(to.join(relative_path))
+    }
+}
+
+fn path_is_or_descends(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
 }
 
 impl VellumApp {
@@ -604,7 +627,14 @@ impl VellumApp {
                 // Close any tab that has this file open
                 let mut indices_to_remove = Vec::new();
                 for (i, tab) in self.tabs.iter().enumerate() {
-                    if tab.editor.read(cx).document_path() == Some(&path) {
+                    if tab
+                        .editor
+                        .read(cx)
+                        .document_path()
+                        .is_some_and(|document_path| {
+                            removed_path_matches_document(document_path, &path, is_dir)
+                        })
+                    {
                         indices_to_remove.push(i);
                     }
                 }
@@ -626,7 +656,14 @@ impl VellumApp {
                     self.subscribe_active_editor(_window, cx);
                 }
 
-                if self.workspace.selected_file.as_ref() == Some(&path) {
+                if self
+                    .workspace
+                    .selected_file
+                    .as_ref()
+                    .is_some_and(|selected_file| {
+                        removed_path_matches_document(selected_file, &path, is_dir)
+                    })
+                {
                     self.workspace.selected_file = None;
                 }
                 self.refresh_tree(cx);
@@ -719,7 +756,13 @@ impl VellumApp {
         }
 
         for tab in self.tabs.iter_mut() {
-            if tab.editor.read(cx).document_path() == Some(&path) {
+            let should_relocate = tab
+                .editor
+                .read(cx)
+                .document_path()
+                .and_then(|document_path| relocated_path(document_path, &path, &new_path))
+                .is_some();
+            if should_relocate {
                 tab.editor.update(cx, |editor, cx| {
                     editor.apply_file_event(
                         FileSyncEvent::Relocated {
@@ -733,8 +776,13 @@ impl VellumApp {
             }
         }
 
-        if self.workspace.selected_file.as_ref() == Some(&path) {
-            self.workspace.selected_file = Some(new_path.clone());
+        if let Some(relocated_selected_file) = self
+            .workspace
+            .selected_file
+            .as_ref()
+            .and_then(|selected_file| relocated_path(selected_file, &path, &new_path))
+        {
+            self.workspace.selected_file = Some(relocated_selected_file);
         }
 
         self.refresh_tree(cx);
@@ -780,7 +828,13 @@ impl VellumApp {
         }
 
         for tab in self.tabs.iter_mut() {
-            if tab.editor.read(cx).document_path() == Some(&path) {
+            let should_relocate = tab
+                .editor
+                .read(cx)
+                .document_path()
+                .and_then(|document_path| relocated_path(document_path, &path, &new_path))
+                .is_some();
+            if should_relocate {
                 tab.editor.update(cx, |editor, cx| {
                     editor.apply_file_event_without_window(
                         FileSyncEvent::Relocated {
@@ -793,11 +847,71 @@ impl VellumApp {
             }
         }
 
-        if self.workspace.selected_file.as_ref() == Some(&path) {
-            self.workspace.selected_file = Some(new_path.clone());
+        if let Some(relocated_selected_file) = self
+            .workspace
+            .selected_file
+            .as_ref()
+            .and_then(|selected_file| relocated_path(selected_file, &path, &new_path))
+        {
+            self.workspace.selected_file = Some(relocated_selected_file);
         }
 
         self.refresh_tree(cx);
         cx.notify();
+    }
+}
+
+fn removed_path_matches_document(
+    document_path: &Path,
+    removed_path: &Path,
+    removed_is_dir: bool,
+) -> bool {
+    if removed_is_dir {
+        path_is_or_descends(document_path, removed_path)
+    } else {
+        document_path == removed_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relocated_path_maps_descendant_path() {
+        let from = PathBuf::from("workspace/drafts");
+        let to = PathBuf::from("workspace/archive");
+        let path = PathBuf::from("workspace/drafts/chapter-one/note.md");
+
+        assert_eq!(
+            relocated_path(&path, &from, &to),
+            Some(PathBuf::from("workspace/archive/chapter-one/note.md"))
+        );
+    }
+
+    #[test]
+    fn relocated_path_maps_exact_path() {
+        let from = PathBuf::from("workspace/drafts/note.md");
+        let to = PathBuf::from("workspace/archive/note.md");
+
+        assert_eq!(relocated_path(&from, &from, &to), Some(to));
+    }
+
+    #[test]
+    fn relocated_path_ignores_sibling_with_shared_prefix() {
+        let from = PathBuf::from("workspace/drafts");
+        let to = PathBuf::from("workspace/archive");
+        let path = PathBuf::from("workspace/drafts-old/note.md");
+
+        assert_eq!(relocated_path(&path, &from, &to), None);
+    }
+
+    #[test]
+    fn removed_path_matches_descendant_only_for_folders() {
+        let root = PathBuf::from("workspace/drafts");
+        let path = PathBuf::from("workspace/drafts/chapter-one/note.md");
+
+        assert!(removed_path_matches_document(&path, &root, true));
+        assert!(!removed_path_matches_document(&path, &root, false));
     }
 }

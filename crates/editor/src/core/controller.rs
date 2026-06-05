@@ -1045,26 +1045,37 @@ impl EditorController {
                 }
             }
             FileSyncEvent::Removed(path) => {
-                if self.sync.path.as_ref() == Some(&path) {
-                    self.sync.mark_missing();
-                    self.status_message = format!("File removed: {}", path.display());
-                    EditorEffects {
-                        changed: true,
-                        selection_changed: false,
-                        reload_path: None,
-                    }
-                } else {
-                    EditorEffects::default()
+                let Some(removed_path) = self
+                    .sync
+                    .path
+                    .as_ref()
+                    .filter(|current_path| path_is_or_descends(current_path, &path))
+                    .cloned()
+                else {
+                    return EditorEffects::default();
+                };
+
+                self.sync.mark_missing();
+                self.status_message = format!("File removed: {}", removed_path.display());
+                EditorEffects {
+                    changed: true,
+                    selection_changed: false,
+                    reload_path: None,
                 }
             }
             FileSyncEvent::Relocated { from, to } => {
-                if self.sync.path.as_ref() == Some(&from) {
-                    self.sync.relocate(to.clone());
-                    self.status_message = format!("File moved to {}", to.display());
+                if let Some(relocated_path) = self
+                    .sync
+                    .path
+                    .as_ref()
+                    .and_then(|current_path| relocated_path(current_path, &from, &to))
+                {
+                    self.sync.relocate(relocated_path.clone());
+                    self.status_message = format!("File moved to {}", relocated_path.display());
                     EditorEffects {
                         changed: true,
                         selection_changed: false,
-                        reload_path: Some(to),
+                        reload_path: Some(relocated_path),
                     }
                 } else {
                     EditorEffects::default()
@@ -3233,6 +3244,19 @@ fn file_modified_at(path: &Path) -> Option<SystemTime> {
         .and_then(|meta| meta.modified().ok())
 }
 
+fn relocated_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    let relative_path = path.strip_prefix(from).ok()?;
+    if relative_path.as_os_str().is_empty() {
+        Some(to.to_path_buf())
+    } else {
+        Some(to.join(relative_path))
+    }
+}
+
+fn path_is_or_descends(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
 fn build_outline(document: &DocumentBuffer) -> Vec<OutlineItem> {
     document
         .blocks()
@@ -3805,6 +3829,49 @@ mod tests {
     }
 
     #[test]
+    fn folder_relocation_updates_descendant_document_path_without_discarding_dirty_text() {
+        let old_root = PathBuf::from("drafts/current");
+        let new_root = PathBuf::from("drafts/archive");
+        let old_path = old_root.join("chapter-one/note.md");
+        let new_path = new_root.join("chapter-one/note.md");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(old_path.clone()),
+                suggested_path: Some(old_path.clone()),
+                text: "Original\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::SyncDocumentState {
+            text: "Unsaved folder edit\n".to_string(),
+            selection: SelectionState::collapsed("Unsaved folder edit".len()),
+        });
+
+        let effects = controller.apply_file_event(FileSyncEvent::Relocated {
+            from: old_root,
+            to: new_root,
+        });
+
+        assert!(effects.changed);
+        assert!(!effects.selection_changed);
+        assert_eq!(effects.reload_path, Some(new_path.clone()));
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.path, Some(new_path.clone()));
+        assert_eq!(snapshot.display_name, "note.md");
+        assert_eq!(snapshot.document_text, "Unsaved folder edit\n");
+        assert_eq!(snapshot.sync_state, SyncState::Dirty);
+        assert!(snapshot.dirty);
+        assert!(!snapshot.is_missing);
+        assert_eq!(
+            snapshot.status_message,
+            format!("File moved to {}", new_path.display())
+        );
+    }
+
+    #[test]
     fn removed_file_stays_missing_until_disk_state_recovers() {
         let path = PathBuf::from("drafts/missing.md");
         let mut controller = EditorController::new(
@@ -3838,6 +3905,36 @@ mod tests {
         assert!(snapshot.dirty);
         assert_eq!(snapshot.sync_state, SyncState::Missing);
         assert_eq!(snapshot.document_text, "Unsaved after removal\n");
+    }
+
+    #[test]
+    fn folder_removal_marks_descendant_document_missing() {
+        let root = PathBuf::from("drafts/current");
+        let path = root.join("chapter-one/missing.md");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(path.clone()),
+                suggested_path: Some(path.clone()),
+                text: "Original\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        let effects = controller.apply_file_event(FileSyncEvent::Removed(root));
+
+        assert!(effects.changed);
+        assert!(!effects.selection_changed);
+        assert_eq!(effects.reload_path, None);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.path, Some(path.clone()));
+        assert!(snapshot.is_missing);
+        assert_eq!(snapshot.sync_state, SyncState::Missing);
+        assert_eq!(
+            snapshot.status_message,
+            format!("File removed: {}", path.display())
+        );
     }
 
     #[test]
