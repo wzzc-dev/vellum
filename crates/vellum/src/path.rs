@@ -76,7 +76,8 @@ pub(crate) fn read_recent_files() -> Vec<PathBuf> {
         return Vec::new();
     };
     let raw = fs::read_to_string(dir.join(RECENT_FILES_NAME)).unwrap_or_default();
-    raw.lines()
+    let files = raw
+        .lines()
         .filter_map(|line| {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -85,7 +86,8 @@ pub(crate) fn read_recent_files() -> Vec<PathBuf> {
                 Some(PathBuf::from(trimmed))
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    normalize_recent_files(&files)
 }
 
 pub(crate) fn write_recent_files(files: &[PathBuf]) -> Result<()> {
@@ -93,6 +95,7 @@ pub(crate) fn write_recent_files(files: &[PathBuf]) -> Result<()> {
         return Ok(());
     };
     fs::create_dir_all(&dir)?;
+    let files = normalize_recent_files(files);
     let content = files
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
@@ -103,11 +106,16 @@ pub(crate) fn write_recent_files(files: &[PathBuf]) -> Result<()> {
 }
 
 pub(crate) fn add_recent_file(path: &Path) -> Vec<PathBuf> {
-    let mut files = read_recent_files();
+    let files = recent_files_with_opened(&read_recent_files(), path);
+    let _ = write_recent_files(&files);
+    files
+}
+
+fn recent_files_with_opened(files: &[PathBuf], path: &Path) -> Vec<PathBuf> {
+    let mut files = normalize_recent_files(files);
     files.retain(|p| p != path);
     files.insert(0, path.to_path_buf());
     files.truncate(MAX_RECENT_FILES);
-    let _ = write_recent_files(&files);
     files
 }
 
@@ -118,7 +126,25 @@ pub(crate) fn remove_recent_file(path: &Path) -> Vec<PathBuf> {
 }
 
 fn recent_files_without(files: &[PathBuf], path: &Path) -> Vec<PathBuf> {
-    files.iter().filter(|p| p.as_path() != path).cloned().collect()
+    files
+        .iter()
+        .filter(|p| p.as_path() != path)
+        .cloned()
+        .collect()
+}
+
+fn normalize_recent_files(files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut normalized = Vec::new();
+    for path in files {
+        if normalized.iter().any(|existing| existing == path) {
+            continue;
+        }
+        normalized.push(path.clone());
+        if normalized.len() == MAX_RECENT_FILES {
+            break;
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -151,6 +177,40 @@ mod tests {
             vec![
                 PathBuf::from("/tmp/notes/draft-copy.md"),
                 PathBuf::from("/tmp/notes/archive/draft.md"),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_recent_files_deduplicates_and_caps() {
+        let mut files = Vec::new();
+        files.push(PathBuf::from("/tmp/notes/draft.md"));
+        files.push(PathBuf::from("/tmp/notes/draft.md"));
+        for i in 0..MAX_RECENT_FILES + 5 {
+            files.push(PathBuf::from(format!("/tmp/notes/{i}.md")));
+        }
+
+        let normalized = normalize_recent_files(&files);
+
+        assert_eq!(normalized.len(), MAX_RECENT_FILES);
+        assert_eq!(normalized[0], PathBuf::from("/tmp/notes/draft.md"));
+        assert_eq!(normalized[1], PathBuf::from("/tmp/notes/0.md"));
+        assert!(!normalized.contains(&PathBuf::from("/tmp/notes/19.md")));
+    }
+
+    #[test]
+    fn recent_files_with_opened_moves_path_to_front() {
+        let files = vec![
+            PathBuf::from("/tmp/notes/one.md"),
+            PathBuf::from("/tmp/notes/two.md"),
+            PathBuf::from("/tmp/notes/one.md"),
+        ];
+
+        assert_eq!(
+            recent_files_with_opened(&files, Path::new("/tmp/notes/two.md")),
+            vec![
+                PathBuf::from("/tmp/notes/two.md"),
+                PathBuf::from("/tmp/notes/one.md"),
             ]
         );
     }

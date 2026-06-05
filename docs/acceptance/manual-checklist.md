@@ -30,6 +30,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Rename the file in the workspace tree and confirm the open tab follows the new path.
 - Restart the app after the rename and confirm the last-opened document restores from the new path.
 - Try opening a deleted recent file and confirm it is removed from the recent files menu.
+- Open another Markdown file from the workspace tree, use Save As for a copied file, and confirm both paths appear at the top of the recent files menu.
 - Delete a copied test file from the workspace tree and confirm the editor shows a missing-file banner or status.
 
 ## Export And Print

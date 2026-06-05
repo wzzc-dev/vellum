@@ -3,8 +3,8 @@ use std::{fs, path::Path};
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{
-    clear_last_opened_path, read_last_opened_path, remove_recent_file, write_last_opened_path,
-    write_recent_files,
+    add_recent_file, clear_last_opened_path, read_last_opened_path, remove_recent_file,
+    write_last_opened_path, write_recent_files,
 };
 use editor::FileSyncEvent;
 
@@ -125,8 +125,7 @@ impl VellumApp {
                     }
                 }
                 self.workspace.selected_file = Some(path.clone());
-                let _ = write_last_opened_path(&path);
-                self.recent_files = crate::path::add_recent_file(&path);
+                self.remember_document_path(&path);
                 self.clear_status();
                 cx.notify();
             }
@@ -168,7 +167,7 @@ impl VellumApp {
                     }
                 }
                 self.workspace.selected_file = Some(path.clone());
-                let _ = write_last_opened_path(&path);
+                self.remember_document_path(&path);
                 self.clear_status();
                 self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
                 cx.notify();
@@ -231,7 +230,7 @@ impl VellumApp {
             .cloned();
         if let Some(path) = saved_path {
             self.workspace.selected_file = Some(path.clone());
-            let _ = write_last_opened_path(&path);
+            self.remember_document_path(&path);
         }
         if self.workspace.root.is_some() {
             self.refresh_tree(cx);
@@ -270,7 +269,7 @@ impl VellumApp {
         }
 
         self.workspace.selected_file = Some(path.clone());
-        let _ = write_last_opened_path(&path);
+        self.remember_document_path(&path);
         if self.workspace.root.is_some() && !refreshed_tree {
             self.refresh_tree(cx);
         }
@@ -946,6 +945,11 @@ impl VellumApp {
             clear_last_opened_path();
         }
         self.set_status(format!("File unavailable: {}", path.display()));
+    }
+
+    fn remember_document_path(&mut self, path: &Path) {
+        let _ = write_last_opened_path(path);
+        self.recent_files = add_recent_file(path);
     }
 }
 
