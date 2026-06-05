@@ -171,6 +171,12 @@ struct MermaidNode {
     label: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TocPreviewEntry {
+    depth: u8,
+    title: String,
+}
+
 #[derive(Debug, Clone)]
 struct TableSurfaceLayout {
     row_tops: Vec<gpui::Pixels>,
@@ -297,8 +303,10 @@ impl MarkdownEditor {
 
         let source_offset = if should_render_image_preview(&block, selection_range.clone()) {
             image_edit_cursor_offset(&block)
-        } else if should_render_mermaid_preview(&block, selection_range) {
+        } else if should_render_mermaid_preview(&block, selection_range.clone()) {
             mermaid_edit_cursor_offset(&block)
+        } else if should_render_toc_preview(&block, selection_range) {
+            toc_edit_cursor_offset(&block)
         } else {
             let local_visible_offset = visible_byte_offset_for_click_position(
                 &self.snapshot.display_map.blocks,
@@ -935,6 +943,7 @@ fn render_display_block(
         matches!(block.kind, BlockKind::Table) && selection_is_within_render_block(snapshot, block);
     let show_image_preview = should_render_image_preview(block, snapshot.selection.range());
     let show_mermaid_preview = should_render_mermaid_preview(block, snapshot.selection.range());
+    let show_toc_preview = should_render_toc_preview(block, snapshot.selection.range());
 
     let text_content = if show_placeholder {
         div()
@@ -960,6 +969,7 @@ fn render_display_block(
             BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
             _ if show_mermaid_preview => render_mermaid_block(block, palette),
+            _ if show_toc_preview => render_toc_block(display_blocks.as_ref(), palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -1818,6 +1828,115 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
         .into_any_element()
 }
 
+fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElement {
+    let entries = collect_toc_preview_entries(blocks);
+
+    let mut body = div().w_full().flex().flex_col().gap_1();
+    if entries.is_empty() {
+        body = body.child(
+            div()
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .text_color(palette.muted_text_color)
+                .child("No headings yet"),
+        );
+    } else {
+        for entry in &entries {
+            body = body.child(render_toc_entry(entry, palette));
+        }
+    }
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .px_3()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.muted_text_color)
+                .child("Table of Contents"),
+        )
+        .child(body)
+        .into_any_element()
+}
+
+fn render_toc_entry(entry: &TocPreviewEntry, palette: RenderPalette) -> AnyElement {
+    let depth = entry.depth.saturating_sub(1).min(5) as f32;
+    let marker_size = if entry.depth <= 2 { 5. } else { 4. };
+
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .pl(px(depth * 14.))
+        .py(px(1.))
+        .child(
+            div()
+                .w(px(marker_size))
+                .h(px(marker_size))
+                .rounded(px(marker_size / 2.))
+                .bg(palette.muted_text_color.opacity(0.55)),
+        )
+        .child(
+            div()
+                .min_w(px(0.))
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .font_weight(if entry.depth <= 2 {
+                    FontWeight::MEDIUM
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(palette.text_color)
+                .child(entry.title.clone()),
+        )
+        .into_any_element()
+}
+
+fn collect_toc_preview_entries(blocks: &[RenderBlock]) -> Vec<TocPreviewEntry> {
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let BlockKind::Heading { depth } = &block.kind else {
+                return None;
+            };
+
+            Some(TocPreviewEntry {
+                depth: *depth,
+                title: heading_title_for_toc(block),
+            })
+        })
+        .collect()
+}
+
+fn heading_title_for_toc(block: &RenderBlock) -> String {
+    let title = rendered_spans(block)
+        .filter(|span| {
+            !span.visible_text.is_empty()
+                && span.kind != RenderSpanKind::HiddenSyntax
+                && span.kind != RenderSpanKind::LineBreak
+        })
+        .map(|span| span.visible_text.as_str())
+        .collect::<String>()
+        .trim()
+        .to_string();
+
+    if title.is_empty() {
+        "Untitled heading".to_string()
+    } else {
+        title
+    }
+}
+
 fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyElement {
     let source = rendered_text_for_block(block);
     let preview = parse_mermaid_preview(&source);
@@ -2629,6 +2748,11 @@ fn should_render_mermaid_preview(block: &RenderBlock, selection: std::ops::Range
     ) && !selection_touches_render_block(selection, block)
 }
 
+fn should_render_toc_preview(block: &RenderBlock, selection: std::ops::Range<usize>) -> bool {
+    matches!(&block.embedded, Some(EmbeddedNodeKind::Toc))
+        && !selection_touches_render_block(selection, block)
+}
+
 fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
     let mut visible_spans = rendered_spans(block).filter(|span| !span.visible_text.is_empty());
     let span = visible_spans.next()?;
@@ -2653,6 +2777,10 @@ fn mermaid_edit_cursor_offset(block: &RenderBlock) -> usize {
         .map(|span| span.source_range.start)
         .unwrap_or(block.content_range.start)
         .min(block.content_range.end)
+}
+
+fn toc_edit_cursor_offset(block: &RenderBlock) -> usize {
+    block.content_range.start
 }
 
 fn document_base_dir(snapshot: &EditorSnapshot) -> Option<&Path> {
@@ -3586,10 +3714,11 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        MermaidEdge, MermaidNode, ResolvedImageSource, image_edit_cursor_offset,
-        looks_like_image_uri, mermaid_edit_cursor_offset, parse_mermaid_preview,
-        resolve_image_source, selection_touches_render_block, should_render_image_preview,
-        should_render_mermaid_preview, word_range_at_visible_offset,
+        MermaidEdge, MermaidNode, ResolvedImageSource, TocPreviewEntry,
+        collect_toc_preview_entries, image_edit_cursor_offset, looks_like_image_uri,
+        mermaid_edit_cursor_offset, parse_mermaid_preview, resolve_image_source,
+        selection_touches_render_block, should_render_image_preview, should_render_mermaid_preview,
+        should_render_toc_preview, toc_edit_cursor_offset, word_range_at_visible_offset,
     };
     use crate::{
         BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
@@ -3653,6 +3782,80 @@ mod tests {
             embedded: Some(EmbeddedNodeKind::Diagram {
                 language: "mermaid".to_string(),
             }),
+            source_hash: 0,
+        }
+    }
+
+    fn toc_block() -> RenderBlock {
+        RenderBlock {
+            id: 3,
+            kind: BlockKind::Toc,
+            source_range: 10..15,
+            content_range: 10..15,
+            visible_range: 0.."Table of Contents".len(),
+            visible_text: "Table of Contents".to_string(),
+            spans: vec![
+                RenderSpan {
+                    kind: RenderSpanKind::HiddenSyntax,
+                    source_range: 10..15,
+                    visible_range: 0..0,
+                    source_text: "[toc]".to_string(),
+                    visible_text: String::new(),
+                    hidden: true,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: 10..10,
+                    visible_range: 0.."Table of Contents".len(),
+                    source_text: String::new(),
+                    visible_text: "Table of Contents".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle {
+                        strong: true,
+                        ..RenderInlineStyle::default()
+                    },
+                    meta: None,
+                },
+            ],
+            embedded: Some(EmbeddedNodeKind::Toc),
+            source_hash: 0,
+        }
+    }
+
+    fn heading_block(id: u64, depth: u8, marker: &str, title: &str) -> RenderBlock {
+        let visible_text = format!("{marker}{title}");
+        RenderBlock {
+            id,
+            kind: BlockKind::Heading { depth },
+            source_range: 0..visible_text.len(),
+            content_range: 0..visible_text.len(),
+            visible_range: 0..visible_text.len(),
+            visible_text: visible_text.clone(),
+            spans: vec![
+                RenderSpan {
+                    kind: RenderSpanKind::HiddenSyntax,
+                    source_range: 0..marker.len(),
+                    visible_range: 0..marker.len(),
+                    source_text: marker.to_string(),
+                    visible_text: marker.to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: marker.len()..visible_text.len(),
+                    visible_range: marker.len()..visible_text.len(),
+                    source_text: title.to_string(),
+                    visible_text: title.to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+            ],
+            embedded: None,
             source_hash: 0,
         }
     }
@@ -3758,6 +3961,46 @@ mod tests {
     fn mermaid_preview_click_moves_cursor_to_diagram_body() {
         let block = mermaid_block("graph TD\n  A --> B\n");
         assert_eq!(mermaid_edit_cursor_offset(&block), "```mermaid\n".len());
+    }
+
+    #[test]
+    fn toc_preview_collects_heading_titles_without_revealed_markers() {
+        let entries = collect_toc_preview_entries(&[
+            toc_block(),
+            heading_block(4, 1, "# ", "Title"),
+            heading_block(5, 2, "## ", "Section"),
+        ]);
+
+        assert_eq!(
+            entries,
+            vec![
+                TocPreviewEntry {
+                    depth: 1,
+                    title: "Title".to_string(),
+                },
+                TocPreviewEntry {
+                    depth: 2,
+                    title: "Section".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn toc_preview_is_disabled_when_selection_touches_block() {
+        let block = toc_block();
+
+        assert!(should_render_toc_preview(&block, 0..0));
+        assert!(should_render_toc_preview(&block, 20..20));
+        assert!(selection_touches_render_block(12..12, &block));
+        assert!(!should_render_toc_preview(&block, 12..12));
+        assert!(!should_render_toc_preview(&block, 10..15));
+    }
+
+    #[test]
+    fn toc_preview_click_moves_cursor_to_marker() {
+        let block = toc_block();
+        assert_eq!(toc_edit_cursor_offset(&block), 10);
     }
 
     #[test]
