@@ -39,7 +39,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Use Export and Open for Print from the app.
 - Confirm the exported HTML opens in a browser with the table of contents, table, code block, images, math, Mermaid diagrams, and footnote present.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
-- Confirm the local appendix link points into the generated assets folder and opens from the exported HTML.
+- Confirm the local appendix links, including the raw HTML link, point into the generated assets folder and open from the exported HTML.
 - Confirm responsive image `srcset` entries point at the generated assets folder and keep any fragment suffixes.
 - Open the browser print dialog for the exported HTML and verify the preview uses a white page, document margins, wrapped code, and no clipped table or image.
 - Save the browser print preview as PDF and confirm the PDF contains the same visible content.

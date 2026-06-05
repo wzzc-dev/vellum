@@ -13,6 +13,8 @@ This document is a compact end-to-end sample for longform writing. It exercises 
 
 The exported article should keep local companion links portable, such as the [acceptance appendix](assets/appendix.md#notes).
 
+<p>Raw HTML links should stay portable too: <a href="assets/appendix.md?raw=1#notes">appendix source</a>.</p>
+
 ![Acceptance cover](assets/cover.svg#acceptance-cover)
 
 ![Referenced local diagram][asset-diagram]

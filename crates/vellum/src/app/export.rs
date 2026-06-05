@@ -421,6 +421,7 @@ struct MarkdownLink<'a> {
 
 struct HtmlAssetTag<'a> {
     raw: &'a str,
+    href_range: Option<Range<usize>>,
     src_range: Option<Range<usize>>,
     srcset_range: Option<Range<usize>>,
 }
@@ -468,14 +469,18 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
     let allows_src = html_asset_tag_allows_src(rest)?;
     let raw_len = html_asset_tag_len(rest)?;
     let raw = &rest[..raw_len];
+    let href_range = html_named_tag_matches(raw, "a")
+        .then(|| html_attr_value_range(raw, "href"))
+        .flatten();
     let src_range = allows_src.then(|| html_attr_value_range(raw, "src")).flatten();
     let srcset_range = html_attr_value_range(raw, "srcset");
-    if src_range.is_none() && srcset_range.is_none() {
+    if href_range.is_none() && src_range.is_none() && srcset_range.is_none() {
         return None;
     }
 
     Some(HtmlAssetTag {
         raw,
+        href_range,
         src_range,
         srcset_range,
     })
@@ -491,6 +496,16 @@ fn rewrite_html_asset_tag(
     assets: &mut ExportAssetContext<'_>,
 ) -> Result<Option<String>> {
     let mut replacements = Vec::new();
+
+    if let Some(range) = tag.href_range.clone() {
+        let destination = decode_html_entities(&tag.raw[range.clone()]);
+        if let Some(destination) = assets.exported_destination(&destination)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: escape_attr_value(&destination),
+            });
+        }
+    }
 
     if let Some(range) = tag.src_range.clone() {
         let destination = decode_html_entities(&tag.raw[range.clone()]);
@@ -633,7 +648,10 @@ fn find_image_destination_close(text: &str) -> Option<usize> {
 }
 
 fn html_asset_tag_len(rest: &str) -> Option<usize> {
-    if html_named_tag_matches(rest, "img") || html_named_tag_matches(rest, "source") {
+    if html_named_tag_matches(rest, "a")
+        || html_named_tag_matches(rest, "img")
+        || html_named_tag_matches(rest, "source")
+    {
         html_tag_close(rest).map(|close| close + 1)
     } else {
         None
@@ -643,6 +661,8 @@ fn html_asset_tag_len(rest: &str) -> Option<usize> {
 fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
     if html_named_tag_matches(rest, "img") {
         Some(true)
+    } else if html_named_tag_matches(rest, "a") {
+        Some(false)
     } else if html_named_tag_matches(rest, "source") {
         Some(false)
     } else {
@@ -2868,6 +2888,7 @@ mod tests {
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
         assert!(html.contains("href=\"longform_assets/appendix.md#notes\""));
+        assert!(html.contains("href=\"longform_assets/appendix.md?raw=1#notes\""));
         assert!(
             html.contains(
                 "srcset=\"longform_assets/cover.svg 1x, longform_assets/reference-diagram.svg#workflow 2x\""
@@ -3159,6 +3180,43 @@ mod tests {
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/guide.pdf")).unwrap(),
             b"guide"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_anchor_assets() {
+        let root = temp_export_dir("html-raw-link-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/report.pdf"), b"report").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "<a class=\"download\" href='assets/report.pdf?download=1&amp;theme=print#p2'>Report</a>\n",
+                "<a href=\"#section\">Same page</a>\n",
+                "<a href=\"https://example.com/report.pdf\">Remote</a>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("class=\"download\""));
+        assert!(
+            html.contains("href='article_assets/report.pdf?download=1&amp;theme=print#p2'")
+        );
+        assert!(html.contains("href=\"#section\""));
+        assert!(html.contains("href=\"https://example.com/report.pdf\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/report.pdf")).unwrap(),
+            b"report"
         );
 
         std::fs::remove_dir_all(root).unwrap();
