@@ -1263,6 +1263,45 @@ mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border
   padding: .75em 1em;
 }}
 .callout-title {{ font-weight: 700; margin-top: 0; }}
+@page {{ margin: 18mm 16mm; }}
+@media print {{
+  :root {{
+    color-scheme: light;
+    --bg: #fff;
+    --fg: #111;
+    --muted: #555;
+    --rule: #c7c7c7;
+    --accent: #111;
+    --code-bg: #f2f2f2;
+    --mark-bg: #fff2a8;
+  }}
+  body {{
+    background: #fff;
+    color: #111;
+    font-size: 11pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }}
+  main {{ width: auto; margin: 0; }}
+  h1, h2, h3, h4, h5, h6 {{ break-after: avoid; page-break-after: avoid; }}
+  p, blockquote, pre, table, ul, ol, .math-block, .mermaid, .callout {{
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }}
+  pre {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
+  img, svg {{ max-width: 100%; break-inside: avoid; page-break-inside: avoid; }}
+  a {{ color: inherit; text-decoration: underline; }}
+  a[href^="http"]::after {{
+    content: " (" attr(href) ")";
+    color: var(--muted);
+    font-size: .85em;
+    overflow-wrap: anywhere;
+  }}
+  .toc a::after,
+  sup a::after,
+  .footnotes a::after {{ content: ""; }}
+}}
 </style>
 </head>
 <body>
@@ -1377,6 +1416,24 @@ mod tests {
         assert!(html.contains("<h1 id=\"hello\">Hello</h1>"));
         assert!(!html.contains("mathjax@3"));
         assert!(!html.contains("mermaid.esm.min.mjs"));
+    }
+
+    #[test]
+    fn exported_html_includes_print_styles() {
+        let markdown = concat!(
+            "# Print\n\n",
+            "[link](https://example.com)\n\n",
+            "```rust\nfn main() {}\n```\n\n",
+            "| A | B |\n| - | - |\n| 1 | 2 |",
+        );
+        let html = export_markdown_to_html(markdown, "Print").unwrap();
+
+        assert!(html.contains("@page { margin: 18mm 16mm; }"));
+        assert!(html.contains("@media print"));
+        assert!(html.contains("main { width: auto; margin: 0; }"));
+        assert!(html.contains("break-after: avoid"));
+        assert!(html.contains("page-break-inside: avoid"));
+        assert!(html.contains("a[href^=\"http\"]::after"));
     }
 
     #[test]

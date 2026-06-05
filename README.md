@@ -22,7 +22,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Command palette
 - In-app preferences for theme, writing modes, and image assets
 - Paste or drop images into a configurable document asset folder
-- Export HTML with local image assets copied beside the exported file
+- Export print-friendly HTML with local image assets copied beside the exported file
 - Exported HTML can render math and Mermaid diagrams
 - Auto save
 - Watch for external file changes, deletions, and renames
