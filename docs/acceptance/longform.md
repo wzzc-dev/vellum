@@ -50,6 +50,20 @@ fn export_status(ok: bool) -> &'static str {
 }
 ```
 
+## Layout Stress
+
+The export should keep wide content readable without clipping in browser print preview.
+
+| Surface | Long content that should wrap or scroll | Print expectation |
+| --- | --- | --- |
+| Table | `workspace/assets/2026/research-notes/very-long-reference-name-without-natural-breaks.md#portable-export-validation` | Cells stay inside the printable page. |
+| Code | `cargo test --workspace --all-targets --features acceptance-layout-print-checks` | Long commands wrap in print output. |
+| Image | The responsive cover and diagram above should scale down instead of overflowing. | Images fit within page margins. |
+
+```text
+export --input docs/acceptance/longform.md --output /tmp/vellum-longform-export-with-a-very-long-file-name-that-must-wrap-in-print-preview.html --include-assets --verify-local-links
+```
+
 ## Math Notes
 
 Inline math should render in exported HTML: $E = mc^2$.

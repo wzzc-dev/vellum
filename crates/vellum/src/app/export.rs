@@ -17,6 +17,7 @@ pub(super) fn export_markdown_to_html(markdown: &str, title: &str) -> Result<Str
     let body = to_html_with_options(&prepared, &options)
         .map_err(|err| anyhow!("failed to render markdown: {err:?}"))?;
     let body = add_heading_ids(&body, &headings);
+    let body = wrap_tables_for_scroll(&body);
     Ok(wrap_html_document(&body, document_title))
 }
 
@@ -884,6 +885,29 @@ fn markdown_link_destination(destination: &str) -> String {
     } else {
         destination.to_string()
     }
+}
+
+fn wrap_tables_for_scroll(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0usize;
+
+    while let Some(open_offset) = html[cursor..].find("<table>") {
+        let open = cursor + open_offset;
+        let after_open = open + "<table>".len();
+        let Some(close_offset) = html[after_open..].find("</table>") else {
+            break;
+        };
+        let close_end = after_open + close_offset + "</table>".len();
+
+        out.push_str(&html[cursor..open]);
+        out.push_str("<div class=\"table-scroll\">");
+        out.push_str(&html[open..close_end]);
+        out.push_str("</div>");
+        cursor = close_end;
+    }
+
+    out.push_str(&html[cursor..]);
+    out
 }
 
 fn prepare_typora_extensions(markdown: &str) -> String {
@@ -2580,11 +2604,13 @@ body {{
 main {{
   width: min(860px, calc(100vw - 40px));
   margin: 56px auto 72px;
+  overflow-wrap: break-word;
 }}
 h1, h2, h3, h4, h5, h6 {{ line-height: 1.25; margin: 1.8em 0 .65em; }}
-p, ul, ol, blockquote, pre, table {{ margin: 1em 0; }}
+p, ul, ol, blockquote, pre, .table-scroll {{ margin: 1em 0; }}
 a {{ color: var(--accent); }}
-img {{ max-width: 100%; height: auto; }}
+picture {{ display: block; }}
+img, svg {{ max-width: 100%; height: auto; }}
 hr {{ border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }}
 blockquote {{
   border-left: 4px solid var(--rule);
@@ -2599,9 +2625,18 @@ pre, code {{
 }}
 code {{ padding: .12em .32em; }}
 pre {{ overflow-x: auto; padding: 1em; }}
-pre code {{ padding: 0; }}
-table {{ border-collapse: collapse; width: 100%; }}
-th, td {{ border: 1px solid var(--rule); padding: .45em .65em; }}
+pre code {{ padding: 0; white-space: inherit; background: transparent; }}
+.table-scroll {{
+  max-width: 100%;
+  overflow-x: auto;
+}}
+table {{ border-collapse: collapse; width: 100%; min-width: 100%; }}
+th, td {{
+  border: 1px solid var(--rule);
+  padding: .45em .65em;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}}
 th {{ background: color-mix(in srgb, var(--code-bg) 76%, transparent); }}
 mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border-radius: 3px; }}
 .math-inline-wrap {{ white-space: nowrap; }}
@@ -2697,11 +2732,13 @@ body.math-rendered .math-fallback {{ display: none; }}
   }}
   main {{ width: auto; margin: 0; }}
   h1, h2, h3, h4, h5, h6 {{ break-after: avoid; page-break-after: avoid; }}
-  p, blockquote, pre, table, ul, ol, .math-block-wrap, .mermaid-diagram, .callout {{
+  p, blockquote, pre, .table-scroll, table, ul, ol, .math-block-wrap, .mermaid-diagram, .callout {{
     break-inside: avoid;
     page-break-inside: avoid;
   }}
   pre {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
+  .table-scroll {{ overflow: visible; }}
+  table {{ table-layout: fixed; width: 100%; min-width: 0; }}
   img, svg {{ max-width: 100%; break-inside: avoid; page-break-inside: avoid; }}
   a {{ color: inherit; text-decoration: underline; }}
   a[href^="http"]::after {{
@@ -2863,9 +2900,38 @@ mod tests {
         assert!(html.contains("@page { margin: 18mm 16mm; }"));
         assert!(html.contains("@media print"));
         assert!(html.contains("main { width: auto; margin: 0; }"));
+        assert!(html.contains(".table-scroll {\n  max-width: 100%;\n  overflow-x: auto;"));
+        assert!(html.contains(".table-scroll { overflow: visible; }"));
+        assert!(html.contains("table { table-layout: fixed; width: 100%; min-width: 0; }"));
+        assert!(html.contains("overflow-wrap: anywhere;"));
         assert!(html.contains("break-after: avoid"));
         assert!(html.contains("page-break-inside: avoid"));
         assert!(html.contains("a[href^=\"http\"]::after"));
+    }
+
+    #[test]
+    fn exported_tables_are_wrapped_for_scroll_and_print() {
+        let html = export_markdown_to_html(
+            "| Path | Status |\n| --- | --- |\n| workspace/assets/very-long-unbroken-name.md | Ready |",
+            "Table",
+        )
+        .unwrap();
+
+        assert!(html.contains("<div class=\"table-scroll\"><table>"));
+        assert!(html.contains("</table></div>"));
+        assert!(html.contains("workspace/assets/very-long-unbroken-name.md"));
+    }
+
+    #[test]
+    fn raw_html_tables_with_attributes_are_not_partially_wrapped() {
+        let html = export_markdown_to_html(
+            "<table class=\"raw\"><tr><td>Raw</td></tr></table>",
+            "Raw Table",
+        )
+        .unwrap();
+
+        assert!(html.contains("<table class=\"raw\"><tr><td>Raw</td></tr></table>"));
+        assert!(!html.contains("</table></div>"));
     }
 
     #[test]
@@ -2881,9 +2947,14 @@ mod tests {
         let html = std::fs::read_to_string(&output).unwrap();
         assert!(html.contains("<title>Vellum Longform Acceptance</title>"));
         assert!(html.contains("<a href=\"#draft-scope\">Draft Scope</a>"));
+        assert!(html.contains("<a href=\"#layout-stress\">Layout Stress</a>"));
         assert!(html.contains("<h2 id=\"editing-blocks\">Editing Blocks</h2>"));
+        assert!(html.contains("<h2 id=\"layout-stress\">Layout Stress</h2>"));
+        assert!(html.contains("<div class=\"table-scroll\"><table>"));
+        assert!(html.contains("very-long-reference-name-without-natural-breaks.md"));
         assert!(html.contains("<table>"));
         assert!(html.contains("<code class=\"language-rust\">"));
+        assert!(html.contains("<code class=\"language-text\">"));
         assert!(html.contains("src=\"longform_assets/cover.svg#acceptance-cover\""));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
