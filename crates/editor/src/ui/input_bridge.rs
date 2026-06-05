@@ -135,7 +135,7 @@ fn detect_link_paste_opportunity(
         return None;
     }
 
-    let Some(destination) = normalized_pasted_url(&replacement) else {
+    let Some(destination) = normalized_pasted_link_destination(&replacement) else {
         return None;
     };
 
@@ -186,6 +186,22 @@ fn normalized_pasted_url(text: &str) -> Option<&str> {
 
     let autolink = text.strip_prefix('<')?.strip_suffix('>')?;
     is_url_like(autolink).then_some(autolink)
+}
+
+fn normalized_pasted_link_destination(text: &str) -> Option<&str> {
+    if let Some(url) = normalized_pasted_url(text) {
+        return Some(url);
+    }
+
+    if let Some(autolink) = text.strip_prefix('<').and_then(|text| text.strip_suffix('>')) {
+        return looks_like_local_file_path(autolink).then_some(autolink);
+    }
+
+    if looks_like_local_file_path(text) {
+        return Some(text);
+    }
+
+    None
 }
 
 fn normalized_pasted_image_path(text: &str) -> Option<&str> {
@@ -376,6 +392,57 @@ fn looks_like_image_path(text: &str) -> bool {
         ext.to_ascii_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
     )
+}
+
+fn looks_like_local_file_path(text: &str) -> bool {
+    if text.is_empty() || text.trim() != text || text.chars().any(char::is_control) {
+        return false;
+    }
+
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("mailto:")
+        || lower.starts_with("data:")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("file://")
+    {
+        return false;
+    }
+
+    let path_part = text
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(text)
+        .trim_end_matches(['/', '\\']);
+    if path_part.is_empty() {
+        return false;
+    }
+
+    if path_part.starts_with('/')
+        || path_part.starts_with("./")
+        || path_part.starts_with("../")
+        || path_part.starts_with("~/")
+        || looks_like_windows_absolute_path(path_part)
+    {
+        return true;
+    }
+
+    if !path_part.contains(['/', '\\']) {
+        return false;
+    }
+
+    path_part
+        .rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|name| name.contains('.') && !name.ends_with('.'))
+}
+
+fn looks_like_windows_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+        && bytes[0].is_ascii_alphabetic()
 }
 
 fn escape_link_label(text: &str) -> String {
@@ -2258,6 +2325,57 @@ mod tests {
     }
 
     #[test]
+    fn detects_local_file_path_paste_over_selection() {
+        let old_visible = "Open appendix";
+        let new_visible = "Open ./assets/appendix.md";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 13,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("./assets/appendix.md".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_absolute_local_file_path_with_spaces_paste_over_selection() {
+        let old_visible = "Open report";
+        let new_visible = "Open /tmp/Project Notes/report.pdf";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("/tmp/Project Notes/report.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_markdown_autolink_local_file_path_paste_over_selection() {
+        let old_visible = "Open guide";
+        let new_visible = "Open <../docs/guide.md>";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 10,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            Some("../docs/guide.md".to_string())
+        );
+    }
+
+    #[test]
     fn detects_markdown_autolink_paste_over_selection() {
         let old_visible = "Read docs";
         let new_visible = "Read <https://example.com/guide>";
@@ -2271,6 +2389,23 @@ mod tests {
         assert_eq!(
             detect_link_paste_opportunity(old_visible, new_visible, &selection),
             Some("https://example.com/guide".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_bare_file_name_paste_over_selection() {
+        let old_visible = "Open report";
+        let new_visible = "Open README.md";
+        let selection = SelectionState {
+            anchor_byte: 5,
+            head_byte: 11,
+            preferred_column: None,
+            affinity: SelectionAffinity::Downstream,
+        };
+
+        assert_eq!(
+            detect_link_paste_opportunity(old_visible, new_visible, &selection),
+            None
         );
     }
 
