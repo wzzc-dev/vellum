@@ -158,6 +158,12 @@ struct MermaidPreview {
     unsupported_lines: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MermaidGraphDirection {
+    TopDown,
+    LeftRight,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MermaidEdge {
     from: MermaidNode,
@@ -2252,12 +2258,13 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
         header = header.child(render_mermaid_chip(direction.clone(), palette));
     }
 
+    let nodes = collect_mermaid_preview_nodes(&preview);
     if !preview.edges.is_empty() {
         header = header.child(
             div()
                 .text_sm()
                 .text_color(palette.muted_text_color.opacity(0.7))
-                .child(format!("{} links", preview.edges.len())),
+                .child(format!("{} nodes, {} links", nodes.len(), preview.edges.len())),
         );
     }
 
@@ -2265,9 +2272,7 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
     if preview.edges.is_empty() {
         body = body.child(render_mermaid_source_fallback(&source, palette));
     } else {
-        for edge in preview.edges.iter().take(8) {
-            body = body.child(render_mermaid_edge_row(edge, palette));
-        }
+        body = body.child(render_mermaid_graph_preview(&preview, palette));
         if preview.edges.len() > 8 {
             body = body.child(
                 div()
@@ -2302,37 +2307,75 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
         .into_any_element()
 }
 
-fn render_mermaid_edge_row(edge: &MermaidEdge, palette: RenderPalette) -> AnyElement {
-    let mut connector = div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .text_color(palette.muted_text_color)
-        .child(
-            div()
-                .font_family(MONOSPACE_FONT_FAMILY)
-                .text_size(px(BODY_FONT_SIZE))
-                .child("->"),
-        );
+fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
+    let direction = mermaid_graph_direction(preview);
+    let mut graph = div().w_full().flex().flex_col().gap_2();
+    for edge in preview.edges.iter().take(8) {
+        graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
+    }
+    graph.into_any_element()
+}
 
-    if let Some(label) = &edge.label {
-        connector = connector.child(render_mermaid_chip(label.clone(), palette));
+fn render_mermaid_edge_card(
+    edge: &MermaidEdge,
+    direction: MermaidGraphDirection,
+    palette: RenderPalette,
+) -> AnyElement {
+    let horizontal = direction == MermaidGraphDirection::LeftRight;
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .gap_2()
+        .items_center();
+
+    if horizontal {
+        card = card
+            .flex_row()
+            .child(render_mermaid_node_card(&edge.from, palette))
+            .child(render_mermaid_connector(edge.label.as_deref(), true, palette))
+            .child(render_mermaid_node_card(&edge.to, palette));
+    } else {
+        card = card
+            .flex_col()
+            .child(render_mermaid_node_card(&edge.from, palette))
+            .child(render_mermaid_connector(edge.label.as_deref(), false, palette))
+            .child(render_mermaid_node_card(&edge.to, palette));
     }
 
-    div()
-        .w_full()
+    card.into_any_element()
+}
+
+fn render_mermaid_connector(
+    label: Option<&str>,
+    horizontal: bool,
+    palette: RenderPalette,
+) -> AnyElement {
+    let mut connector = div()
         .flex()
-        .flex_wrap()
+        .flex_col()
         .items_center()
-        .gap_2()
-        .py_1()
-        .child(render_mermaid_node_chip(&edge.from, palette))
-        .child(connector)
-        .child(render_mermaid_node_chip(&edge.to, palette))
+        .justify_center()
+        .gap_1()
+        .text_color(palette.muted_text_color);
+
+    if let Some(label) = label.filter(|label| !label.trim().is_empty()) {
+        connector = connector.child(render_mermaid_chip(label.to_string(), palette));
+    }
+
+    connector
+        .min_w(if horizontal { px(48.) } else { px(0.) })
+        .text_size(px(BODY_FONT_SIZE))
+        .font_family(MONOSPACE_FONT_FAMILY)
+        .child(if horizontal { "-->" } else { "v" })
         .into_any_element()
 }
 
-fn render_mermaid_node_chip(node: &MermaidNode, palette: RenderPalette) -> AnyElement {
+fn render_mermaid_node_card(node: &MermaidNode, palette: RenderPalette) -> AnyElement {
     let label = if node.id == node.label {
         node.label.clone()
     } else {
@@ -2340,12 +2383,14 @@ fn render_mermaid_node_chip(node: &MermaidNode, palette: RenderPalette) -> AnyEl
     };
 
     div()
-        .rounded(px(6.))
+        .min_w(px(112.))
+        .max_w(px(220.))
+        .rounded(px(7.))
         .border_1()
         .border_color(palette.border_color)
-        .bg(palette.text_color.opacity(0.05))
-        .px_2()
-        .py_1()
+        .bg(palette.text_color.opacity(0.06))
+        .px_3()
+        .py_2()
         .text_size(px(BODY_FONT_SIZE))
         .line_height(px(BODY_LINE_HEIGHT))
         .text_color(palette.text_color)
@@ -2560,6 +2605,32 @@ fn clean_mermaid_label(source: &str) -> String {
         .trim_matches('\'')
         .trim()
         .to_string()
+}
+
+fn mermaid_graph_direction(preview: &MermaidPreview) -> MermaidGraphDirection {
+    match preview.direction.as_deref() {
+        Some("LR") | Some("RL") => MermaidGraphDirection::LeftRight,
+        _ => MermaidGraphDirection::TopDown,
+    }
+}
+
+fn collect_mermaid_preview_nodes(preview: &MermaidPreview) -> Vec<MermaidNode> {
+    let mut nodes = Vec::new();
+    for edge in &preview.edges {
+        push_mermaid_preview_node(&mut nodes, edge.from.clone());
+        push_mermaid_preview_node(&mut nodes, edge.to.clone());
+    }
+    nodes
+}
+
+fn push_mermaid_preview_node(nodes: &mut Vec<MermaidNode>, node: MermaidNode) {
+    if let Some(existing) = nodes.iter_mut().find(|existing| existing.id == node.id) {
+        if existing.label == existing.id && node.label != node.id {
+            existing.label = node.label;
+        }
+    } else {
+        nodes.push(node);
+    }
 }
 
 fn render_table_block(
@@ -4049,10 +4120,11 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        FootnotePreview, MermaidEdge, MermaidNode, MetadataPreviewEntry, ResolvedImageSource,
-        TocPreviewEntry, collect_toc_preview_entries, footnote_edit_cursor_offset,
-        footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
-        image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
+        FootnotePreview, MermaidEdge, MermaidGraphDirection, MermaidNode, MetadataPreviewEntry,
+        ResolvedImageSource, TocPreviewEntry, collect_mermaid_preview_nodes,
+        collect_toc_preview_entries, footnote_edit_cursor_offset, footnote_preview,
+        front_matter_edit_cursor_offset, front_matter_preview_entries, image_edit_cursor_offset,
+        looks_like_image_uri, mermaid_edit_cursor_offset, mermaid_graph_direction,
         parse_mermaid_preview, parse_metadata_preview_entry, resolve_image_source,
         selection_touches_render_block, should_render_footnote_preview,
         should_render_front_matter_preview, should_render_image_preview,
@@ -4451,6 +4523,35 @@ mod tests {
             ]
         );
         assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn mermaid_graph_preview_collects_unique_labeled_nodes() {
+        let preview = parse_mermaid_preview(
+            "flowchart LR\n  Start[Draft] --> Save\n  Save[Save] --> Print[Print]\n",
+        );
+
+        assert_eq!(
+            mermaid_graph_direction(&preview),
+            MermaidGraphDirection::LeftRight
+        );
+        assert_eq!(
+            collect_mermaid_preview_nodes(&preview),
+            vec![
+                MermaidNode {
+                    id: "Start".to_string(),
+                    label: "Draft".to_string(),
+                },
+                MermaidNode {
+                    id: "Save".to_string(),
+                    label: "Save".to_string(),
+                },
+                MermaidNode {
+                    id: "Print".to_string(),
+                    label: "Print".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]
