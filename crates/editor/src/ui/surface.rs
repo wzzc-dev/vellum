@@ -156,6 +156,8 @@ enum ResolvedImageSource {
 struct MermaidPreview {
     direction: Option<String>,
     edges: Vec<MermaidEdge>,
+    participants: Vec<MermaidParticipant>,
+    messages: Vec<MermaidSequenceMessage>,
     unsupported_lines: usize,
 }
 
@@ -176,6 +178,29 @@ struct MermaidEdge {
 struct MermaidNode {
     id: String,
     label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidParticipant {
+    id: String,
+    label: String,
+}
+
+impl MermaidParticipant {
+    fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            label: id.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSequenceMessage {
+    from: String,
+    to: String,
+    label: String,
+    dashed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2279,7 +2304,19 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                 .child("Mermaid"),
         );
 
-    if let Some(direction) = &preview.direction {
+    if !preview.messages.is_empty() {
+        header = header.child(render_mermaid_chip("sequence".to_string(), palette));
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!(
+                    "{} participants, {} messages",
+                    preview.participants.len(),
+                    preview.messages.len()
+                )),
+        );
+    } else if let Some(direction) = &preview.direction {
         header = header.child(render_mermaid_chip(direction.clone(), palette));
     }
 
@@ -2294,9 +2331,25 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
     }
 
     let mut body = div().w_full().flex().flex_col().gap_2();
-    if preview.edges.is_empty() {
-        body = body.child(render_mermaid_source_fallback(&source, palette));
-    } else {
+    if !preview.messages.is_empty() {
+        body = body.child(render_mermaid_sequence_preview(&preview, palette));
+        if preview.messages.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!("+{} more messages", preview.messages.len() - 8)),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
+    } else if !preview.edges.is_empty() {
         body = body.child(render_mermaid_graph_preview(&preview, palette));
         if preview.edges.len() > 8 {
             body = body.child(
@@ -2314,6 +2367,8 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     .child(format!("{} other statements", preview.unsupported_lines)),
             );
         }
+    } else {
+        body = body.child(render_mermaid_source_fallback(&source, palette));
     }
 
     div()
@@ -2339,6 +2394,117 @@ fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette
         graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
     }
     graph.into_any_element()
+}
+
+fn render_mermaid_sequence_preview(
+    preview: &MermaidPreview,
+    palette: RenderPalette,
+) -> AnyElement {
+    let mut participants = div().w_full().flex().flex_wrap().gap_1();
+    for participant in preview.participants.iter().take(8) {
+        participants = participants.child(render_mermaid_chip(participant.label.clone(), palette));
+    }
+    if preview.participants.len() > 8 {
+        participants = participants.child(render_mermaid_chip(
+            format!("+{} participants", preview.participants.len() - 8),
+            palette,
+        ));
+    }
+
+    let mut sequence = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(participants);
+    for message in preview.messages.iter().take(8) {
+        sequence = sequence.child(render_mermaid_sequence_message_card(
+            preview, message, palette,
+        ));
+    }
+
+    sequence.into_any_element()
+}
+
+fn render_mermaid_sequence_message_card(
+    preview: &MermaidPreview,
+    message: &MermaidSequenceMessage,
+    palette: RenderPalette,
+) -> AnyElement {
+    let from = mermaid_sequence_participant_label(preview, &message.from);
+    let to = mermaid_sequence_participant_label(preview, &message.to);
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2();
+
+    let route = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(render_mermaid_participant_card(&from, palette))
+        .child(render_mermaid_sequence_arrow(message.dashed, palette))
+        .child(render_mermaid_participant_card(&to, palette));
+    card = card.child(route);
+
+    if !message.label.trim().is_empty() {
+        card = card.child(render_mermaid_chip(message.label.clone(), palette));
+    }
+
+    card.into_any_element()
+}
+
+fn render_mermaid_participant_card(label: &str, palette: RenderPalette) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w(px(0.))
+        .max_w(px(220.))
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.06))
+        .px_3()
+        .py_2()
+        .text_size(px(body_font_size()))
+        .line_height(px(body_line_height()))
+        .text_color(palette.text_color)
+        .child(label.to_string())
+        .into_any_element()
+}
+
+fn render_mermaid_sequence_arrow(dashed: bool, palette: RenderPalette) -> AnyElement {
+    div()
+        .min_w(px(48.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .font_family(MONOSPACE_FONT_FAMILY)
+        .text_size(px(body_font_size()))
+        .text_color(palette.muted_text_color)
+        .child(if dashed { "-->>" } else { "->>" })
+        .into_any_element()
+}
+
+fn mermaid_sequence_participant_label(preview: &MermaidPreview, id: &str) -> String {
+    preview
+        .participants
+        .iter()
+        .find(|participant| participant.id == id)
+        .map(|participant| {
+            if participant.label == participant.id {
+                participant.label.clone()
+            } else {
+                format!("{} ({})", participant.label, participant.id)
+            }
+        })
+        .unwrap_or_else(|| id.to_string())
 }
 
 fn render_mermaid_edge_card(
@@ -2460,6 +2626,10 @@ fn render_mermaid_source_fallback(source: &str, palette: RenderPalette) -> AnyEl
 }
 
 fn parse_mermaid_preview(source: &str) -> MermaidPreview {
+    if mermaid_is_sequence_diagram(source) {
+        return parse_mermaid_sequence_preview(source);
+    }
+
     let mut preview = MermaidPreview::default();
 
     for raw_line in source.lines() {
@@ -2486,6 +2656,175 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
     }
 
     preview
+}
+
+fn mermaid_is_sequence_diagram(source: &str) -> bool {
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+        return line.eq_ignore_ascii_case("sequencediagram");
+    }
+    false
+}
+
+fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+    let mut participant_indices = HashMap::new();
+    let mut saw_sequence = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_sequence {
+            if line.eq_ignore_ascii_case("sequencediagram") {
+                saw_sequence = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(participant) = parse_mermaid_sequence_participant(line) {
+            upsert_mermaid_participant(
+                &mut preview.participants,
+                &mut participant_indices,
+                participant,
+            );
+            continue;
+        }
+
+        if is_mermaid_sequence_non_message_directive(line) {
+            continue;
+        }
+
+        let Some(message) = parse_mermaid_sequence_message(line) else {
+            preview.unsupported_lines += 1;
+            continue;
+        };
+
+        upsert_mermaid_participant(
+            &mut preview.participants,
+            &mut participant_indices,
+            MermaidParticipant::new(&message.from),
+        );
+        upsert_mermaid_participant(
+            &mut preview.participants,
+            &mut participant_indices,
+            MermaidParticipant::new(&message.to),
+        );
+        preview.messages.push(message);
+    }
+
+    preview
+}
+
+fn parse_mermaid_sequence_participant(line: &str) -> Option<MermaidParticipant> {
+    let keyword_end = line.find(char::is_whitespace).unwrap_or(line.len());
+    let keyword = &line[..keyword_end];
+    if !keyword.eq_ignore_ascii_case("participant") && !keyword.eq_ignore_ascii_case("actor") {
+        return None;
+    }
+
+    let rest = line[keyword_end..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let (id_source, label_source) = split_mermaid_sequence_alias(rest).unwrap_or((rest, rest));
+    let id = clean_mermaid_sequence_participant_id(id_source);
+    let label = clean_mermaid_label(label_source);
+    let label = if label.is_empty() { id.clone() } else { label };
+
+    (!id.is_empty()).then_some(MermaidParticipant { id, label })
+}
+
+fn split_mermaid_sequence_alias(source: &str) -> Option<(&str, &str)> {
+    let lower = source.to_ascii_lowercase();
+    lower
+        .find(" as ")
+        .map(|index| (&source[..index], &source[index + 4..]))
+}
+
+fn is_mermaid_sequence_non_message_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "autonumber"
+        || lower == "end"
+        || lower.starts_with("activate ")
+        || lower.starts_with("deactivate ")
+        || lower.starts_with("destroy ")
+        || lower.starts_with("box ")
+        || lower.starts_with("rect ")
+        || lower.starts_with("note ")
+        || lower.starts_with("loop ")
+        || lower.starts_with("alt ")
+        || lower.starts_with("else")
+        || lower.starts_with("opt ")
+        || lower.starts_with("par ")
+        || lower.starts_with("and ")
+        || lower.starts_with("critical ")
+        || lower.starts_with("option ")
+        || lower.starts_with("break ")
+}
+
+fn parse_mermaid_sequence_message(line: &str) -> Option<MermaidSequenceMessage> {
+    let (operator_start, operator_end, operator) = find_mermaid_sequence_message_operator(line)?;
+    let from = clean_mermaid_sequence_participant_id(&line[..operator_start]);
+    let rest = line[operator_end..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = clean_mermaid_sequence_participant_id(to_source);
+    let label = clean_mermaid_label(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(MermaidSequenceMessage {
+        from,
+        to,
+        label,
+        dashed: operator.starts_with("--"),
+    })
+}
+
+fn find_mermaid_sequence_message_operator(line: &str) -> Option<(usize, usize, &'static str)> {
+    for (index, _) in line.char_indices() {
+        for operator in [
+            "-->>+", "-->>-", "-->>", "->>+", "->>-", "->>", "--)+", "--)-", "--)", "-)+",
+            "-)-", "-)", "--x+", "--x-", "--x", "-x+", "-x-", "-x", "-->+", "-->-", "-->",
+            "->+", "->-", "->",
+        ] {
+            if line[index..].starts_with(operator) {
+                return Some((index, index + operator.len(), operator));
+            }
+        }
+    }
+    None
+}
+
+fn clean_mermaid_sequence_participant_id(source: &str) -> String {
+    clean_mermaid_label(source)
+        .trim_start_matches(|ch| matches!(ch, '+' | '-'))
+        .trim_end_matches(|ch| matches!(ch, '+' | '-'))
+        .trim()
+        .to_string()
+}
+
+fn upsert_mermaid_participant(
+    participants: &mut Vec<MermaidParticipant>,
+    participant_indices: &mut HashMap<String, usize>,
+    participant: MermaidParticipant,
+) {
+    if let Some(index) = participant_indices.get(&participant.id).copied() {
+        if participants[index].label == participants[index].id
+            && participant.label != participant.id
+        {
+            participants[index].label = participant.label;
+        }
+        return;
+    }
+
+    participant_indices.insert(participant.id.clone(), participants.len());
+    participants.push(participant);
 }
 
 fn mermaid_direction(line: &str) -> Option<String> {
@@ -4210,13 +4549,13 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        FootnotePreview, MermaidEdge, MermaidGraphDirection, MermaidNode, MetadataPreviewEntry,
-        ResolvedImageSource, TocPreviewEntry, collect_mermaid_preview_nodes,
-        collect_toc_preview_entries, footnote_edit_cursor_offset, footnote_preview,
-        front_matter_edit_cursor_offset, front_matter_preview_entries, image_edit_cursor_offset,
-        looks_like_image_uri, mermaid_edit_cursor_offset, mermaid_graph_direction,
-        parse_mermaid_preview, parse_metadata_preview_entry, resolve_image_source,
-        selection_touches_render_block, should_render_footnote_preview,
+        FootnotePreview, MermaidEdge, MermaidGraphDirection, MermaidNode, MermaidParticipant,
+        MermaidSequenceMessage, MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
+        collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
+        footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
+        image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
+        mermaid_graph_direction, parse_mermaid_preview, parse_metadata_preview_entry,
+        resolve_image_source, selection_touches_render_block, should_render_footnote_preview,
         should_render_front_matter_preview, should_render_image_preview,
         should_render_mermaid_preview, should_render_toc_preview, toc_edit_cursor_offset,
         word_range_at_visible_offset,
@@ -4648,6 +4987,47 @@ mod tests {
                         label: "Done".to_string(),
                     },
                     label: Some("publish".to_string()),
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_sequence_messages() {
+        let preview = parse_mermaid_preview(
+            "sequenceDiagram\n  participant Alice as Writer\n  actor Bob as Reviewer\n  Alice->>Bob: Hi <draft>\n  Bob-->>Alice: Looks good\n",
+        );
+
+        assert_eq!(preview.direction, None);
+        assert!(preview.edges.is_empty());
+        assert_eq!(
+            preview.participants,
+            vec![
+                MermaidParticipant {
+                    id: "Alice".to_string(),
+                    label: "Writer".to_string(),
+                },
+                MermaidParticipant {
+                    id: "Bob".to_string(),
+                    label: "Reviewer".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.messages,
+            vec![
+                MermaidSequenceMessage {
+                    from: "Alice".to_string(),
+                    to: "Bob".to_string(),
+                    label: "Hi <draft>".to_string(),
+                    dashed: false,
+                },
+                MermaidSequenceMessage {
+                    from: "Bob".to_string(),
+                    to: "Alice".to_string(),
+                    label: "Looks good".to_string(),
+                    dashed: true,
                 },
             ]
         );

@@ -15,7 +15,7 @@ Vellum 是一个基于 Rust 和 `gpui` 的纯 Markdown 所见即所得桌面编�
 - 标题、段落、引用、列表、任务列表、代码块、表格、分隔线、链接、图片、数学块
 - Front matter 的 Live Preview 元数据面板
 - 根据文档标题生成的 Live Preview 目录
-- Mermaid 流程图的轻量 Live Preview 摘要
+- Mermaid 流程图与序列图的轻量 Live Preview 摘要
 - 上标脚注引用与脚注定义预览
 - Markdown 与常见代码块语言的语法高亮
 - 大纲侧边栏和工作区文件树

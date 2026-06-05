@@ -18,7 +18,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
   horizontal rules, links, images, and math blocks
 - Live preview metadata panel for front matter
 - Live preview table of contents generated from document headings
-- Lightweight live preview summaries for Mermaid flowcharts
+- Lightweight live preview summaries for Mermaid flowcharts and sequence diagrams
 - Superscript footnote references and footnote definition previews
 - Syntax highlighting for Markdown and common code fence languages
 - Outline sidebar and workspace file tree
