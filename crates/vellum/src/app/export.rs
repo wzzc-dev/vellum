@@ -2781,6 +2781,12 @@ mod tests {
         assert!(html.contains("<code class=\"language-rust\">"));
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
+        assert!(
+            html.contains(
+                "srcset=\"longform_assets/cover.svg 1x, longform_assets/reference-diagram.svg#workflow 2x\""
+            )
+        );
+        assert!(html.contains("srcset=\"longform_assets/reference-diagram.svg 640w\""));
         assert!(html.contains("title=\"Referenced local diagram\""));
         assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));

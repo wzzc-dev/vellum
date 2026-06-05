@@ -17,6 +17,11 @@ This document is a compact end-to-end sample for longform writing. It exercises 
 
 [asset-diagram]: assets/reference-diagram.svg "Referenced local diagram"
 
+<picture>
+  <source media="(min-width: 720px)" srcset="assets/cover.svg 1x, assets/reference-diagram.svg#workflow 2x">
+  <img src="assets/cover.svg" srcset="assets/reference-diagram.svg 640w" alt="Responsive local asset export">
+</picture>
+
 ## Editing Blocks
 
 - Draft the introduction.

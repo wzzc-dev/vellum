@@ -19,6 +19,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 
 - Confirm the local cover image renders from `docs/acceptance/assets/cover.svg`.
 - Confirm the referenced local diagram renders from `docs/acceptance/assets/reference-diagram.svg`.
+- Confirm the responsive raw HTML image renders and uses local `srcset` candidates.
 - Paste or drop a test image into the document.
 - Confirm the inserted image is written under the configured image asset folder and the Markdown path is document-relative.
 
@@ -33,8 +34,9 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 
 - Export HTML from the app.
 - Use Export and Open for Print from the app.
-- Confirm the exported HTML opens in a browser with the table of contents, table, code block, image, math, Mermaid diagrams, and footnote present.
+- Confirm the exported HTML opens in a browser with the table of contents, table, code block, images, math, Mermaid diagrams, and footnote present.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
+- Confirm responsive image `srcset` entries point at the generated assets folder and keep any fragment suffixes.
 - Open the browser print dialog for the exported HTML and verify the preview uses a white page, document margins, wrapped code, and no clipped table or image.
 - Save the browser print preview as PDF and confirm the PDF contains the same visible content.
 
