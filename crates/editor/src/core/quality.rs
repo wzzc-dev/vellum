@@ -133,6 +133,12 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
     assert!(
         map.blocks
             .iter()
+            .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::HtmlBlock))),
+        "longform sample should include a raw HTML image block"
+    );
+    assert!(
+        map.blocks
+            .iter()
             .flat_map(|block| &block.spans)
             .any(|span| matches!(
                 span.meta,

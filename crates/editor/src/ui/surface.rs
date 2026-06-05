@@ -152,6 +152,12 @@ enum ResolvedImageSource {
     Uri(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HtmlImagePreview {
+    src: String,
+    alt: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct MermaidPreview {
     direction: Option<String>,
@@ -991,6 +997,8 @@ fn render_display_block(
     let show_table_toolbar =
         matches!(block.kind, BlockKind::Table) && selection_is_within_render_block(snapshot, block);
     let show_image_preview = should_render_image_preview(block, snapshot.selection.range());
+    let show_html_image_preview =
+        should_render_html_image_preview(block, snapshot.selection.range());
     let show_mermaid_preview = should_render_mermaid_preview(block, snapshot.selection.range());
     let show_toc_preview = should_render_toc_preview(block, snapshot.selection.range());
     let show_footnote_preview = should_render_footnote_preview(block, snapshot.selection.range());
@@ -1020,6 +1028,7 @@ fn render_display_block(
             BlockKind::ThematicBreak => render_thematic_break(palette),
             BlockKind::MathBlock => render_math_block(&block_clone, palette, window, &math_render_cache),
             _ if show_image_preview => render_image_block(snapshot, block, palette),
+            _ if show_html_image_preview => render_html_image_block(snapshot, block, palette),
             _ if show_mermaid_preview => render_mermaid_block(block, palette),
             _ if show_toc_preview => render_toc_block(view, display_blocks.as_ref(), palette),
             _ if show_footnote_preview => render_footnote_block(block, palette, window),
@@ -1820,6 +1829,59 @@ fn render_image_block(
     let fallback_title = alt_if_present(alt, "Image unavailable");
     let fallback_detail = src.clone();
     let loading_title = alt_if_present(alt, "Loading image");
+
+    let image = match resolved_source {
+        ResolvedImageSource::Path(path) => img(path),
+        ResolvedImageSource::Uri(uri) => img(uri),
+    }
+    .w_full()
+    .max_h(px(420.))
+    .object_fit(ObjectFit::Contain)
+    .with_fallback(move || {
+        image_placeholder(
+            fallback_title.clone(),
+            Some(fallback_detail.clone()),
+            palette,
+        )
+    })
+    .with_loading(move || image_placeholder(loading_title.clone(), None, palette));
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .p_2()
+        .child(div().w_full().overflow_hidden().child(image))
+        .into_any_element()
+}
+
+fn render_html_image_block(
+    snapshot: &EditorSnapshot,
+    block: &RenderBlock,
+    palette: RenderPalette,
+) -> AnyElement {
+    let Some(preview) = parse_html_image_preview(&rendered_text_for_block(block)) else {
+        return image_placeholder(
+            "HTML image preview unavailable".to_string(),
+            Some("Use an img src or srcset value.".to_string()),
+            palette,
+        );
+    };
+
+    let Some(resolved_source) = resolve_image_source(&preview.src, document_base_dir(snapshot))
+    else {
+        return image_placeholder(
+            alt_if_present(&preview.alt, "HTML image path missing"),
+            Some("Add a local or remote image path.".to_string()),
+            palette,
+        );
+    };
+
+    let fallback_title = alt_if_present(&preview.alt, "HTML image unavailable");
+    let fallback_detail = preview.src.clone();
+    let loading_title = alt_if_present(&preview.alt, "Loading HTML image");
 
     let image = match resolved_source {
         ResolvedImageSource::Path(path) => img(path),
@@ -3531,6 +3593,15 @@ fn should_render_image_preview(block: &RenderBlock, selection: std::ops::Range<u
     standalone_image_span(block).is_some() && !selection_touches_render_block(selection, block)
 }
 
+fn should_render_html_image_preview(
+    block: &RenderBlock,
+    selection: std::ops::Range<usize>,
+) -> bool {
+    matches!(block.embedded, Some(EmbeddedNodeKind::HtmlBlock))
+        && !selection_touches_render_block(selection, block)
+        && parse_html_image_preview(&rendered_text_for_block(block)).is_some()
+}
+
 fn should_render_mermaid_preview(block: &RenderBlock, selection: std::ops::Range<usize>) -> bool {
     matches!(
         &block.embedded,
@@ -3659,6 +3730,161 @@ fn local_image_path_part(src: &str) -> &str {
         .filter(|index| *index > 0)
         .map(|index| &src[..index])
         .unwrap_or(src)
+}
+
+fn parse_html_image_preview(source: &str) -> Option<HtmlImagePreview> {
+    if let Some(img_tag) = find_html_tag(source, "img") {
+        let src = html_attr_value(img_tag, "src").or_else(|| {
+            html_attr_value(img_tag, "srcset").and_then(|srcset| first_srcset_url(&srcset))
+        })?;
+        let alt = html_attr_value(img_tag, "alt").unwrap_or_default();
+        return Some(HtmlImagePreview { src, alt });
+    }
+
+    let source_tag = find_html_tag(source, "source")?;
+    let src = html_attr_value(source_tag, "srcset").and_then(|srcset| first_srcset_url(&srcset))?;
+    Some(HtmlImagePreview {
+        src,
+        alt: String::new(),
+    })
+}
+
+fn first_srcset_url(srcset: &str) -> Option<String> {
+    let candidate = srcset.split(',').next()?.trim_start();
+    let url_end = candidate
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(candidate.len());
+    (url_end > 0).then(|| candidate[..url_end].to_string())
+}
+
+fn find_html_tag<'a>(source: &'a str, tag_name: &str) -> Option<&'a str> {
+    let mut search_start = 0usize;
+    while search_start < source.len() {
+        let relative_start = source[search_start..].find('<')?;
+        let tag_start = search_start + relative_start;
+        let rest = &source[tag_start..];
+        if html_tag_name_matches(rest, tag_name) {
+            let close = html_tag_close(rest)?;
+            return Some(&rest[..=close]);
+        }
+        search_start = tag_start + 1;
+    }
+    None
+}
+
+fn html_tag_name_matches(rest: &str, tag_name: &str) -> bool {
+    let name_end = 1 + tag_name.len();
+    if rest.as_bytes().first() != Some(&b'<') {
+        return false;
+    }
+    if !rest
+        .get(1..name_end)
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag_name))
+    {
+        return false;
+    }
+
+    matches!(
+        rest.as_bytes().get(name_end).copied(),
+        Some(b'>') | Some(b'/') | Some(b' ' | b'\t' | b'\r' | b'\n')
+    )
+}
+
+fn html_tag_close(tag: &str) -> Option<usize> {
+    let mut quote = None;
+    for (index, ch) in tag.char_indices() {
+        match quote {
+            Some(active_quote) if ch == active_quote => quote = None,
+            Some(_) => {}
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch == '>' => return Some(index),
+            None => {}
+        }
+    }
+    None
+}
+
+fn html_attr_value(tag: &str, attr: &str) -> Option<String> {
+    let range = html_attr_value_range(tag, attr)?;
+    Some(decode_html_entities(&tag[range]))
+}
+
+fn html_attr_value_range(tag: &str, attr: &str) -> Option<Range<usize>> {
+    let mut index = tag.find(char::is_whitespace).unwrap_or(tag.len());
+
+    while index < tag.len() {
+        index = skip_html_attr_space(tag, index);
+        if match tag.as_bytes().get(index) {
+            Some(byte) => matches!(byte, b'>' | b'/'),
+            None => true,
+        } {
+            index += 1;
+            continue;
+        }
+
+        let name_start = index;
+        while index < tag.len()
+            && !tag.as_bytes()[index].is_ascii_whitespace()
+            && !matches!(tag.as_bytes()[index], b'=' | b'/' | b'>')
+        {
+            index += 1;
+        }
+        if name_start == index {
+            index += tag[index..].chars().next()?.len_utf8();
+            continue;
+        }
+        let name = &tag[name_start..index];
+
+        index = skip_html_attr_space(tag, index);
+        if tag.as_bytes().get(index) != Some(&b'=') {
+            continue;
+        }
+        index += 1;
+        index = skip_html_attr_space(tag, index);
+
+        let value_start;
+        let value_end;
+        if let Some(quote @ (b'"' | b'\'')) = tag.as_bytes().get(index).copied() {
+            value_start = index + 1;
+            let close = tag[value_start..]
+                .bytes()
+                .position(|byte| byte == quote)?;
+            value_end = value_start + close;
+            index = value_end + 1;
+        } else {
+            value_start = index;
+            while index < tag.len()
+                && !tag.as_bytes()[index].is_ascii_whitespace()
+                && tag.as_bytes()[index] != b'>'
+            {
+                index += 1;
+            }
+            value_end = index;
+        }
+
+        if name.eq_ignore_ascii_case(attr) {
+            return Some(value_start..value_end);
+        }
+    }
+
+    None
+}
+
+fn skip_html_attr_space(tag: &str, mut index: usize) -> usize {
+    while index < tag.len() && tag.as_bytes()[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    index
+}
+
+fn decode_html_entities(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 fn looks_like_image_uri(src: &str) -> bool {
@@ -4558,16 +4784,17 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        FootnotePreview, MermaidEdge, MermaidGraphDirection, MermaidNode, MermaidParticipant,
-        MermaidSequenceMessage, MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
-        collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
-        footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
-        image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
-        mermaid_graph_direction, parse_mermaid_preview, parse_metadata_preview_entry,
-        resolve_image_source, selection_touches_render_block, should_render_footnote_preview,
-        should_render_front_matter_preview, should_render_image_preview,
-        should_render_mermaid_preview, should_render_toc_preview, toc_edit_cursor_offset,
-        word_range_at_visible_offset,
+        FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
+        MermaidParticipant, MermaidSequenceMessage, MetadataPreviewEntry, ResolvedImageSource,
+        TocPreviewEntry, collect_mermaid_preview_nodes, collect_toc_preview_entries,
+        footnote_edit_cursor_offset, footnote_preview, front_matter_edit_cursor_offset,
+        front_matter_preview_entries, image_edit_cursor_offset, looks_like_image_uri,
+        mermaid_edit_cursor_offset, mermaid_graph_direction, parse_html_image_preview,
+        parse_mermaid_preview, parse_metadata_preview_entry, resolve_image_source,
+        selection_touches_render_block, should_render_footnote_preview,
+        should_render_front_matter_preview, should_render_html_image_preview,
+        should_render_image_preview, should_render_mermaid_preview, should_render_toc_preview,
+        toc_edit_cursor_offset, word_range_at_visible_offset,
     };
     use crate::{
         BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
@@ -4598,6 +4825,29 @@ mod tests {
                 }),
             }],
             embedded: Some(EmbeddedNodeKind::Image),
+            source_hash: 0,
+        }
+    }
+
+    fn html_block(source: &str) -> RenderBlock {
+        RenderBlock {
+            id: 7,
+            kind: BlockKind::Html,
+            source_range: 0..source.len(),
+            content_range: 0..source.len(),
+            visible_range: 0..source.len(),
+            visible_text: source.to_string(),
+            spans: vec![RenderSpan {
+                kind: RenderSpanKind::Text,
+                source_range: 0..source.len(),
+                visible_range: 0..source.len(),
+                source_text: source.to_string(),
+                visible_text: source.to_string(),
+                hidden: false,
+                style: RenderInlineStyle::default(),
+                meta: None,
+            }],
+            embedded: Some(EmbeddedNodeKind::HtmlBlock),
             source_hash: 0,
         }
     }
@@ -4942,6 +5192,69 @@ mod tests {
     fn image_preview_still_renders_when_block_visible_text_keeps_trailing_newline() {
         let block = standalone_image_block("[image: alt]\n", "[image: alt]");
         assert!(should_render_image_preview(&block, 20..20));
+    }
+
+    #[test]
+    fn parses_raw_html_image_preview_from_picture() {
+        let preview = parse_html_image_preview(concat!(
+            "<picture>\n",
+            "  <source media=\"(min-width: 720px)\" ",
+            "srcset=\"assets/wide.png 1x, assets/wide@2x.png 2x\">\n",
+            "  <img alt='Responsive cover' ",
+            "src=\"assets/fallback.png?cache=1&amp;theme=print#hero\">\n",
+            "</picture>",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            preview,
+            HtmlImagePreview {
+                src: "assets/fallback.png?cache=1&theme=print#hero".to_string(),
+                alt: "Responsive cover".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn raw_html_image_preview_uses_img_srcset_candidate_without_src() {
+        let preview = parse_html_image_preview(
+            "<img alt=\"Mobile\" srcset='assets/mobile.png 480w, assets/cover.png 960w'>",
+        )
+        .unwrap();
+
+        assert_eq!(
+            preview,
+            HtmlImagePreview {
+                src: "assets/mobile.png".to_string(),
+                alt: "Mobile".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn raw_html_image_preview_falls_back_to_source_srcset() {
+        let preview = parse_html_image_preview(
+            "<picture><source srcset=\"assets/wide.png 1x, assets/wide@2x.png 2x\"></picture>",
+        )
+        .unwrap();
+
+        assert_eq!(
+            preview,
+            HtmlImagePreview {
+                src: "assets/wide.png".to_string(),
+                alt: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn html_image_preview_is_disabled_when_selection_touches_block() {
+        let block = html_block("<picture><img src=\"assets/cover.png\" alt=\"Cover\"></picture>");
+        assert!(should_render_html_image_preview(
+            &block,
+            block.content_range.end..block.content_range.end
+        ));
+        assert!(!should_render_html_image_preview(&block, 10..10));
     }
 
     #[test]
