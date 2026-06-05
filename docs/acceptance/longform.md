@@ -45,6 +45,15 @@ $$
 \int_0^1 x^2 dx = \frac{1}{3}
 $$
 
+Aligned math should keep rows and alignment points readable in preview and export:
+
+$$
+\begin{aligned}
+a^2 + b^2 &= c^2 \\
+E &= mc^2
+\end{aligned}
+$$
+
 ## Mermaid Diagram
 
 ```mermaid

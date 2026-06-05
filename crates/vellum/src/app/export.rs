@@ -2024,6 +2024,9 @@ mod tests {
         assert!(html.contains("src=\"longform_assets/cover.svg\""));
         assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
+        assert!(html.contains("a² + b² = c²; E = mc²"));
+        assert!(html.contains("\\begin{aligned}"));
+        assert!(html.contains("E &amp;= mc^2"));
         assert!(html.contains("mathjax@3"));
         assert!(html.contains("math-rendered"));
         assert!(html.contains("mermaid.esm.min.mjs"));
