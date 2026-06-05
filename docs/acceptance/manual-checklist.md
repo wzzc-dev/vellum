@@ -6,6 +6,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 
 - Open `docs/acceptance/longform.md` from the workspace file tree.
 - Confirm the editor shows a quiet live preview view and the document remains editable.
+- Confirm the front matter renders as a metadata preview and returns to source editing when clicked.
 - Confirm the outline sidebar lists the top-level title and each section heading.
 - Confirm the `[toc]` block renders a table of contents from the document headings and returns to source editing when clicked.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.

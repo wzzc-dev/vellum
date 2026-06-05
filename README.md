@@ -16,6 +16,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Switch between live preview and source mode
 - Headings, paragraphs, blockquotes, lists, task lists, code fences, tables,
   horizontal rules, links, images, and math blocks
+- Live preview metadata panel for front matter
 - Live preview table of contents generated from document headings
 - Lightweight live preview summaries for Mermaid flowcharts
 - Superscript footnote references and footnote definition previews

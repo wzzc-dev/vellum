@@ -183,6 +183,12 @@ struct FootnotePreview {
     body: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetadataPreviewEntry {
+    key: String,
+    value: String,
+}
+
 #[derive(Debug, Clone)]
 struct TableSurfaceLayout {
     row_tops: Vec<gpui::Pixels>,
@@ -313,8 +319,10 @@ impl MarkdownEditor {
             mermaid_edit_cursor_offset(&block)
         } else if should_render_toc_preview(&block, selection_range.clone()) {
             toc_edit_cursor_offset(&block)
-        } else if should_render_footnote_preview(&block, selection_range) {
+        } else if should_render_footnote_preview(&block, selection_range.clone()) {
             footnote_edit_cursor_offset(&block)
+        } else if should_render_front_matter_preview(&block, selection_range) {
+            front_matter_edit_cursor_offset(&block)
         } else {
             let local_visible_offset = visible_byte_offset_for_click_position(
                 &self.snapshot.display_map.blocks,
@@ -953,6 +961,8 @@ fn render_display_block(
     let show_mermaid_preview = should_render_mermaid_preview(block, snapshot.selection.range());
     let show_toc_preview = should_render_toc_preview(block, snapshot.selection.range());
     let show_footnote_preview = should_render_footnote_preview(block, snapshot.selection.range());
+    let show_front_matter_preview =
+        should_render_front_matter_preview(block, snapshot.selection.range());
 
     let text_content = if show_placeholder {
         div()
@@ -980,6 +990,7 @@ fn render_display_block(
             _ if show_mermaid_preview => render_mermaid_block(block, palette),
             _ if show_toc_preview => render_toc_block(display_blocks.as_ref(), palette),
             _ if show_footnote_preview => render_footnote_block(block, palette, window),
+            _ if show_front_matter_preview => render_front_matter_block(block, palette),
             _ if empty_line_count.is_some() => {
                 render_empty_line_block(block, empty_line_count.unwrap_or(1))
             }
@@ -1836,6 +1847,132 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
             )
         })
         .into_any_element()
+}
+
+fn render_front_matter_block(block: &RenderBlock, palette: RenderPalette) -> AnyElement {
+    let entries = front_matter_preview_entries(block);
+
+    let mut body = div().w_full().flex().flex_col().gap_2();
+    if entries.is_empty() {
+        body = body.child(
+            div()
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .text_color(palette.muted_text_color)
+                .child("No metadata yet"),
+        );
+    } else {
+        for entry in &entries {
+            body = body.child(render_metadata_entry(entry, palette));
+        }
+    }
+
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.code_surface_background)
+        .px_3()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.muted_text_color)
+                .child("Metadata"),
+        )
+        .child(body)
+        .into_any_element()
+}
+
+fn render_metadata_entry(entry: &MetadataPreviewEntry, palette: RenderPalette) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .items_start()
+        .gap_2()
+        .child(
+            div()
+                .min_w(px(92.))
+                .rounded(px(6.))
+                .bg(palette.text_color.opacity(0.06))
+                .px_2()
+                .py(px(2.))
+                .text_sm()
+                .line_height(px(BODY_LINE_HEIGHT))
+                .text_color(palette.muted_text_color)
+                .child(entry.key.clone()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_size(px(BODY_FONT_SIZE))
+                .line_height(px(BODY_LINE_HEIGHT))
+                .text_color(palette.text_color)
+                .child(entry.value.clone()),
+        )
+        .into_any_element()
+}
+
+fn front_matter_preview_entries(block: &RenderBlock) -> Vec<MetadataPreviewEntry> {
+    rendered_text_for_block(block)
+        .lines()
+        .filter_map(parse_metadata_preview_entry)
+        .collect()
+}
+
+fn parse_metadata_preview_entry(line: &str) -> Option<MetadataPreviewEntry> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let delimiter = line.find(':').or_else(|| line.find('='))?;
+    let key = line[..delimiter].trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    Some(MetadataPreviewEntry {
+        key: key.to_string(),
+        value: clean_metadata_preview_value(&line[delimiter + 1..]),
+    })
+}
+
+fn clean_metadata_preview_value(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches(',').trim();
+    let unwrapped = if let Some(list) = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        list.split(',')
+            .map(clean_metadata_scalar)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        clean_metadata_scalar(trimmed)
+    };
+
+    if unwrapped.is_empty() {
+        "Empty".to_string()
+    } else {
+        unwrapped
+    }
+}
+
+fn clean_metadata_scalar(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
 }
 
 fn render_footnote_block(
@@ -2918,6 +3055,14 @@ fn should_render_footnote_preview(
         && !selection_touches_render_block(selection, block)
 }
 
+fn should_render_front_matter_preview(
+    block: &RenderBlock,
+    selection: std::ops::Range<usize>,
+) -> bool {
+    matches!(&block.kind, BlockKind::YamlFrontMatter)
+        && !selection_touches_render_block(selection, block)
+}
+
 fn standalone_image_span(block: &RenderBlock) -> Option<&RenderSpan> {
     let mut visible_spans = rendered_spans(block).filter(|span| !span.visible_text.is_empty());
     let span = visible_spans.next()?;
@@ -2953,6 +3098,21 @@ fn footnote_edit_cursor_offset(block: &RenderBlock) -> usize {
         .spans
         .iter()
         .find(|span| !span.hidden && !span.source_range.is_empty())
+        .map(|span| span.source_range.start)
+        .unwrap_or(block.content_range.start)
+        .min(block.content_range.end)
+}
+
+fn front_matter_edit_cursor_offset(block: &RenderBlock) -> usize {
+    block
+        .spans
+        .iter()
+        .find(|span| {
+            !span.hidden
+                && span.kind != RenderSpanKind::LineBreak
+                && !span.visible_text.is_empty()
+                && !span.source_range.is_empty()
+        })
         .map(|span| span.source_range.start)
         .unwrap_or(block.content_range.start)
         .min(block.content_range.end)
@@ -3889,12 +4049,15 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        FootnotePreview, MermaidEdge, MermaidNode, ResolvedImageSource, TocPreviewEntry,
-        collect_toc_preview_entries, footnote_edit_cursor_offset, footnote_preview,
+        FootnotePreview, MermaidEdge, MermaidNode, MetadataPreviewEntry, ResolvedImageSource,
+        TocPreviewEntry, collect_toc_preview_entries, footnote_edit_cursor_offset,
+        footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
         image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
-        parse_mermaid_preview, resolve_image_source, selection_touches_render_block,
-        should_render_footnote_preview, should_render_image_preview, should_render_mermaid_preview,
-        should_render_toc_preview, toc_edit_cursor_offset, word_range_at_visible_offset,
+        parse_mermaid_preview, parse_metadata_preview_entry, resolve_image_source,
+        selection_touches_render_block, should_render_footnote_preview,
+        should_render_front_matter_preview, should_render_image_preview,
+        should_render_mermaid_preview, should_render_toc_preview, toc_edit_cursor_offset,
+        word_range_at_visible_offset,
     };
     use crate::{
         BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
@@ -4101,6 +4264,109 @@ mod tests {
         }
     }
 
+    fn front_matter_block() -> RenderBlock {
+        let title = "title: Draft";
+        let tags = "tags: [acceptance, export]";
+        let source_text = format!("---\n{title}\n{tags}\n---");
+        let title_start = "---\n".len();
+        let title_end = title_start + title.len();
+        let tags_start = title_end + 1;
+        let tags_end = tags_start + tags.len();
+        let closing_start = tags_end + 1;
+        let visible_text = format!("\n{title}\n{tags}\n");
+
+        RenderBlock {
+            id: 7,
+            kind: BlockKind::YamlFrontMatter,
+            source_range: 0..source_text.len(),
+            content_range: 0..source_text.len(),
+            visible_range: 0..visible_text.len(),
+            visible_text: visible_text.clone(),
+            spans: vec![
+                RenderSpan {
+                    kind: RenderSpanKind::HiddenSyntax,
+                    source_range: 0..3,
+                    visible_range: 0..0,
+                    source_text: "---".to_string(),
+                    visible_text: String::new(),
+                    hidden: true,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::LineBreak,
+                    source_range: 3..4,
+                    visible_range: 0..1,
+                    source_text: "\n".to_string(),
+                    visible_text: "\n".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: title_start..title_end,
+                    visible_range: 1..1 + title.len(),
+                    source_text: title.to_string(),
+                    visible_text: title.to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle {
+                        code: true,
+                        ..RenderInlineStyle::default()
+                    },
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::LineBreak,
+                    source_range: title_end..title_end + 1,
+                    visible_range: 1 + title.len()..2 + title.len(),
+                    source_text: "\n".to_string(),
+                    visible_text: "\n".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::Text,
+                    source_range: tags_start..tags_end,
+                    visible_range: 2 + title.len()..2 + title.len() + tags.len(),
+                    source_text: tags.to_string(),
+                    visible_text: tags.to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle {
+                        code: true,
+                        ..RenderInlineStyle::default()
+                    },
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::LineBreak,
+                    source_range: tags_end..tags_end + 1,
+                    visible_range: 2 + title.len() + tags.len()
+                        ..3 + title.len() + tags.len(),
+                    source_text: "\n".to_string(),
+                    visible_text: "\n".to_string(),
+                    hidden: false,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+                RenderSpan {
+                    kind: RenderSpanKind::HiddenSyntax,
+                    source_range: closing_start..closing_start + 3,
+                    visible_range: 3 + title.len() + tags.len()
+                        ..3 + title.len() + tags.len(),
+                    source_text: "---".to_string(),
+                    visible_text: String::new(),
+                    hidden: true,
+                    style: RenderInlineStyle::default(),
+                    meta: None,
+                },
+            ],
+            embedded: None,
+            source_hash: 0,
+        }
+    }
+
     #[test]
     fn resolves_relative_image_paths_from_document_directory() {
         let resolved = resolve_image_source("assets/cover.png", Some(Path::new("/tmp/docs")));
@@ -4279,6 +4545,68 @@ mod tests {
     fn footnote_preview_click_moves_cursor_to_body() {
         let block = footnote_block("note", "Body text");
         assert_eq!(footnote_edit_cursor_offset(&block), "[^note]: ".len() + 20);
+    }
+
+    #[test]
+    fn metadata_preview_parses_yaml_and_toml_style_entries() {
+        assert_eq!(
+            parse_metadata_preview_entry("title: Draft"),
+            Some(MetadataPreviewEntry {
+                key: "title".to_string(),
+                value: "Draft".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_metadata_preview_entry("tags = [\"acceptance\", \"export\"]"),
+            Some(MetadataPreviewEntry {
+                key: "tags".to_string(),
+                value: "acceptance, export".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_metadata_preview_entry("date: "),
+            Some(MetadataPreviewEntry {
+                key: "date".to_string(),
+                value: "Empty".to_string(),
+            })
+        );
+        assert_eq!(parse_metadata_preview_entry("# comment"), None);
+    }
+
+    #[test]
+    fn front_matter_preview_collects_visible_metadata_entries() {
+        let block = front_matter_block();
+
+        assert_eq!(
+            front_matter_preview_entries(&block),
+            vec![
+                MetadataPreviewEntry {
+                    key: "title".to_string(),
+                    value: "Draft".to_string(),
+                },
+                MetadataPreviewEntry {
+                    key: "tags".to_string(),
+                    value: "acceptance, export".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn front_matter_preview_is_disabled_when_selection_touches_block() {
+        let block = front_matter_block();
+
+        assert!(should_render_front_matter_preview(&block, 100..100));
+        assert!(should_render_front_matter_preview(&block, 0..0));
+        assert!(selection_touches_render_block(6..6, &block));
+        assert!(!should_render_front_matter_preview(&block, 6..6));
+        assert!(!should_render_front_matter_preview(&block, 4..12));
+    }
+
+    #[test]
+    fn front_matter_preview_click_moves_cursor_to_first_metadata_line() {
+        let block = front_matter_block();
+        assert_eq!(front_matter_edit_cursor_offset(&block), "---\n".len());
     }
 
     #[test]
