@@ -2645,6 +2645,8 @@ mod tests {
         assert!(html.contains("mermaid.esm.min.mjs"));
         assert!(html.contains("<svg class=\"mermaid-static\""));
         assert!(html.contains(">Export HTML<"));
+        assert!(html.contains("Mermaid sequence diagram preview"));
+        assert!(html.contains(">Save PDF</tspan>"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());

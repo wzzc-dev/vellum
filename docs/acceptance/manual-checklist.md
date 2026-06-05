@@ -11,7 +11,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the `[toc]` block renders a table of contents from the document headings and returns to source editing when clicked.
 - Confirm clicking a heading inside the rendered `[toc]` block moves the cursor to that heading.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
-- Confirm the Mermaid block shows a structured preview when the cursor leaves it and returns to source editing when clicked.
+- Confirm the Mermaid blocks show structured previews when the cursor leaves them and return to source editing when clicked.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
 
@@ -33,7 +33,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 
 - Export HTML from the app.
 - Use Export and Open for Print from the app.
-- Confirm the exported HTML opens in a browser with the table of contents, table, code block, image, math, Mermaid diagram, and footnote present.
+- Confirm the exported HTML opens in a browser with the table of contents, table, code block, image, math, Mermaid diagrams, and footnote present.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
 - Open the browser print dialog for the exported HTML and verify the preview uses a white page, document margins, wrapped code, and no clipped table or image.
 - Save the browser print preview as PDF and confirm the PDF contains the same visible content.

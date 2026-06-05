@@ -167,6 +167,22 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
         "longform sample should include a Mermaid diagram"
     );
     assert!(
+        LONGFORM_ACCEPTANCE_SAMPLE.contains("flowchart")
+            && LONGFORM_ACCEPTANCE_SAMPLE.contains("sequenceDiagram"),
+        "longform sample should cover flowchart and sequence Mermaid diagrams"
+    );
+    assert!(
+        map.blocks
+            .iter()
+            .filter(|block| matches!(
+                block.embedded,
+                Some(EmbeddedNodeKind::Diagram { ref language }) if language == "mermaid"
+            ))
+            .count()
+            >= 2,
+        "longform sample should include both Mermaid diagram blocks"
+    );
+    assert!(
         map.blocks.iter().any(|block| matches!(
             block.embedded,
             Some(EmbeddedNodeKind::FootnoteDefinition)

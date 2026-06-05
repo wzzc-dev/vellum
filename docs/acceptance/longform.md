@@ -58,13 +58,23 @@ E &= mc^2
 \end{aligned}
 $$
 
-## Mermaid Diagram
+## Mermaid Diagrams
 
 ```mermaid
 flowchart TD
   Draft[Draft note] --> Save[Save and reopen]
   Save --> Export[Export HTML]
   Export --> Print[Print or save PDF]
+```
+
+```mermaid
+sequenceDiagram
+  participant Writer
+  participant App as Vellum
+  participant Browser
+  Writer->>App: Export print HTML
+  App-->>Browser: Open exported document
+  Browser-->>Writer: Save PDF
 ```
 
 ## Footnote
