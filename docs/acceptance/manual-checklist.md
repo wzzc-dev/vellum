@@ -22,6 +22,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the responsive raw HTML image renders and uses local `srcset` candidates.
 - Paste or drop a test image into the document.
 - Confirm the inserted image is written under the configured image asset folder and the Markdown path is document-relative.
+- Select text, paste a local file path over it, and confirm the selection becomes a Markdown link with a document-relative destination when the path is under the same workspace.
 
 ## External File Changes
 

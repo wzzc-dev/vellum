@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use gpui::{Context, EntityInputHandler as _, Window};
 use gpui_component::input::{InputEvent, InputState, Position};
 
@@ -211,6 +213,32 @@ fn normalized_pasted_image_path(text: &str) -> Option<&str> {
 
     let autolink = normalized_pasted_url(text)?;
     looks_like_image_path(autolink).then_some(autolink)
+}
+
+fn markdown_destination_for_paste(destination: &str, document_dir: Option<&Path>) -> String {
+    let Some(document_dir) = document_dir else {
+        return destination.to_string();
+    };
+    if !looks_like_local_file_path(destination) {
+        return destination.to_string();
+    }
+
+    let (path_part, suffix) = split_local_destination_suffix(destination);
+    let path = Path::new(path_part);
+    if !path.is_absolute() {
+        return destination.to_string();
+    }
+
+    relative_markdown_path(document_dir, path)
+        .map(|relative| format!("{relative}{suffix}"))
+        .unwrap_or_else(|| destination.to_string())
+}
+
+fn split_local_destination_suffix(destination: &str) -> (&str, &str) {
+    let suffix_start = destination
+        .find(['?', '#'])
+        .unwrap_or(destination.len());
+    destination.split_at(suffix_start)
 }
 
 fn markdown_link(label: &str, destination: &str) -> String {
@@ -450,7 +478,14 @@ fn escape_link_label(text: &str) -> String {
 }
 
 fn escape_link_destination(text: &str) -> String {
-    text.replace('\\', r"\\").replace(')', r"\)")
+    let needs_angle_destination = text
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
+    if needs_angle_destination {
+        format!("<{}>", text.replace('\\', r"\\").replace('>', r"\>"))
+    } else {
+        text.to_string()
+    }
 }
 
 fn detect_overclose_opportunity(
@@ -500,6 +535,7 @@ fn apply_auto_pair_to_source(
 }
 
 use super::{
+    file_ops::relative_markdown_path,
     surface::{
         caret_visual_offset_for_block, rendered_empty_block_line_count, rendered_text_for_block,
         rendered_visible_end, rendered_visible_len, surface_empty_block_line_count,
@@ -623,6 +659,8 @@ impl MarkdownEditor {
             );
 
             if let Some(path) = image_paste_opportunity {
+                let document_dir = self.controller.current_document_dir();
+                let path = markdown_destination_for_paste(&path, document_dir.as_deref());
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
                     input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
@@ -646,6 +684,8 @@ impl MarkdownEditor {
                         .dispatch(EditCommand::ReplaceSelection { text: replacement })
                 }
             } else if let Some(url) = link_paste_opportunity {
+                let document_dir = self.controller.current_document_dir();
+                let url = markdown_destination_for_paste(&url, document_dir.as_deref());
                 self.syncing_input = true;
                 self.document_input.update(cx, |input, cx| {
                     input.set_value(self.snapshot.display_map.visible_text.clone(), window, cx);
@@ -2376,6 +2416,36 @@ mod tests {
     }
 
     #[test]
+    fn pasted_absolute_local_path_uses_document_relative_destination() {
+        assert_eq!(
+            markdown_destination_for_paste(
+                "/notes/drafts/assets/appendix.md",
+                Some(std::path::Path::new("/notes/drafts"))
+            ),
+            "./assets/appendix.md"
+        );
+    }
+
+    #[test]
+    fn pasted_absolute_local_path_preserves_suffixes() {
+        assert_eq!(
+            markdown_destination_for_paste(
+                "/notes/drafts/assets/appendix.md?raw=1#notes",
+                Some(std::path::Path::new("/notes/drafts"))
+            ),
+            "./assets/appendix.md?raw=1#notes"
+        );
+    }
+
+    #[test]
+    fn pasted_absolute_local_path_without_document_dir_stays_absolute() {
+        assert_eq!(
+            markdown_destination_for_paste("/notes/drafts/assets/appendix.md", None),
+            "/notes/drafts/assets/appendix.md"
+        );
+    }
+
+    #[test]
     fn detects_markdown_autolink_paste_over_selection() {
         let old_visible = "Read docs";
         let new_visible = "Read <https://example.com/guide>";
@@ -2552,7 +2622,7 @@ mod tests {
             replace_selected_image_source(&snapshot, "./assets/new image(1).png")
                 .expect("selected image alt should update source");
 
-        assert_eq!(updated, r"See ![diagram](./assets/new image(1\).png)");
+        assert_eq!(updated, r"See ![diagram](<./assets/new image(1).png>)");
         assert_eq!(selection.cursor(), updated.len());
     }
 
@@ -2986,11 +3056,15 @@ mod tests {
         assert_eq!(escape_link_label("a]b"), r"a\]b");
         assert_eq!(
             escape_link_destination("https://example.com/a)b"),
-            r"https://example.com/a\)b"
+            r"<https://example.com/a)b>"
         );
         assert_eq!(
-            markdown_link(r"a\]b", r"https://example.com/a\)b"),
-            r"[a\\\]b](https://example.com/a\\\)b)"
+            escape_link_destination("./assets/my pic(1).png"),
+            r"<./assets/my pic(1).png>"
+        );
+        assert_eq!(
+            markdown_link("a]b", "https://example.com/a)b"),
+            r"[a\]b](<https://example.com/a)b>)"
         );
         assert_eq!(
             markdown_link("docs", "https://example.com/guide"),
@@ -3002,7 +3076,7 @@ mod tests {
     fn escapes_smart_paste_image_parts() {
         assert_eq!(
             markdown_image(r"a\]b", r"./assets/my pic(1).png"),
-            r"![a\\\]b](./assets/my pic(1\).png)"
+            r"![a\\\]b](<./assets/my pic(1).png>)"
         );
     }
 

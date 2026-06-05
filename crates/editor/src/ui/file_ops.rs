@@ -442,6 +442,61 @@ fn path_is_inside_dir(path: &Path, dir: &Path) -> bool {
     path.starts_with(dir)
 }
 
+pub(super) fn relative_markdown_path(base_dir: &Path, target: &Path) -> Option<String> {
+    let base_components = normal_path_components(base_dir)?;
+    let target_components = normal_path_components(target)?;
+    if base_components.is_empty()
+        || target_components.is_empty()
+        || base_components[0] != target_components[0]
+    {
+        return None;
+    }
+
+    let common_len = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(base, target)| base == target)
+        .count();
+    if common_len == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        relative.push("..");
+    }
+    for component in &target_components[common_len..] {
+        relative.push(component);
+    }
+
+    if relative.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+
+    let rendered = relative.display().to_string();
+    if rendered.starts_with("..") {
+        Some(rendered)
+    } else {
+        Some(format!("./{rendered}"))
+    }
+}
+
+fn normal_path_components(path: &Path) -> Option<Vec<String>> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                components.push(prefix.as_os_str().to_string_lossy().into_owned())
+            }
+            Component::RootDir => components.push(std::path::MAIN_SEPARATOR.to_string()),
+            Component::Normal(part) => components.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::ParentDir => return None,
+        }
+    }
+    Some(components)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -535,5 +590,27 @@ mod tests {
         assert_eq!(sanitize_asset_file_stem("图 1: draft"), "图 1- draft");
         assert_eq!(sanitize_asset_file_stem(".."), "image");
         assert_eq!(sanitize_asset_file_stem("a/b\\c"), "a-b-c");
+    }
+
+    #[test]
+    fn relative_markdown_path_prefers_document_relative_paths() {
+        let base = Path::new("/notes/drafts");
+
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/drafts/pic.png")),
+            Some("./pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/drafts/assets/pic.png")),
+            Some("./assets/pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/assets/pic.png")),
+            Some("../assets/pic.png".to_string())
+        );
+        assert_eq!(
+            relative_markdown_path(base, Path::new("/notes/../assets/pic.png")),
+            None
+        );
     }
 }
