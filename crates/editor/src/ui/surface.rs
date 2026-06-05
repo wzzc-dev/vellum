@@ -164,6 +164,8 @@ struct MermaidPreview {
     edges: Vec<MermaidEdge>,
     participants: Vec<MermaidParticipant>,
     messages: Vec<MermaidSequenceMessage>,
+    notes: Vec<MermaidSequenceNote>,
+    sequence_items: Vec<MermaidSequenceItem>,
     unsupported_lines: usize,
 }
 
@@ -207,6 +209,26 @@ struct MermaidSequenceMessage {
     to: String,
     label: String,
     dashed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSequenceNote {
+    placement: MermaidSequenceNotePlacement,
+    participants: Vec<String>,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MermaidSequenceNotePlacement {
+    LeftOf,
+    RightOf,
+    Over,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MermaidSequenceItem {
+    Message(MermaidSequenceMessage),
+    Note(MermaidSequenceNote),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2366,16 +2388,17 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                 .child("Mermaid"),
         );
 
-    if !preview.messages.is_empty() {
+    if !preview.messages.is_empty() || !preview.notes.is_empty() {
         header = header.child(render_mermaid_chip("sequence".to_string(), palette));
         header = header.child(
             div()
                 .text_sm()
                 .text_color(palette.muted_text_color.opacity(0.7))
                 .child(format!(
-                    "{} participants, {} messages",
+                    "{} participants, {} messages, {} notes",
                     preview.participants.len(),
-                    preview.messages.len()
+                    preview.messages.len(),
+                    preview.notes.len()
                 )),
         );
     } else if let Some(direction) = &preview.direction {
@@ -2393,14 +2416,17 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
     }
 
     let mut body = div().w_full().flex().flex_col().gap_2();
-    if !preview.messages.is_empty() {
+    if !preview.messages.is_empty() || !preview.notes.is_empty() {
         body = body.child(render_mermaid_sequence_preview(&preview, palette));
-        if preview.messages.len() > 8 {
+        if preview.sequence_items.len() > 8 {
             body = body.child(
                 div()
                     .text_sm()
                     .text_color(palette.muted_text_color)
-                    .child(format!("+{} more messages", preview.messages.len() - 8)),
+                    .child(format!(
+                        "+{} more sequence items",
+                        preview.sequence_items.len() - 8
+                    )),
             );
         }
         if preview.unsupported_lines > 0 {
@@ -2479,10 +2505,15 @@ fn render_mermaid_sequence_preview(
         .flex_col()
         .gap_2()
         .child(participants);
-    for message in preview.messages.iter().take(8) {
-        sequence = sequence.child(render_mermaid_sequence_message_card(
-            preview, message, palette,
-        ));
+    for item in preview.sequence_items.iter().take(8) {
+        sequence = match item {
+            MermaidSequenceItem::Message(message) => sequence.child(
+                render_mermaid_sequence_message_card(preview, message, palette),
+            ),
+            MermaidSequenceItem::Note(note) => {
+                sequence.child(render_mermaid_sequence_note_card(preview, note, palette))
+            }
+        };
     }
 
     sequence.into_any_element()
@@ -2521,6 +2552,43 @@ fn render_mermaid_sequence_message_card(
     }
 
     card.into_any_element()
+}
+
+fn render_mermaid_sequence_note_card(
+    preview: &MermaidPreview,
+    note: &MermaidSequenceNote,
+    palette: RenderPalette,
+) -> AnyElement {
+    let placement = match note.placement {
+        MermaidSequenceNotePlacement::LeftOf => "note left of",
+        MermaidSequenceNotePlacement::RightOf => "note right of",
+        MermaidSequenceNotePlacement::Over => "note over",
+    };
+    let participants = note
+        .participants
+        .iter()
+        .map(|id| mermaid_sequence_participant_label(preview, id))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.highlight_background.opacity(0.16))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color)
+                .child(format!("{placement} {participants}")),
+        )
+        .child(render_mermaid_chip(note.text.clone(), palette))
+        .into_any_element()
 }
 
 fn render_mermaid_participant_card(label: &str, palette: RenderPalette) -> AnyElement {
@@ -2759,6 +2827,21 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
             continue;
         }
 
+        if let Some(note) = parse_mermaid_sequence_note(line) {
+            for participant_id in &note.participants {
+                upsert_mermaid_participant(
+                    &mut preview.participants,
+                    &mut participant_indices,
+                    MermaidParticipant::new(participant_id),
+                );
+            }
+            preview
+                .sequence_items
+                .push(MermaidSequenceItem::Note(note.clone()));
+            preview.notes.push(note);
+            continue;
+        }
+
         if is_mermaid_sequence_non_message_directive(line) {
             continue;
         }
@@ -2778,6 +2861,9 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
             &mut participant_indices,
             MermaidParticipant::new(&message.to),
         );
+        preview
+            .sequence_items
+            .push(MermaidSequenceItem::Message(message.clone()));
         preview.messages.push(message);
     }
 
@@ -2811,6 +2897,32 @@ fn split_mermaid_sequence_alias(source: &str) -> Option<(&str, &str)> {
         .map(|index| (&source[..index], &source[index + 4..]))
 }
 
+fn parse_mermaid_sequence_note(line: &str) -> Option<MermaidSequenceNote> {
+    let rest = strip_ascii_prefix(line, "note ")?.trim();
+    let (placement, rest) = if let Some(rest) = strip_ascii_prefix(rest, "left of ") {
+        (MermaidSequenceNotePlacement::LeftOf, rest)
+    } else if let Some(rest) = strip_ascii_prefix(rest, "right of ") {
+        (MermaidSequenceNotePlacement::RightOf, rest)
+    } else if let Some(rest) = strip_ascii_prefix(rest, "over ") {
+        (MermaidSequenceNotePlacement::Over, rest)
+    } else {
+        return None;
+    };
+    let (participants_source, text_source) = rest.split_once(':')?;
+    let participants = participants_source
+        .split(',')
+        .map(clean_mermaid_sequence_participant_id)
+        .filter(|participant| !participant.is_empty())
+        .collect::<Vec<_>>();
+    let text = clean_mermaid_note_text(text_source);
+
+    (!participants.is_empty() && !text.is_empty()).then_some(MermaidSequenceNote {
+        placement,
+        participants,
+        text,
+    })
+}
+
 fn is_mermaid_sequence_non_message_directive(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower == "autonumber"
@@ -2830,6 +2942,12 @@ fn is_mermaid_sequence_non_message_directive(line: &str) -> bool {
         || lower.starts_with("critical ")
         || lower.starts_with("option ")
         || lower.starts_with("break ")
+}
+
+fn strip_ascii_prefix<'a>(source: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = source.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then_some(&source[prefix.len()..])
 }
 
 fn parse_mermaid_sequence_message(line: &str) -> Option<MermaidSequenceMessage> {
@@ -3087,6 +3205,15 @@ fn clean_mermaid_label(source: &str) -> String {
     source
         .trim()
         .trim_matches(|ch| matches!(ch, '[' | ']' | '(' | ')' | '{' | '}'))
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+fn clean_mermaid_note_text(source: &str) -> String {
+    source
         .trim()
         .trim_matches('"')
         .trim_matches('\'')
@@ -4785,13 +4912,14 @@ fn build_editor_context_menu(
 mod tests {
     use super::{
         FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
-        MermaidParticipant, MermaidSequenceMessage, MetadataPreviewEntry, ResolvedImageSource,
-        TocPreviewEntry, collect_mermaid_preview_nodes, collect_toc_preview_entries,
-        footnote_edit_cursor_offset, footnote_preview, front_matter_edit_cursor_offset,
-        front_matter_preview_entries, image_edit_cursor_offset, looks_like_image_uri,
-        mermaid_edit_cursor_offset, mermaid_graph_direction, parse_html_image_preview,
-        parse_mermaid_preview, parse_metadata_preview_entry, resolve_image_source,
-        selection_touches_render_block, should_render_footnote_preview,
+        MermaidParticipant, MermaidSequenceItem, MermaidSequenceMessage, MermaidSequenceNote,
+        MermaidSequenceNotePlacement, MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
+        collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
+        footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
+        image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
+        mermaid_graph_direction, parse_html_image_preview, parse_mermaid_preview,
+        parse_metadata_preview_entry, resolve_image_source, selection_touches_render_block,
+        should_render_footnote_preview,
         should_render_front_matter_preview, should_render_html_image_preview,
         should_render_image_preview, should_render_mermaid_preview, should_render_toc_preview,
         toc_edit_cursor_offset, word_range_at_visible_offset,
@@ -5373,6 +5501,70 @@ mod tests {
                     label: "Looks good".to_string(),
                     dashed: true,
                 },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_sequence_notes_in_order() {
+        let preview = parse_mermaid_preview(
+            "sequenceDiagram\n  participant Alice as Writer\n  Alice->>Bob: Start\n  Note over Alice,Bob: Shared context <ok>\n  Note right of Bob: Follow up\n  Bob-->>Alice: Done\n",
+        );
+
+        assert_eq!(
+            preview.participants,
+            vec![
+                MermaidParticipant {
+                    id: "Alice".to_string(),
+                    label: "Writer".to_string(),
+                },
+                MermaidParticipant {
+                    id: "Bob".to_string(),
+                    label: "Bob".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.notes,
+            vec![
+                MermaidSequenceNote {
+                    placement: MermaidSequenceNotePlacement::Over,
+                    participants: vec!["Alice".to_string(), "Bob".to_string()],
+                    text: "Shared context <ok>".to_string(),
+                },
+                MermaidSequenceNote {
+                    placement: MermaidSequenceNotePlacement::RightOf,
+                    participants: vec!["Bob".to_string()],
+                    text: "Follow up".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.sequence_items,
+            vec![
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Alice".to_string(),
+                    to: "Bob".to_string(),
+                    label: "Start".to_string(),
+                    dashed: false,
+                }),
+                MermaidSequenceItem::Note(MermaidSequenceNote {
+                    placement: MermaidSequenceNotePlacement::Over,
+                    participants: vec!["Alice".to_string(), "Bob".to_string()],
+                    text: "Shared context <ok>".to_string(),
+                }),
+                MermaidSequenceItem::Note(MermaidSequenceNote {
+                    placement: MermaidSequenceNotePlacement::RightOf,
+                    participants: vec!["Bob".to_string()],
+                    text: "Follow up".to_string(),
+                }),
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Bob".to_string(),
+                    to: "Alice".to_string(),
+                    label: "Done".to_string(),
+                    dashed: true,
+                }),
             ]
         );
         assert_eq!(preview.unsupported_lines, 0);

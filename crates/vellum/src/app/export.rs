@@ -1649,11 +1649,20 @@ fn clean_static_mermaid_label(source: &str) -> String {
         .to_string()
 }
 
+fn clean_static_mermaid_note_text(source: &str) -> String {
+    source
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
 fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> {
     let mut saw_sequence = false;
     let mut participants = Vec::new();
     let mut participant_indices = HashMap::new();
-    let mut messages = Vec::new();
+    let mut items = Vec::new();
 
     for raw_line in source.lines() {
         let line = raw_line.trim().trim_end_matches(';').trim();
@@ -1678,6 +1687,18 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
             continue;
         }
 
+        if let Some(note) = parse_static_sequence_note(line) {
+            for participant_id in &note.participants {
+                upsert_static_sequence_participant(
+                    &mut participants,
+                    &mut participant_indices,
+                    StaticMermaidParticipant::new(participant_id),
+                );
+            }
+            items.push(StaticMermaidSequenceItem::Note(note.clone()));
+            continue;
+        }
+
         if static_sequence_non_message_directive(line) {
             continue;
         }
@@ -1696,14 +1717,14 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
             &mut participant_indices,
             StaticMermaidParticipant::new(&message.to),
         );
-        messages.push(message);
+        items.push(StaticMermaidSequenceItem::Message(message.clone()));
     }
 
-    (saw_sequence && !participants.is_empty() && !messages.is_empty()).then_some(
+    (saw_sequence && !participants.is_empty() && !items.is_empty()).then_some(
         StaticMermaidSequence {
             participants,
             participant_indices,
-            messages,
+            items,
         },
     )
 }
@@ -1735,6 +1756,32 @@ fn split_static_sequence_alias(source: &str) -> Option<(&str, &str)> {
         .map(|index| (&source[..index], &source[index + 4..]))
 }
 
+fn parse_static_sequence_note(line: &str) -> Option<StaticMermaidNote> {
+    let rest = strip_static_ascii_prefix(line, "note ")?.trim();
+    let (placement, rest) = if let Some(rest) = strip_static_ascii_prefix(rest, "left of ") {
+        (StaticMermaidNotePlacement::LeftOf, rest)
+    } else if let Some(rest) = strip_static_ascii_prefix(rest, "right of ") {
+        (StaticMermaidNotePlacement::RightOf, rest)
+    } else if let Some(rest) = strip_static_ascii_prefix(rest, "over ") {
+        (StaticMermaidNotePlacement::Over, rest)
+    } else {
+        return None;
+    };
+    let (participants_source, text_source) = rest.split_once(':')?;
+    let participants = participants_source
+        .split(',')
+        .map(clean_static_sequence_participant_id)
+        .filter(|participant| !participant.is_empty())
+        .collect::<Vec<_>>();
+    let text = clean_static_mermaid_note_text(text_source);
+
+    (!participants.is_empty() && !text.is_empty()).then_some(StaticMermaidNote {
+        placement,
+        participants,
+        text,
+    })
+}
+
 fn static_sequence_non_message_directive(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower == "autonumber"
@@ -1754,6 +1801,12 @@ fn static_sequence_non_message_directive(line: &str) -> bool {
         || lower.starts_with("critical ")
         || lower.starts_with("option ")
         || lower.starts_with("break ")
+}
+
+fn strip_static_ascii_prefix<'a>(source: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = source.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then_some(&source[prefix.len()..])
 }
 
 fn parse_static_sequence_message(line: &str) -> Option<StaticMermaidMessage> {
@@ -1823,13 +1876,13 @@ fn render_static_sequence_mermaid_svg(
     let margin = 28usize;
     let lifeline_top = margin + participant_height + 18;
     let message_start_y = lifeline_top + 40;
-    let message_gap = 56usize;
+    let item_gap = 60usize;
     let participant_count = sequence.participants.len().max(1);
-    let message_count = sequence.messages.len().max(1);
+    let item_count = sequence.items.len().max(1);
     let width = margin * 2
         + participant_width * participant_count
         + participant_gap * participant_count.saturating_sub(1);
-    let height = message_start_y + message_gap * message_count + margin;
+    let height = message_start_y + item_gap * item_count + margin;
 
     let mut out = format!(
         "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid sequence diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">\
@@ -1862,56 +1915,132 @@ fn render_static_sequence_mermaid_svg(
         ));
     }
 
-    for (index, message) in sequence.messages.iter().enumerate() {
-        let Some(from_index) = sequence.participant_indices.get(&message.from).copied() else {
-            continue;
-        };
-        let Some(to_index) = sequence.participant_indices.get(&message.to).copied() else {
-            continue;
-        };
-        let from_x = static_sequence_participant_center_x(
-            from_index,
-            participant_width,
-            participant_gap,
-            margin,
-        );
-        let to_x = static_sequence_participant_center_x(
-            to_index,
-            participant_width,
-            participant_gap,
-            margin,
-        );
-        let y = message_start_y + index * message_gap;
-        let dash = if message.dashed {
-            " stroke-dasharray=\"6 5\""
-        } else {
-            ""
-        };
-
-        if from_x == to_x {
-            let loop_width = 44usize;
-            let loop_height = 24usize;
-            let x2 = (from_x + loop_width).min(width - margin);
-            out.push_str(&format!(
-                "<path d=\"M {from_x} {y} H {x2} V {} H {from_x}\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>",
-                y + loop_height
-            ));
-            render_static_sequence_message_label(&mut out, &message.label, from_x + 28, y - 10);
-        } else {
-            out.push_str(&format!(
-                "<line x1=\"{from_x}\" y1=\"{y}\" x2=\"{to_x}\" y2=\"{y}\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>"
-            ));
-            render_static_sequence_message_label(
+    for (index, item) in sequence.items.iter().enumerate() {
+        let y = message_start_y + index * item_gap;
+        match item {
+            StaticMermaidSequenceItem::Message(message) => render_static_sequence_message(
                 &mut out,
-                &message.label,
-                (from_x + to_x) / 2,
-                y - 10,
-            );
+                &sequence,
+                message,
+                y,
+                width,
+                margin,
+                participant_width,
+                participant_gap,
+                &marker_id,
+            ),
+            StaticMermaidSequenceItem::Note(note) => render_static_sequence_note(
+                &mut out,
+                &sequence,
+                note,
+                y,
+                width,
+                margin,
+                participant_width,
+                participant_gap,
+            ),
         }
     }
 
     out.push_str("</svg>");
     out
+}
+
+fn render_static_sequence_message(
+    out: &mut String,
+    sequence: &StaticMermaidSequence,
+    message: &StaticMermaidMessage,
+    y: usize,
+    width: usize,
+    margin: usize,
+    participant_width: usize,
+    participant_gap: usize,
+    marker_id: &str,
+) {
+    let Some(from_index) = sequence.participant_indices.get(&message.from).copied() else {
+        return;
+    };
+    let Some(to_index) = sequence.participant_indices.get(&message.to).copied() else {
+        return;
+    };
+    let from_x =
+        static_sequence_participant_center_x(from_index, participant_width, participant_gap, margin);
+    let to_x =
+        static_sequence_participant_center_x(to_index, participant_width, participant_gap, margin);
+    let dash = if message.dashed {
+        " stroke-dasharray=\"6 5\""
+    } else {
+        ""
+    };
+
+    if from_x == to_x {
+        let loop_width = 44usize;
+        let loop_height = 24usize;
+        let x2 = (from_x + loop_width).min(width - margin);
+        out.push_str(&format!(
+            "<path d=\"M {from_x} {y} H {x2} V {} H {from_x}\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>",
+            y + loop_height
+        ));
+        render_static_sequence_message_label(out, &message.label, from_x + 28, y - 10);
+    } else {
+        out.push_str(&format!(
+            "<line x1=\"{from_x}\" y1=\"{y}\" x2=\"{to_x}\" y2=\"{y}\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>"
+        ));
+        render_static_sequence_message_label(out, &message.label, (from_x + to_x) / 2, y - 10);
+    }
+}
+
+fn render_static_sequence_note(
+    out: &mut String,
+    sequence: &StaticMermaidSequence,
+    note: &StaticMermaidNote,
+    y: usize,
+    width: usize,
+    margin: usize,
+    participant_width: usize,
+    participant_gap: usize,
+) {
+    let centers = note
+        .participants
+        .iter()
+        .filter_map(|participant| sequence.participant_indices.get(participant).copied())
+        .map(|index| {
+            static_sequence_participant_center_x(index, participant_width, participant_gap, margin)
+        })
+        .collect::<Vec<_>>();
+    if centers.is_empty() {
+        return;
+    }
+
+    let note_height = 42usize;
+    let min_x = *centers.iter().min().unwrap();
+    let max_x = *centers.iter().max().unwrap();
+    let range_width = max_x.saturating_sub(min_x) + participant_width;
+    let note_width = range_width.clamp(154, 260);
+    let center_x = match note.placement {
+        StaticMermaidNotePlacement::LeftOf => min_x.saturating_sub(participant_width / 2 + 24),
+        StaticMermaidNotePlacement::RightOf => max_x + participant_width / 2 + 24,
+        StaticMermaidNotePlacement::Over => (min_x + max_x) / 2,
+    };
+    let min_left = margin;
+    let max_left = width.saturating_sub(margin + note_width);
+    let x = center_x
+        .saturating_sub(note_width / 2)
+        .clamp(min_left, max_left);
+    let rect_y = y.saturating_sub(note_height / 2);
+
+    out.push_str(&format!(
+        "<g class=\"mermaid-note\"><rect x=\"{x}\" y=\"{rect_y}\" width=\"{note_width}\" height=\"{note_height}\" rx=\"8\" fill=\"var(--mark-bg)\" stroke=\"var(--rule)\"/>"
+    ));
+    out.push_str(&render_static_sequence_label(
+        &note.text,
+        x + note_width / 2,
+        rect_y + note_height / 2,
+        30,
+        2,
+        "var(--fg)",
+    ));
+    out.push_str("</g>");
 }
 
 fn static_sequence_participant_center_x(
@@ -1991,7 +2120,7 @@ struct StaticMermaidEdge {
 struct StaticMermaidSequence {
     participants: Vec<StaticMermaidParticipant>,
     participant_indices: HashMap<String, usize>,
-    messages: Vec<StaticMermaidMessage>,
+    items: Vec<StaticMermaidSequenceItem>,
 }
 
 struct StaticMermaidParticipant {
@@ -2008,11 +2137,32 @@ impl StaticMermaidParticipant {
     }
 }
 
+#[derive(Clone)]
 struct StaticMermaidMessage {
     from: String,
     to: String,
     label: String,
     dashed: bool,
+}
+
+#[derive(Clone)]
+struct StaticMermaidNote {
+    placement: StaticMermaidNotePlacement,
+    participants: Vec<String>,
+    text: String,
+}
+
+#[derive(Clone, Copy)]
+enum StaticMermaidNotePlacement {
+    LeftOf,
+    RightOf,
+    Over,
+}
+
+#[derive(Clone)]
+enum StaticMermaidSequenceItem {
+    Message(StaticMermaidMessage),
+    Note(StaticMermaidNote),
 }
 
 fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
@@ -3768,6 +3918,22 @@ mod tests {
         assert!(!html.contains(
             "<pre class=\"mermaid-static mermaid-static-source\">sequenceDiagram"
         ));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_sequence_note_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nsequenceDiagram\n  participant Alice as Writer\n  Alice->>Bob: Start\n  Note over Alice,Bob: Shared context <ok>\n  Note right of Bob: Follow up\n  Bob-->>Alice: Done\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("class=\"mermaid-note\""));
+        assert!(html.contains(">Shared context &lt;ok&gt;</tspan>"));
+        assert!(html.contains(">Follow up</tspan>"));
+        assert!(html.contains(">Start</tspan>"));
+        assert!(html.contains(">Done</tspan>"));
     }
 
     #[test]

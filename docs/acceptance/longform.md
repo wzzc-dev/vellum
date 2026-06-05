@@ -96,6 +96,7 @@ sequenceDiagram
   participant App as Vellum
   participant Browser
   Writer->>App: Export print HTML
+  Note over Writer,App: Sequence note remains visible
   App-->>Browser: Open exported document
   Browser-->>Writer: Save PDF
 ```
