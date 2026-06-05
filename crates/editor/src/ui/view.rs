@@ -974,6 +974,26 @@ impl MarkdownEditor {
         )
     }
 
+    fn render_missing_file_banner(&self, cx: &Context<Self>) -> Option<gpui::AnyElement> {
+        if self.snapshot.has_conflict || !self.snapshot.is_missing {
+            return None;
+        }
+
+        Some(
+            div()
+                .mb_4()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(cx.theme().warning.opacity(0.24))
+                .bg(cx.theme().warning.opacity(0.08))
+                .px_3()
+                .py_3()
+                .text_color(cx.theme().foreground)
+                .child("File missing on disk. The current buffer is still open.")
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn focus_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.document_input.update(cx, |input, cx| {
             input.focus(window, cx);
@@ -1278,6 +1298,9 @@ impl Render for MarkdownEditor {
         let conflict_banner = self
             .render_conflict_banner(cx)
             .map(|banner| banner.into_any_element());
+        let missing_file_banner = self
+            .render_missing_file_banner(cx)
+            .map(|banner| banner.into_any_element());
         self.block_bounds.borrow_mut().clear();
         self.block_heights.borrow_mut().clear();
 
@@ -1457,6 +1480,9 @@ impl Render for MarkdownEditor {
                                     .max_w(px(MAX_EDITOR_WIDTH))
                                     .w_full()
                                     .when_some(conflict_banner, |this, banner| this.child(banner))
+                                    .when_some(missing_file_banner, |this, banner| {
+                                        this.child(banner)
+                                    })
                                     .child(
                                         div()
                                             .relative()

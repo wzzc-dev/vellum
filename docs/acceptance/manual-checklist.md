@@ -25,7 +25,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - With the document open, edit the Markdown file in another editor and save it.
 - Confirm Vellum detects the external change and offers the expected reload or keep-current conflict path when local edits exist.
 - Rename the file in the workspace tree and confirm the open tab follows the new path.
-- Delete a copied test file from the workspace tree and confirm the missing-file status is visible.
+- Delete a copied test file from the workspace tree and confirm the editor shows a missing-file banner or status.
 
 ## Export And Print
 
@@ -39,5 +39,5 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 ## Preferences
 
 - Open Preferences from the app.
-- Change the syntax theme, sidebar visibility, status bar, focus mode, typewriter mode, focus highlight, and image asset folder.
+- Change the syntax theme, editor font size, sidebar visibility, status bar, focus mode, typewriter mode, focus highlight, and image asset folder.
 - Restart the app and confirm the preferences persist.

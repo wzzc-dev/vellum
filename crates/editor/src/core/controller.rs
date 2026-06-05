@@ -344,7 +344,6 @@ impl FileSyncCoordinator {
     fn mark_document_changed(&mut self, current_text: &str) {
         self.dirty = current_text != self.baseline_text;
         self.saving = false;
-        self.missing_on_disk = false;
     }
 
     fn mark_saved(&mut self, path: PathBuf, current_text: String, modified_at: Option<SystemTime>) {
@@ -3803,6 +3802,42 @@ mod tests {
             snapshot.status_message,
             format!("File moved to {}", new_path.display())
         );
+    }
+
+    #[test]
+    fn removed_file_stays_missing_until_disk_state_recovers() {
+        let path = PathBuf::from("drafts/missing.md");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(path.clone()),
+                suggested_path: Some(path.clone()),
+                text: "Original\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        let effects = controller.apply_file_event(FileSyncEvent::Removed(path.clone()));
+
+        assert!(effects.changed);
+        let snapshot = controller.snapshot();
+        assert!(snapshot.is_missing);
+        assert_eq!(snapshot.sync_state, SyncState::Missing);
+        assert_eq!(
+            snapshot.status_message,
+            format!("File removed: {}", path.display())
+        );
+
+        controller.dispatch(EditCommand::SyncDocumentState {
+            text: "Unsaved after removal\n".to_string(),
+            selection: SelectionState::collapsed("Unsaved after removal".len()),
+        });
+
+        let snapshot = controller.snapshot();
+        assert!(snapshot.is_missing);
+        assert!(snapshot.dirty);
+        assert_eq!(snapshot.sync_state, SyncState::Missing);
+        assert_eq!(snapshot.document_text, "Unsaved after removal\n");
     }
 
     #[test]
