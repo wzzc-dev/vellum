@@ -420,6 +420,7 @@ impl VellumApp {
         editor::set_syntax_theme(preferences.syntax_theme);
         let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
         editor.update(cx, |editor, cx| {
+            editor.set_image_asset_dir(preferences.image_asset_dir.clone());
             editor.set_typewriter_mode(preferences.typewriter_mode, window, cx);
             editor.set_focus_highlight_mode(preferences.focus_highlight_mode, cx);
         });
@@ -589,6 +590,7 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         editor.update(cx, |editor, cx| {
+            editor.set_image_asset_dir(self.preferences.image_asset_dir.clone());
             editor.set_typewriter_mode(self.preferences.typewriter_mode, window, cx);
             editor.set_focus_highlight_mode(self.preferences.focus_highlight_mode, cx);
         });

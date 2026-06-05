@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Component};
 
 use anyhow::Result;
 use editor::SyntaxTheme;
@@ -13,6 +13,7 @@ pub(super) struct AppPreferences {
     pub focus_mode: bool,
     pub typewriter_mode: bool,
     pub focus_highlight_mode: bool,
+    pub image_asset_dir: String,
     pub font_size: u16,
 }
 
@@ -25,6 +26,7 @@ impl Default for AppPreferences {
             focus_mode: false,
             typewriter_mode: false,
             focus_highlight_mode: false,
+            image_asset_dir: "assets".to_string(),
             font_size: 17,
         }
     }
@@ -87,6 +89,11 @@ fn parse_preferences(raw: &str) -> AppPreferences {
             "focus_mode" => update_bool(value, &mut preferences.focus_mode),
             "typewriter_mode" => update_bool(value, &mut preferences.typewriter_mode),
             "focus_highlight_mode" => update_bool(value, &mut preferences.focus_highlight_mode),
+            "image_asset_dir" => {
+                if let Some(dir) = parse_image_asset_dir(value) {
+                    preferences.image_asset_dir = dir;
+                }
+            }
             "font_size" => {
                 if let Ok(size) = value.parse::<u16>() {
                     preferences.font_size = size.clamp(12, 28);
@@ -100,13 +107,14 @@ fn parse_preferences(raw: &str) -> AppPreferences {
 
 fn serialize_preferences(preferences: &AppPreferences) -> String {
     format!(
-        "syntax_theme={}\nsidebar_visible={}\nstatus_bar_pinned={}\nfocus_mode={}\ntypewriter_mode={}\nfocus_highlight_mode={}\nfont_size={}\n",
+        "syntax_theme={}\nsidebar_visible={}\nstatus_bar_pinned={}\nfocus_mode={}\ntypewriter_mode={}\nfocus_highlight_mode={}\nimage_asset_dir={}\nfont_size={}\n",
         theme_key(preferences.syntax_theme),
         preferences.sidebar_visible,
         preferences.status_bar_pinned,
         preferences.focus_mode,
         preferences.typewriter_mode,
         preferences.focus_highlight_mode,
+        preferences.image_asset_dir,
         preferences.font_size,
     )
 }
@@ -138,6 +146,24 @@ fn update_bool(value: &str, target: &mut bool) {
     }
 }
 
+fn parse_image_asset_dir(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_matches(['"', '\'']);
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    for component in std::path::Path::new(trimmed).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,7 +171,7 @@ mod tests {
     #[test]
     fn parses_known_preferences_and_ignores_unknown_keys() {
         let preferences = parse_preferences(
-            "syntax_theme=github\nsidebar_visible=false\nstatus_bar_pinned=yes\nfocus_mode=off\ntypewriter_mode=1\nfocus_highlight_mode=true\nfont_size=99\nunknown=value\n",
+            "syntax_theme=github\nsidebar_visible=false\nstatus_bar_pinned=yes\nfocus_mode=off\ntypewriter_mode=1\nfocus_highlight_mode=true\nimage_asset_dir=media/images\nfont_size=99\nunknown=value\n",
         );
         assert_eq!(preferences.syntax_theme, SyntaxTheme::GitHub);
         assert!(!preferences.sidebar_visible);
@@ -153,6 +179,7 @@ mod tests {
         assert!(!preferences.focus_mode);
         assert!(preferences.typewriter_mode);
         assert!(preferences.focus_highlight_mode);
+        assert_eq!(preferences.image_asset_dir, "media/images");
         assert_eq!(preferences.font_size, 28);
     }
 
@@ -165,11 +192,22 @@ mod tests {
             focus_mode: false,
             typewriter_mode: true,
             focus_highlight_mode: false,
+            image_asset_dir: "media".to_string(),
             font_size: 18,
         };
         let raw = serialize_preferences(&preferences);
         assert!(raw.contains("syntax_theme=dracula\n"));
         assert!(raw.contains("sidebar_visible=false\n"));
         assert!(raw.contains("typewriter_mode=true\n"));
+        assert!(raw.contains("image_asset_dir=media\n"));
+    }
+
+    #[test]
+    fn image_asset_dir_pref_rejects_unsafe_paths() {
+        let preferences = parse_preferences("image_asset_dir=../outside\n");
+        assert_eq!(preferences.image_asset_dir, "assets");
+
+        let preferences = parse_preferences("image_asset_dir=\"./media/images\"\n");
+        assert_eq!(preferences.image_asset_dir, "media/images");
     }
 }

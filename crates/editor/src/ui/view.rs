@@ -71,6 +71,7 @@ pub struct MarkdownEditor {
     cursor_blink_generation: u64,
     pub(super) typewriter_mode: bool,
     pub(super) focus_highlight_mode: bool,
+    pub(super) image_asset_dir: PathBuf,
     pub(super) slash_command_panel: SlashCommandPanel,
     pub(super) math_completion_panel: MathCompletionPanel,
     scroll_target: Option<gpui::Point<gpui::Pixels>>,
@@ -125,6 +126,7 @@ impl MarkdownEditor {
             cursor_blink_generation: 0,
             typewriter_mode: false,
             focus_highlight_mode: false,
+            image_asset_dir: PathBuf::from(super::file_ops::DEFAULT_IMAGE_ASSET_DIR),
             slash_command_panel: SlashCommandPanel::new(),
             math_completion_panel: MathCompletionPanel::new(),
             scroll_target: None,
@@ -576,7 +578,10 @@ impl MarkdownEditor {
                 "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
             );
             let markdown = if is_image {
-                self.image_markdown_for_path(path)
+                let image_path = self
+                    .copy_image_into_assets(path)
+                    .unwrap_or_else(|| path.to_path_buf());
+                self.image_markdown_for_path(&image_path)
             } else if path.is_file() {
                 self.file_link_markdown_for_path(path)
             } else {

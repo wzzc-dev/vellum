@@ -20,6 +20,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Outline sidebar and workspace file tree
 - Find and replace
 - Command palette
+- Paste or drop images into a configurable document asset folder
 - Auto save
 - Watch for external file changes, deletions, and renames
 - Conflict detection and handling

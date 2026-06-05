@@ -1,4 +1,8 @@
-use std::{ops::Range, path::PathBuf, time::SystemTime};
+use std::{
+    ops::Range,
+    path::{Component, Path, PathBuf},
+    time::SystemTime,
+};
 
 use anyhow::Result;
 use gpui::{Context, Window};
@@ -11,7 +15,17 @@ use crate::{
 
 use super::view::MarkdownEditor;
 
+pub(super) const DEFAULT_IMAGE_ASSET_DIR: &str = "assets";
+
 impl MarkdownEditor {
+    pub fn set_image_asset_dir(&mut self, asset_dir: impl Into<PathBuf>) {
+        self.image_asset_dir = normalize_image_asset_dir(asset_dir.into());
+    }
+
+    pub fn image_asset_dir(&self) -> &Path {
+        &self.image_asset_dir
+    }
+
     pub fn cut_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.dispatch_action(Box::new(Cut), cx);
     }
@@ -41,10 +55,12 @@ impl MarkdownEditor {
         window.dispatch_action(Box::new(Paste), cx);
     }
 
-    fn save_clipboard_image(&self, image: &gpui::Image, cx: &mut Context<Self>) -> Option<PathBuf> {
-        let doc_dir = self.controller.current_document_dir()?;
-        let assets_dir = doc_dir.join("assets");
-        std::fs::create_dir_all(&assets_dir).ok()?;
+    fn save_clipboard_image(
+        &self,
+        image: &gpui::Image,
+        _cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        let assets_dir = self.ensure_image_asset_dir()?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -62,10 +78,32 @@ impl MarkdownEditor {
             gpui::ImageFormat::Svg => "svg",
         };
 
-        let filename = format!("paste-{}.{}", timestamp, ext);
-        let path = assets_dir.join(&filename);
+        let path = unique_image_asset_path(&assets_dir, &format!("paste-{timestamp}"), ext);
         std::fs::write(&path, image.bytes()).ok()?;
         Some(path)
+    }
+
+    pub(crate) fn copy_image_into_assets(&self, image_path: &Path) -> Option<PathBuf> {
+        let assets_dir = self.ensure_image_asset_dir()?;
+        if path_is_inside_dir(image_path, &assets_dir) {
+            return Some(image_path.to_path_buf());
+        }
+
+        let ext = image_asset_extension(image_path)?;
+        let stem = image_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image");
+        let target = unique_image_asset_path(&assets_dir, stem, &ext);
+        std::fs::copy(image_path, &target).ok()?;
+        Some(target)
+    }
+
+    fn ensure_image_asset_dir(&self) -> Option<PathBuf> {
+        let doc_dir = self.controller.current_document_dir()?;
+        let assets_dir = doc_dir.join(&self.image_asset_dir);
+        std::fs::create_dir_all(&assets_dir).ok()?;
+        Some(assets_dir)
     }
 
     pub fn select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -288,5 +326,161 @@ impl MarkdownEditor {
         if effects.selection_changed {
             self.scroll_cursor_into_view(window, cx);
         }
+    }
+}
+
+fn normalize_image_asset_dir(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return PathBuf::from(DEFAULT_IMAGE_ASSET_DIR);
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(DEFAULT_IMAGE_ASSET_DIR)
+    } else {
+        normalized
+    }
+}
+
+fn image_asset_extension(path: &Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
+    )
+    .then_some(ext)
+}
+
+fn unique_image_asset_path(asset_dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let stem = sanitize_asset_file_stem(stem);
+    let ext = sanitize_asset_extension(ext);
+    let first = asset_dir.join(format!("{stem}.{ext}"));
+    if !first.exists() {
+        return first;
+    }
+
+    for index in 2.. {
+        let candidate = asset_dir.join(format!("{stem}-{index}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded suffix search should always find an available asset path")
+}
+
+fn sanitize_asset_file_stem(stem: &str) -> String {
+    let sanitized = stem
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
+                '-'
+            } else {
+                ch
+            }
+        })
+        .collect::<String>()
+        .trim_matches([' ', '.'])
+        .to_string();
+
+    if sanitized.is_empty() {
+        "image".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn sanitize_asset_extension(ext: &str) -> String {
+    let sanitized = ext
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    if sanitized.is_empty() {
+        "png".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn path_is_inside_dir(path: &Path, dir: &Path) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(dir) = dir.canonicalize() else {
+        return false;
+    };
+    path.starts_with(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn image_asset_dir_normalization_accepts_relative_dirs() {
+        assert_eq!(
+            normalize_image_asset_dir(PathBuf::from("./media/images")),
+            PathBuf::from("media/images")
+        );
+        assert_eq!(
+            normalize_image_asset_dir(PathBuf::from("my images")),
+            PathBuf::from("my images")
+        );
+    }
+
+    #[test]
+    fn image_asset_dir_normalization_rejects_unsafe_dirs() {
+        assert_eq!(
+            normalize_image_asset_dir(PathBuf::from("../outside")),
+            PathBuf::from(DEFAULT_IMAGE_ASSET_DIR)
+        );
+        assert_eq!(
+            normalize_image_asset_dir(PathBuf::from("/tmp/assets")),
+            PathBuf::from(DEFAULT_IMAGE_ASSET_DIR)
+        );
+        assert_eq!(
+            normalize_image_asset_dir(PathBuf::new()),
+            PathBuf::from(DEFAULT_IMAGE_ASSET_DIR)
+        );
+    }
+
+    #[test]
+    fn unique_image_asset_path_preserves_names_and_avoids_collisions() {
+        let test_root = std::env::temp_dir().join(format!(
+            "vellum-image-assets-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&test_root).unwrap();
+
+        let first = unique_image_asset_path(&test_root, "diagram", "PNG");
+        assert_eq!(first, test_root.join("diagram.png"));
+        std::fs::write(&first, b"one").unwrap();
+
+        let second = unique_image_asset_path(&test_root, "diagram", "PNG");
+        assert_eq!(second, test_root.join("diagram-2.png"));
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_dir(test_root).unwrap();
+    }
+
+    #[test]
+    fn asset_file_stems_are_sanitized_without_losing_unicode() {
+        assert_eq!(sanitize_asset_file_stem("图 1: draft"), "图 1- draft");
+        assert_eq!(sanitize_asset_file_stem(".."), "image");
+        assert_eq!(sanitize_asset_file_stem("a/b\\c"), "a-b-c");
     }
 }
