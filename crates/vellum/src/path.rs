@@ -111,6 +111,16 @@ pub(crate) fn add_recent_file(path: &Path) -> Vec<PathBuf> {
     files
 }
 
+pub(crate) fn remove_recent_file(path: &Path) -> Vec<PathBuf> {
+    let files = recent_files_without(&read_recent_files(), path);
+    let _ = write_recent_files(&files);
+    files
+}
+
+fn recent_files_without(files: &[PathBuf], path: &Path) -> Vec<PathBuf> {
+    files.iter().filter(|p| p.as_path() != path).cloned().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +136,22 @@ mod tests {
     #[test]
     fn parse_last_opened_path_rejects_empty_values() {
         assert_eq!(parse_last_opened_path(" \r\n\t "), None);
+    }
+
+    #[test]
+    fn recent_files_without_removes_exact_path_only() {
+        let files = vec![
+            PathBuf::from("/tmp/notes/draft.md"),
+            PathBuf::from("/tmp/notes/draft-copy.md"),
+            PathBuf::from("/tmp/notes/archive/draft.md"),
+        ];
+
+        assert_eq!(
+            recent_files_without(&files, Path::new("/tmp/notes/draft.md")),
+            vec![
+                PathBuf::from("/tmp/notes/draft-copy.md"),
+                PathBuf::from("/tmp/notes/archive/draft.md"),
+            ]
+        );
     }
 }

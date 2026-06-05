@@ -3,7 +3,8 @@ use std::{fs, path::Path};
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{
-    clear_last_opened_path, read_last_opened_path, write_last_opened_path, write_recent_files,
+    clear_last_opened_path, read_last_opened_path, remove_recent_file, write_last_opened_path,
+    write_recent_files,
 };
 use editor::FileSyncEvent;
 
@@ -93,6 +94,12 @@ impl VellumApp {
             return;
         }
 
+        if !path.is_file() {
+            self.forget_unavailable_file(&path);
+            cx.notify();
+            return;
+        }
+
         for (i, tab) in self.tabs.iter().enumerate() {
             if tab.editor.read(cx).document_path() == Some(&path) {
                 self.switch_to_tab(i, window, cx);
@@ -138,6 +145,12 @@ impl VellumApp {
     ) {
         if !is_markdown_path(&path) {
             self.set_status(format!("Ignored non-Markdown file {}", path.display()));
+            cx.notify();
+            return;
+        }
+
+        if !path.is_file() {
+            self.forget_unavailable_file(&path);
             cx.notify();
             return;
         }
@@ -925,6 +938,14 @@ impl VellumApp {
             self.recent_files = updated_recent_files;
             let _ = write_recent_files(&self.recent_files);
         }
+    }
+
+    fn forget_unavailable_file(&mut self, path: &Path) {
+        self.recent_files = remove_recent_file(path);
+        if read_last_opened_path().as_deref() == Some(path) {
+            clear_last_opened_path();
+        }
+        self.set_status(format!("File unavailable: {}", path.display()));
     }
 }
 
