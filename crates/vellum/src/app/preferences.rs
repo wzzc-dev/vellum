@@ -89,11 +89,7 @@ fn parse_preferences(raw: &str) -> AppPreferences {
             "focus_mode" => update_bool(value, &mut preferences.focus_mode),
             "typewriter_mode" => update_bool(value, &mut preferences.typewriter_mode),
             "focus_highlight_mode" => update_bool(value, &mut preferences.focus_highlight_mode),
-            "image_asset_dir" => {
-                if let Some(dir) = parse_image_asset_dir(value) {
-                    preferences.image_asset_dir = dir;
-                }
-            }
+            "image_asset_dir" => preferences.image_asset_dir = normalize_image_asset_dir(value),
             "font_size" => {
                 if let Ok(size) = value.parse::<u16>() {
                     preferences.font_size = size.clamp(12, 28);
@@ -144,6 +140,10 @@ fn update_bool(value: &str, target: &mut bool) {
         "false" | "0" | "no" | "off" => *target = false,
         _ => {}
     }
+}
+
+pub(super) fn normalize_image_asset_dir(value: &str) -> String {
+    parse_image_asset_dir(value).unwrap_or_else(|| AppPreferences::default().image_asset_dir)
 }
 
 fn parse_image_asset_dir(value: &str) -> Option<String> {
@@ -209,5 +209,12 @@ mod tests {
 
         let preferences = parse_preferences("image_asset_dir=\"./media/images\"\n");
         assert_eq!(preferences.image_asset_dir, "media/images");
+    }
+
+    #[test]
+    fn normalizes_image_asset_dir_for_ui_input() {
+        assert_eq!(normalize_image_asset_dir("media/images"), "media/images");
+        assert_eq!(normalize_image_asset_dir("/tmp/assets"), "assets");
+        assert_eq!(normalize_image_asset_dir(""), "assets");
     }
 }

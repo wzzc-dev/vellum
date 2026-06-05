@@ -20,6 +20,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Outline sidebar and workspace file tree
 - Find and replace
 - Command palette
+- In-app preferences for theme, writing modes, and image assets
 - Paste or drop images into a configurable document asset folder
 - Export HTML with local image assets copied beside the exported file
 - Auto save

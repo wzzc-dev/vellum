@@ -134,6 +134,8 @@ struct VellumApp {
     goto_line_visible: bool,
     goto_line_query: String,
     goto_line_input: Entity<InputState>,
+    preferences_visible: bool,
+    preferences_asset_dir_input: Entity<InputState>,
     /// Kept alive to keep subscriptions active.
     #[allow(dead_code)]
     find_input_subscriptions: Vec<Subscription>,
@@ -246,8 +248,8 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     });
     let window = main_window;
     cx.on_action(move |_: &OpenPreferences, cx| {
-        update_vellum_app_from_menu(window, cx, |this, _, cx| {
-            this.open_preferences_file(cx);
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.open_preferences(window, cx);
         });
     });
     let window = main_window;
@@ -431,6 +433,8 @@ impl VellumApp {
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
         let goto_line_input = cx.new(|cx| InputState::new(window, cx).placeholder("Go to line"));
+        let preferences_asset_dir_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("assets"));
 
         let editor_subscription =
             cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
@@ -497,6 +501,19 @@ impl VellumApp {
             },
         );
 
+        let preferences_asset_dir_subscription = cx.subscribe(
+            &preferences_asset_dir_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    if this.preferences_visible {
+                        let value = this.preferences_asset_dir_input.read(cx).value();
+                        this.set_image_asset_dir_preference(value, cx);
+                        cx.notify();
+                    }
+                }
+            },
+        );
+
         let palette_state = command_palette::CommandPaletteState::new(
             cx.new(|cx| InputState::new(window, cx).placeholder("Search commands...")),
         );
@@ -533,12 +550,15 @@ impl VellumApp {
             goto_line_visible: false,
             goto_line_query: String::new(),
             goto_line_input,
+            preferences_visible: false,
+            preferences_asset_dir_input,
             find_input_subscriptions: vec![
                 editor_subscription,
                 find_input_subscription,
                 replace_input_subscription,
                 outline_input_subscription,
                 goto_line_input_subscription,
+                preferences_asset_dir_subscription,
                 cx.subscribe(
                     &palette_state.input,
                     |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {
@@ -711,6 +731,39 @@ impl VellumApp {
         if let Err(err) = preferences::save_preferences(&self.preferences) {
             self.set_status(format!("Failed to save preferences: {err}"));
         }
+    }
+
+    fn open_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferences_visible = true;
+        self.preferences_asset_dir_input.update(cx, |input, cx| {
+            input.set_value(self.preferences.image_asset_dir.clone(), window, cx);
+        });
+        cx.notify();
+    }
+
+    fn close_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferences_visible = false;
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn set_image_asset_dir_preference(
+        &mut self,
+        value: impl AsRef<str>,
+        cx: &mut Context<Self>,
+    ) {
+        let normalized = preferences::normalize_image_asset_dir(value.as_ref());
+        if self.preferences.image_asset_dir == normalized {
+            return;
+        }
+
+        self.preferences.image_asset_dir = normalized.clone();
+        for tab in &self.tabs {
+            tab.editor.update(cx, |editor, _| {
+                editor.set_image_asset_dir(normalized.clone());
+            });
+        }
+        self.save_preferences();
     }
 
     fn start_background_tasks(view: &Entity<Self>, window: &mut Window, cx: &mut App) {

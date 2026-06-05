@@ -30,6 +30,8 @@ impl VellumApp {
         if self.command_palette.is_visible() {
             self.command_palette.hide();
             window.focus(&self.focus_handle);
+        } else if self.preferences_visible {
+            self.close_preferences(window, cx);
         } else if self.goto_line_visible {
             self.close_goto_line(window, cx);
         } else {
@@ -146,10 +148,10 @@ impl VellumApp {
     pub(super) fn on_open_preferences(
         &mut self,
         _: &OpenPreferences,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_preferences_file(cx);
+        self.open_preferences(window, cx);
     }
 
     pub(super) fn on_toggle_sidebar(
@@ -390,9 +392,7 @@ impl VellumApp {
             PaletteCommand::ExportHtml => {
                 self.export_html_dialog(window, cx);
             }
-            PaletteCommand::OpenPreferences => {
-                self.open_preferences_file(cx);
-            }
+            PaletteCommand::OpenPreferences => self.open_preferences(window, cx),
             PaletteCommand::ThemeDefault => {
                 self.set_syntax_theme(editor::SyntaxTheme::Default);
             }
@@ -415,7 +415,7 @@ impl VellumApp {
         cx.notify();
     }
 
-    fn set_syntax_theme(&mut self, theme: editor::SyntaxTheme) {
+    pub(super) fn set_syntax_theme(&mut self, theme: editor::SyntaxTheme) {
         editor::set_syntax_theme(theme);
         self.preferences.syntax_theme = theme;
         self.save_preferences();

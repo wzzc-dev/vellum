@@ -846,11 +846,269 @@ impl Render for VellumApp {
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))
             .child(self.render_command_palette(cx))
+            .child(self.render_preferences(cx))
             .when_some(status_bar, |this, status_bar| this.child(status_bar))
     }
 }
 
 impl VellumApp {
+    fn render_preferences(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.preferences_visible {
+            return div().into_any_element();
+        }
+
+        let theme = cx.theme();
+        let current_theme = self.preferences.syntax_theme;
+        let sidebar_visible = self.sidebar_visible;
+        let status_bar_pinned = self.status_bar_pinned;
+        let focus_mode = self.focus_mode;
+        let active_editor = self.active_editor_entity();
+        let active_editor_state = active_editor.read(cx);
+        let typewriter_enabled = active_editor_state.typewriter_mode();
+        let focus_highlight_enabled = active_editor_state.focus_highlight_mode();
+        let view = cx.entity();
+
+        let theme_button = |id: &'static str,
+                            label: &'static str,
+                            syntax_theme: editor::SyntaxTheme,
+                            selected: bool,
+                            view: Entity<VellumApp>| {
+            Button::new(id)
+                .label(label)
+                .compact()
+                .selected(selected)
+                .on_click(move |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.set_syntax_theme(syntax_theme);
+                        this.active_editor_entity().update(cx, |_, cx| cx.notify());
+                        cx.notify();
+                    });
+                })
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .bg(theme.background.opacity(0.38))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_preferences(window, cx);
+                }),
+            )
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(460.))
+                            .max_w(px(460.))
+                            .bg(theme.popover)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .shadow_xl()
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_4()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child("Preferences"),
+                                    )
+                                    .child(
+                                        Button::new("preferences-close")
+                                            .label("Done")
+                                            .compact()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.close_preferences(window, cx);
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Theme"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .children([
+                                                theme_button(
+                                                    "preferences-theme-default",
+                                                    "Default",
+                                                    editor::SyntaxTheme::Default,
+                                                    current_theme
+                                                        == editor::SyntaxTheme::Default,
+                                                    view.clone(),
+                                                )
+                                                .into_any_element(),
+                                                theme_button(
+                                                    "preferences-theme-dracula",
+                                                    "Dracula",
+                                                    editor::SyntaxTheme::Dracula,
+                                                    current_theme
+                                                        == editor::SyntaxTheme::Dracula,
+                                                    view.clone(),
+                                                )
+                                                .into_any_element(),
+                                                theme_button(
+                                                    "preferences-theme-solarized",
+                                                    "Solarized",
+                                                    editor::SyntaxTheme::Solarized,
+                                                    current_theme
+                                                        == editor::SyntaxTheme::Solarized,
+                                                    view.clone(),
+                                                )
+                                                .into_any_element(),
+                                                theme_button(
+                                                    "preferences-theme-github",
+                                                    "GitHub",
+                                                    editor::SyntaxTheme::GitHub,
+                                                    current_theme == editor::SyntaxTheme::GitHub,
+                                                    view.clone(),
+                                                )
+                                                .into_any_element(),
+                                            ]),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Writing"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .flex_wrap()
+                                            .child(
+                                                Button::new("preferences-sidebar")
+                                                    .label("Sidebar")
+                                                    .compact()
+                                                    .selected(sidebar_visible)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.toggle_sidebar_visibility(cx);
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("preferences-status-bar")
+                                                    .label("Status Bar")
+                                                    .compact()
+                                                    .selected(status_bar_pinned)
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.set_status_bar_pinned(
+                                                            !this.status_bar_pinned,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("preferences-focus-mode")
+                                                    .label("Focus Mode")
+                                                    .compact()
+                                                    .selected(focus_mode)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.focus_mode = !this.focus_mode;
+                                                        this.preferences.focus_mode =
+                                                            this.focus_mode;
+                                                        this.save_preferences();
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("preferences-typewriter")
+                                                    .label("Typewriter")
+                                                    .compact()
+                                                    .selected(typewriter_enabled)
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.active_editor_entity().update(
+                                                            cx,
+                                                            |editor, cx| {
+                                                                editor.toggle_typewriter_mode(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("preferences-focus-highlight")
+                                                    .label("Focus Highlight")
+                                                    .compact()
+                                                    .selected(focus_highlight_enabled)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.active_editor_entity().update(
+                                                            cx,
+                                                            |editor, cx| {
+                                                                editor
+                                                                    .toggle_focus_highlight_mode(
+                                                                        cx,
+                                                                    );
+                                                            },
+                                                        );
+                                                    })),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Image Asset Folder"),
+                                    )
+                                    .child(Input::new(&self.preferences_asset_dir_input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("preferences-open-file")
+                                            .label("Open Config File")
+                                            .compact()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_preferences_file(cx);
+                                            })),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_command_palette(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if !self.command_palette.is_visible() {
             return div().into_any_element();
