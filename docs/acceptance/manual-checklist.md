@@ -14,6 +14,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the Mermaid blocks show structured previews when the cursor leaves them and return to source editing when clicked.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
+- Open a Markdown file from a nested workspace folder and confirm the sidebar remains rooted at the original workspace folder.
 
 ## Assets
 

@@ -117,7 +117,11 @@ impl VellumApp {
                 self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
                 self.subscribe_active_editor(window, cx);
 
-                if let Some(root) = path.parent().map(|parent| parent.to_path_buf()) {
+                if let Some(root) = workspace_root_for_document_path(
+                    self.app_state.workspace_root.as_deref(),
+                    &path,
+                )
+                {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
                         if self.set_workspace_root(Some(root), cx) {
                             self.refresh_tree(cx);
@@ -159,7 +163,11 @@ impl VellumApp {
             .update(cx, |editor, cx| editor.open_path(path.clone(), window, cx));
         match open_result {
             Ok(()) => {
-                if let Some(root) = path.parent().map(|parent| parent.to_path_buf()) {
+                if let Some(root) = workspace_root_for_document_path(
+                    self.app_state.workspace_root.as_deref(),
+                    &path,
+                )
+                {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
                         if self.set_workspace_root(Some(root), cx) {
                             self.refresh_tree(cx);
@@ -259,9 +267,11 @@ impl VellumApp {
             .update(cx, |editor, cx| editor.save_as(path.clone(), window, cx))?;
 
         let mut refreshed_tree = false;
-        if let Some(parent) = path.parent().map(|parent| parent.to_path_buf()) {
-            if self.app_state.workspace_root.as_ref() != Some(&parent) {
-                if self.set_workspace_root(Some(parent), cx) {
+        if let Some(root) =
+            workspace_root_for_document_path(self.app_state.workspace_root.as_deref(), &path)
+        {
+            if self.app_state.workspace_root.as_ref() != Some(&root) {
+                if self.set_workspace_root(Some(root), cx) {
                     self.refresh_tree(cx);
                     refreshed_tree = true;
                 }
@@ -564,6 +574,16 @@ fn relocated_recent_files(files: &[PathBuf], from: &Path, to: &Path) -> Vec<Path
         }
     }
     relocated_files
+}
+
+fn workspace_root_for_document_path(current_root: Option<&Path>, path: &Path) -> Option<PathBuf> {
+    if let Some(root) = current_root {
+        if path.starts_with(root) {
+            return Some(root.to_path_buf());
+        }
+    }
+
+    path.parent().map(Path::to_path_buf)
 }
 
 impl VellumApp {
@@ -1025,6 +1045,39 @@ mod tests {
                 PathBuf::from("workspace/archive/intro.md"),
                 PathBuf::from("workspace/other.md"),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_root_for_document_path_preserves_existing_containing_root() {
+        let root = PathBuf::from("/notes/project");
+        let path = PathBuf::from("/notes/project/drafts/chapter.md");
+
+        assert_eq!(
+            workspace_root_for_document_path(Some(&root), &path),
+            Some(root)
+        );
+    }
+
+    #[test]
+    fn workspace_root_for_document_path_uses_parent_for_external_file() {
+        let root = PathBuf::from("/notes/project");
+        let path = PathBuf::from("/notes/other/chapter.md");
+
+        assert_eq!(
+            workspace_root_for_document_path(Some(&root), &path),
+            Some(PathBuf::from("/notes/other"))
+        );
+    }
+
+    #[test]
+    fn workspace_root_for_document_path_does_not_match_sibling_prefix() {
+        let root = PathBuf::from("/notes/project");
+        let path = PathBuf::from("/notes/project-old/chapter.md");
+
+        assert_eq!(
+            workspace_root_for_document_path(Some(&root), &path),
+            Some(PathBuf::from("/notes/project-old"))
         );
     }
 
