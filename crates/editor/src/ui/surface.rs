@@ -2452,10 +2452,11 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
             continue;
         }
 
-        if let Some(edge) = parse_mermaid_edge(line) {
-            preview.edges.push(edge);
-        } else {
+        let edges = parse_mermaid_edges(line);
+        if edges.is_empty() {
             preview.unsupported_lines += 1;
+        } else {
+            preview.edges.extend(edges);
         }
     }
 
@@ -2495,80 +2496,140 @@ fn is_mermaid_non_edge_directive(line: &str) -> bool {
         || lower.starts_with("accdescr")
 }
 
-fn parse_mermaid_edge(line: &str) -> Option<MermaidEdge> {
-    let (line, pipe_label) = strip_mermaid_pipe_label(line);
+fn parse_mermaid_edges(line: &str) -> Vec<MermaidEdge> {
+    let mut edges = Vec::new();
+    let mut rest = line.trim();
 
-    if let Some(edge) = parse_mermaid_labeled_edge(&line, pipe_label.clone()) {
-        return Some(edge);
-    }
-
-    let (operator_start, operator_end) = find_mermaid_edge_operator(&line)?;
-    let from = parse_mermaid_node(&line[..operator_start])?;
-    let to = parse_mermaid_node(&line[operator_end..])?;
-
-    Some(MermaidEdge {
-        from,
-        to,
-        label: pipe_label,
-    })
-}
-
-fn parse_mermaid_labeled_edge(line: &str, pipe_label: Option<String>) -> Option<MermaidEdge> {
-    for operator in ["-->", "==>", "-.->", "--o", "--x"] {
-        let Some(operator_start) = line.find(operator) else {
-            continue;
+    while let Some((edge, next_rest)) = parse_mermaid_edge_prefix(rest) {
+        edges.push(edge);
+        let Some(next_rest) = next_rest else {
+            break;
         };
-        let before = line[..operator_start].trim_end();
-        let after = line[operator_start + operator.len()..].trim_start();
-        let Some(label_start) = before.rfind("--") else {
-            continue;
-        };
-
-        let from = parse_mermaid_node(&before[..label_start])?;
-        let label = clean_mermaid_label(&before[label_start + 2..]);
-        if label.is_empty() || after.is_empty() {
-            continue;
+        let next_rest = next_rest.trim_start();
+        if next_rest.len() >= rest.len() {
+            break;
         }
-
-        return Some(MermaidEdge {
-            from,
-            to: parse_mermaid_node(after)?,
-            label: pipe_label.or(Some(label)),
-        });
+        rest = next_rest;
     }
 
-    None
+    edges
 }
 
-fn strip_mermaid_pipe_label(line: &str) -> (String, Option<String>) {
-    let Some(first_pipe) = line.find('|') else {
-        return (line.to_string(), None);
-    };
-    let after_first = &line[first_pipe + 1..];
+fn parse_mermaid_edge_prefix(line: &str) -> Option<(MermaidEdge, Option<&str>)> {
+    let (operator_start, operator_end) = find_mermaid_edge_operator_from(line, 0)?;
+    let operator = &line[operator_start..operator_end];
+    let mut from_source = line[..operator_start].trim_end();
+    let mut label = None;
+
+    if mermaid_labeled_operator(operator)
+        && let Some(label_start) = from_source.rfind("--")
+    {
+        let candidate = clean_mermaid_label(&from_source[label_start + 2..]);
+        if !candidate.is_empty() {
+            from_source = from_source[..label_start].trim_end();
+            label = Some(candidate);
+        }
+    }
+
+    let (to_start, pipe_label) = mermaid_pipe_label_after_operator(line, operator_end);
+    if pipe_label.is_some() {
+        label = pipe_label;
+    }
+
+    let (to_end, has_next_edge) = mermaid_chained_node_end(line, to_start);
+    let from = parse_mermaid_node(from_source)?;
+    let to = parse_mermaid_node(&line[to_start..to_end])?;
+
+    Some((
+        MermaidEdge { from, to, label },
+        has_next_edge.then_some(&line[to_start..]),
+    ))
+}
+
+fn mermaid_labeled_operator(operator: &str) -> bool {
+    matches!(operator, "-->" | "==>" | "-.->" | "--o" | "--x")
+}
+
+fn mermaid_pipe_label_after_operator(line: &str, start: usize) -> (usize, Option<String>) {
+    let rest = line[start..].trim_start();
+    let label_start = start + line[start..].len() - rest.len();
+    if !rest.starts_with('|') {
+        return (label_start, None);
+    }
+
+    let after_first = &line[label_start + 1..];
     let Some(second_pipe) = after_first.find('|') else {
-        return (line.to_string(), None);
+        return (label_start, None);
     };
 
     let label = clean_mermaid_label(&after_first[..second_pipe]);
-    let mut normalized = String::new();
-    normalized.push_str(&line[..first_pipe]);
-    normalized.push(' ');
-    normalized.push_str(&after_first[second_pipe + 1..]);
+    let after_label = label_start + 1 + second_pipe + 1;
+    let rest_after_label = line[after_label..].trim_start();
+    let node_start = after_label + line[after_label..].len() - rest_after_label.len();
 
     (
-        normalized,
+        node_start,
         if label.is_empty() { None } else { Some(label) },
     )
 }
 
-fn find_mermaid_edge_operator(line: &str) -> Option<(usize, usize)> {
-    for operator in [
-        "<-->", "-.->", "-->", "==>", "---", "-.-", "~~~", "--o", "--x", "o--", "x--", "<--",
-    ] {
-        if let Some(start) = line.find(operator) {
-            return Some((start, start + operator.len()));
+fn mermaid_chained_node_end(line: &str, node_start: usize) -> (usize, bool) {
+    let Some((next_operator_start, _)) = find_mermaid_edge_operator_from(line, node_start) else {
+        return (line.len(), false);
+    };
+
+    let before_next = line[node_start..next_operator_start].trim_end();
+    let mut node_end = node_start + before_next.len();
+    if let Some(label_start) = before_next.rfind("--") {
+        let candidate = clean_mermaid_label(&before_next[label_start + 2..]);
+        if !candidate.is_empty() {
+            node_end = node_start + label_start;
         }
     }
+
+    (node_end, true)
+}
+
+fn find_mermaid_edge_operator_from(line: &str, start: usize) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in line.char_indices() {
+        if index < start {
+            continue;
+        }
+
+        if let Some(quote_char) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_char {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+
+        if depth == 0 {
+            for operator in [
+                "<-->", "-.->", "-->", "==>", "---", "-.-", "~~~", "--o", "--x", "o--", "x--",
+                "<--",
+            ] {
+                if line[index..].starts_with(operator) {
+                    return Some((index, index + operator.len()));
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -4519,6 +4580,43 @@ mod tests {
                         label: "Choice".to_string(),
                     },
                     label: Some("retry".to_string()),
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_chained_mermaid_flowchart_edges() {
+        let preview = parse_mermaid_preview(
+            "flowchart LR\n  Draft[Draft] -->|save| Review[Review] -- publish --> Done[Done]\n",
+        );
+
+        assert_eq!(preview.direction.as_deref(), Some("LR"));
+        assert_eq!(
+            preview.edges,
+            vec![
+                MermaidEdge {
+                    from: MermaidNode {
+                        id: "Draft".to_string(),
+                        label: "Draft".to_string(),
+                    },
+                    to: MermaidNode {
+                        id: "Review".to_string(),
+                        label: "Review".to_string(),
+                    },
+                    label: Some("save".to_string()),
+                },
+                MermaidEdge {
+                    from: MermaidNode {
+                        id: "Review".to_string(),
+                        label: "Review".to_string(),
+                    },
+                    to: MermaidNode {
+                        id: "Done".to_string(),
+                        label: "Done".to_string(),
+                    },
+                    label: Some("publish".to_string()),
                 },
             ]
         );
