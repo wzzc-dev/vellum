@@ -62,11 +62,6 @@ impl MarkdownEditor {
     ) -> Option<PathBuf> {
         let assets_dir = self.ensure_image_asset_dir()?;
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-
         let format = image.format();
         let ext = match format {
             gpui::ImageFormat::Png => "png",
@@ -78,7 +73,8 @@ impl MarkdownEditor {
             gpui::ImageFormat::Svg => "svg",
         };
 
-        let path = unique_image_asset_path(&assets_dir, &format!("paste-{timestamp}"), ext);
+        let stem = clipboard_image_asset_stem(self.document_path().map(PathBuf::as_path));
+        let path = unique_image_asset_path(&assets_dir, &stem, ext);
         std::fs::write(&path, image.bytes()).ok()?;
         Some(path)
     }
@@ -389,6 +385,17 @@ fn unique_image_asset_path(asset_dir: &Path, stem: &str, ext: &str) -> PathBuf {
     unreachable!("unbounded suffix search should always find an available asset path")
 }
 
+fn clipboard_image_asset_stem(document_path: Option<&Path>) -> String {
+    let document_stem = document_path
+        .and_then(Path::file_stem)
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("pasted");
+
+    format!("{document_stem}-image")
+}
+
 fn sanitize_asset_file_stem(stem: &str) -> String {
     let sanitized = stem
         .chars()
@@ -486,6 +493,38 @@ mod tests {
 
         let second = unique_image_asset_path(&test_root, "diagram", "PNG");
         assert_eq!(second, test_root.join("diagram-2.png"));
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_dir(test_root).unwrap();
+    }
+
+    #[test]
+    fn clipboard_image_asset_stem_uses_document_name() {
+        assert_eq!(
+            clipboard_image_asset_stem(Some(Path::new("/notes/Longform Draft.md"))),
+            "Longform Draft-image"
+        );
+        assert_eq!(clipboard_image_asset_stem(None), "pasted-image");
+    }
+
+    #[test]
+    fn pasted_image_asset_path_uses_readable_document_stem() {
+        let test_root = std::env::temp_dir().join(format!(
+            "vellum-pasted-image-assets-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&test_root).unwrap();
+
+        let stem = clipboard_image_asset_stem(Some(Path::new("/notes/Longform Draft.md")));
+        let first = unique_image_asset_path(&test_root, &stem, "png");
+        assert_eq!(first, test_root.join("Longform Draft-image.png"));
+        std::fs::write(&first, b"one").unwrap();
+
+        let second = unique_image_asset_path(&test_root, &stem, "png");
+        assert_eq!(second, test_root.join("Longform Draft-image-2.png"));
 
         std::fs::remove_file(first).unwrap();
         std::fs::remove_dir(test_root).unwrap();
