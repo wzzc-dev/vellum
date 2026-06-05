@@ -176,10 +176,18 @@ impl MarkdownEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.typewriter_mode = enabled;
+        self.set_typewriter_mode_without_window(enabled, cx);
         if self.typewriter_mode {
             self.scroll_cursor_into_view(window, cx);
         }
+    }
+
+    pub fn set_typewriter_mode_without_window(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.typewriter_mode = enabled;
         cx.notify();
     }
 

@@ -465,9 +465,11 @@ impl VellumApp {
                     typewriter_mode,
                     focus_highlight_mode,
                 } => {
-                    this.preferences.typewriter_mode = *typewriter_mode;
-                    this.preferences.focus_highlight_mode = *focus_highlight_mode;
-                    this.save_preferences();
+                    this.set_editor_view_mode_preferences(
+                        *typewriter_mode,
+                        *focus_highlight_mode,
+                        cx,
+                    );
                 }
             });
 
@@ -729,9 +731,11 @@ impl VellumApp {
                         typewriter_mode,
                         focus_highlight_mode,
                     } => {
-                        this.preferences.typewriter_mode = *typewriter_mode;
-                        this.preferences.focus_highlight_mode = *focus_highlight_mode;
-                        this.save_preferences();
+                        this.set_editor_view_mode_preferences(
+                            *typewriter_mode,
+                            *focus_highlight_mode,
+                            cx,
+                        );
                     }
                 });
             self.find_input_subscriptions.push(subscription);
@@ -775,6 +779,30 @@ impl VellumApp {
             });
         }
         self.save_preferences();
+    }
+
+    fn set_editor_view_mode_preferences(
+        &mut self,
+        typewriter_mode: bool,
+        focus_highlight_mode: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.preferences.typewriter_mode != typewriter_mode
+            || self.preferences.focus_highlight_mode != focus_highlight_mode;
+        self.preferences.typewriter_mode = typewriter_mode;
+        self.preferences.focus_highlight_mode = focus_highlight_mode;
+
+        for tab in &self.tabs {
+            tab.editor.update(cx, |editor, cx| {
+                editor.set_typewriter_mode_without_window(typewriter_mode, cx);
+                editor.set_focus_highlight_mode(focus_highlight_mode, cx);
+            });
+        }
+
+        if changed {
+            self.save_preferences();
+        }
+        cx.notify();
     }
 
     fn set_font_size_preference(&mut self, size: u16, cx: &mut Context<Self>) {
