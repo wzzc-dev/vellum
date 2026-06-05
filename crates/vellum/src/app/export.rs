@@ -620,7 +620,437 @@ fn render_math_block(source: &str) -> String {
 
 fn render_mermaid_block(source: &str) -> String {
     let source = source.trim();
-    format!("<pre class=\"mermaid\">{}</pre>\n", escape_html(source))
+    format!(
+        "<figure class=\"mermaid-diagram\">\n<pre class=\"mermaid-source\">{}</pre>\n<div class=\"mermaid-render-target\" aria-hidden=\"true\"></div>\n{}\n</figure>\n",
+        escape_html(source),
+        render_static_mermaid_fallback(source)
+    )
+}
+
+fn render_static_mermaid_fallback(source: &str) -> String {
+    parse_static_mermaid_diagram(source)
+        .map(|diagram| render_static_mermaid_svg(diagram, static_mermaid_marker_id(source)))
+        .unwrap_or_else(|| {
+            format!(
+                "<pre class=\"mermaid-static mermaid-static-source\">{}</pre>",
+                escape_html(source)
+            )
+        })
+}
+
+fn static_mermaid_marker_id(source: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in source.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("mermaid-arrow-{hash:x}")
+}
+
+fn parse_static_mermaid_diagram(source: &str) -> Option<StaticMermaidDiagram> {
+    let mut direction = StaticMermaidDirection::TopDown;
+    let mut nodes = Vec::new();
+    let mut node_indices = HashMap::new();
+    let mut edges = Vec::new();
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if let Some(parsed_direction) = static_mermaid_direction(line) {
+            direction = parsed_direction;
+            continue;
+        }
+
+        if static_mermaid_non_edge_directive(line) {
+            continue;
+        }
+
+        let Some(edge) = parse_static_mermaid_edge(line) else {
+            continue;
+        };
+
+        upsert_static_mermaid_node(&mut nodes, &mut node_indices, edge.from.clone());
+        upsert_static_mermaid_node(&mut nodes, &mut node_indices, edge.to.clone());
+        edges.push(edge);
+    }
+
+    (!nodes.is_empty() && !edges.is_empty()).then_some(StaticMermaidDiagram {
+        direction,
+        nodes,
+        node_indices,
+        edges,
+    })
+}
+
+fn upsert_static_mermaid_node(
+    nodes: &mut Vec<StaticMermaidNode>,
+    node_indices: &mut HashMap<String, usize>,
+    node: StaticMermaidNode,
+) {
+    if let Some(index) = node_indices.get(&node.id).copied() {
+        if nodes[index].label == nodes[index].id && node.label != node.id {
+            nodes[index].label = node.label;
+        }
+        return;
+    }
+
+    node_indices.insert(node.id.clone(), nodes.len());
+    nodes.push(node);
+}
+
+fn render_static_mermaid_svg(diagram: StaticMermaidDiagram, marker_id: String) -> String {
+    let node_width = 180usize;
+    let node_height = 48usize;
+    let gap = 58usize;
+    let margin = 28usize;
+    let count = diagram.nodes.len().max(1);
+    let horizontal = diagram.direction == StaticMermaidDirection::LeftRight;
+    let width = if horizontal {
+        margin * 2 + node_width * count + gap * count.saturating_sub(1)
+    } else {
+        margin * 2 + node_width
+    };
+    let height = if horizontal {
+        margin * 2 + node_height
+    } else {
+        margin * 2 + node_height * count + gap * count.saturating_sub(1)
+    };
+
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">\
+<defs><marker id=\"{marker_id}\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"var(--muted)\"/></marker></defs>"
+    );
+
+    for edge in &diagram.edges {
+        let Some(from_index) = diagram.node_indices.get(&edge.from.id).copied() else {
+            continue;
+        };
+        let Some(to_index) = diagram.node_indices.get(&edge.to.id).copied() else {
+            continue;
+        };
+        let (x1, y1, x2, y2) = static_mermaid_edge_points(
+            from_index,
+            to_index,
+            horizontal,
+            node_width,
+            node_height,
+            gap,
+            margin,
+        );
+        out.push_str(&format!(
+            "<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#{marker_id})\"/>"
+        ));
+        if let Some(label) = &edge.label {
+            if !label.is_empty() {
+                let label_x = (x1 + x2) / 2;
+                let label_y = (y1 + y2) / 2 - 8;
+                out.push_str(&format!(
+                    "<text x=\"{label_x}\" y=\"{label_y}\" text-anchor=\"middle\" font-size=\"12\" fill=\"var(--muted)\">{}</text>",
+                    escape_html(label)
+                ));
+            }
+        }
+    }
+
+    for (index, node) in diagram.nodes.iter().enumerate() {
+        let (x, y) =
+            static_mermaid_node_origin(index, horizontal, node_width, node_height, gap, margin);
+        out.push_str(&render_static_mermaid_node(
+            node,
+            x,
+            y,
+            node_width,
+            node_height,
+        ));
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn static_mermaid_edge_points(
+    from_index: usize,
+    to_index: usize,
+    horizontal: bool,
+    node_width: usize,
+    node_height: usize,
+    gap: usize,
+    margin: usize,
+) -> (usize, usize, usize, usize) {
+    let (from_x, from_y) =
+        static_mermaid_node_origin(from_index, horizontal, node_width, node_height, gap, margin);
+    let (to_x, to_y) =
+        static_mermaid_node_origin(to_index, horizontal, node_width, node_height, gap, margin);
+
+    if horizontal {
+        (
+            from_x + node_width,
+            from_y + node_height / 2,
+            to_x,
+            to_y + node_height / 2,
+        )
+    } else {
+        (
+            from_x + node_width / 2,
+            from_y + node_height,
+            to_x + node_width / 2,
+            to_y,
+        )
+    }
+}
+
+fn static_mermaid_node_origin(
+    index: usize,
+    horizontal: bool,
+    node_width: usize,
+    node_height: usize,
+    gap: usize,
+    margin: usize,
+) -> (usize, usize) {
+    if horizontal {
+        (margin + index * (node_width + gap), margin)
+    } else {
+        (margin, margin + index * (node_height + gap))
+    }
+}
+
+fn render_static_mermaid_node(
+    node: &StaticMermaidNode,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let lines = svg_label_lines(&node.label, 22, 2);
+    let center_x = x + width / 2;
+    let center_y = y + height / 2;
+    let line_height = 15isize;
+    let first_y = center_y as isize - ((lines.len().saturating_sub(1) as isize * line_height) / 2);
+    let mut out = format!(
+        "<g class=\"mermaid-node\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/><text x=\"{center_x}\" y=\"{first_y}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"13\" fill=\"var(--fg)\">"
+    );
+    for (index, line) in lines.iter().enumerate() {
+        let dy = if index == 0 { 0 } else { line_height };
+        out.push_str(&format!(
+            "<tspan x=\"{center_x}\" dy=\"{dy}\">{}</tspan>",
+            escape_html(line)
+        ));
+    }
+    out.push_str("</text></g>");
+    out
+}
+
+fn svg_label_lines(label: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in label.split_whitespace() {
+        let pending_len = if current.is_empty() {
+            word.chars().count()
+        } else {
+            current.chars().count() + 1 + word.chars().count()
+        };
+        if pending_len > max_chars && !current.is_empty() {
+            lines.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(label.to_string());
+    }
+
+    lines.truncate(max_lines);
+    if let Some(last) = lines.last_mut() {
+        if last.chars().count() > max_chars {
+            let mut truncated = last.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+            truncated.push_str("...");
+            *last = truncated;
+        }
+    }
+    lines
+}
+
+fn static_mermaid_direction(line: &str) -> Option<StaticMermaidDirection> {
+    let mut parts = line.split_whitespace();
+    let head = parts.next()?.trim_end_matches(';');
+    if !head.eq_ignore_ascii_case("graph") && !head.eq_ignore_ascii_case("flowchart") {
+        return None;
+    }
+
+    let direction = parts
+        .next()
+        .unwrap_or("TD")
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim()
+        .to_ascii_uppercase();
+    match direction.as_str() {
+        "LR" | "RL" => Some(StaticMermaidDirection::LeftRight),
+        _ => Some(StaticMermaidDirection::TopDown),
+    }
+}
+
+fn static_mermaid_non_edge_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "end"
+        || lower.starts_with("subgraph ")
+        || lower.starts_with("direction ")
+        || lower.starts_with("classdef ")
+        || lower.starts_with("class ")
+        || lower.starts_with("style ")
+        || lower.starts_with("linkstyle ")
+        || lower.starts_with("click ")
+        || lower.starts_with("acctitle")
+        || lower.starts_with("accdescr")
+}
+
+fn parse_static_mermaid_edge(line: &str) -> Option<StaticMermaidEdge> {
+    let (line, pipe_label) = strip_static_mermaid_pipe_label(line);
+    if let Some(edge) = parse_static_mermaid_labeled_edge(&line, pipe_label.clone()) {
+        return Some(edge);
+    }
+
+    let (operator_start, operator_end) = find_static_mermaid_edge_operator(&line)?;
+    let from = parse_static_mermaid_node(&line[..operator_start])?;
+    let to = parse_static_mermaid_node(&line[operator_end..])?;
+
+    Some(StaticMermaidEdge {
+        from,
+        to,
+        label: pipe_label,
+    })
+}
+
+fn parse_static_mermaid_labeled_edge(
+    line: &str,
+    pipe_label: Option<String>,
+) -> Option<StaticMermaidEdge> {
+    for operator in ["-->", "==>", "-.->", "--o", "--x"] {
+        let Some(operator_start) = line.find(operator) else {
+            continue;
+        };
+        let before = line[..operator_start].trim_end();
+        let after = line[operator_start + operator.len()..].trim_start();
+        let Some(label_start) = before.rfind("--") else {
+            continue;
+        };
+
+        let from = parse_static_mermaid_node(&before[..label_start])?;
+        let label = clean_static_mermaid_label(&before[label_start + 2..]);
+        if label.is_empty() || after.is_empty() {
+            continue;
+        }
+
+        return Some(StaticMermaidEdge {
+            from,
+            to: parse_static_mermaid_node(after)?,
+            label: pipe_label.or(Some(label)),
+        });
+    }
+
+    None
+}
+
+fn strip_static_mermaid_pipe_label(line: &str) -> (String, Option<String>) {
+    let Some(first_pipe) = line.find('|') else {
+        return (line.to_string(), None);
+    };
+    let after_first = &line[first_pipe + 1..];
+    let Some(second_pipe) = after_first.find('|') else {
+        return (line.to_string(), None);
+    };
+
+    let label = clean_static_mermaid_label(&after_first[..second_pipe]);
+    let mut normalized = String::new();
+    normalized.push_str(&line[..first_pipe]);
+    normalized.push(' ');
+    normalized.push_str(&after_first[second_pipe + 1..]);
+
+    (
+        normalized,
+        if label.is_empty() { None } else { Some(label) },
+    )
+}
+
+fn find_static_mermaid_edge_operator(line: &str) -> Option<(usize, usize)> {
+    for operator in [
+        "<-->", "-.->", "-->", "==>", "---", "-.-", "~~~", "--o", "--x", "o--", "x--", "<--",
+    ] {
+        if let Some(start) = line.find(operator) {
+            return Some((start, start + operator.len()));
+        }
+    }
+    None
+}
+
+fn parse_static_mermaid_node(source: &str) -> Option<StaticMermaidNode> {
+    let trimmed = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_class = trimmed.split(":::").next().unwrap_or(trimmed).trim();
+    let label_start = without_class.find(|ch| matches!(ch, '[' | '(' | '{'));
+    let id = label_start
+        .map(|start| clean_static_mermaid_label(&without_class[..start]))
+        .unwrap_or_else(|| clean_static_mermaid_label(without_class));
+    let label = label_start
+        .map(|start| clean_static_mermaid_label(&without_class[start..]))
+        .unwrap_or_default();
+
+    let id = if id.is_empty() { label.clone() } else { id };
+    let label = if label.is_empty() { id.clone() } else { label };
+
+    (!id.is_empty() || !label.is_empty()).then_some(StaticMermaidNode { id, label })
+}
+
+fn clean_static_mermaid_label(source: &str) -> String {
+    source
+        .trim()
+        .trim_matches(|ch| matches!(ch, '[' | ']' | '(' | ')' | '{' | '}'))
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticMermaidDirection {
+    TopDown,
+    LeftRight,
+}
+
+struct StaticMermaidDiagram {
+    direction: StaticMermaidDirection,
+    nodes: Vec<StaticMermaidNode>,
+    node_indices: HashMap<String, usize>,
+    edges: Vec<StaticMermaidEdge>,
+}
+
+#[derive(Clone)]
+struct StaticMermaidNode {
+    id: String,
+    label: String,
+}
+
+struct StaticMermaidEdge {
+    from: StaticMermaidNode,
+    to: StaticMermaidNode,
+    label: Option<String>,
 }
 
 fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
@@ -1245,13 +1675,28 @@ mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border
   background: color-mix(in srgb, var(--code-bg) 52%, transparent);
   border-radius: 6px;
 }}
-.mermaid {{
+.mermaid-diagram {{
   overflow-x: auto;
   margin: 1.25em 0;
   padding: 1em;
   background: color-mix(in srgb, var(--code-bg) 52%, transparent);
   border: 1px solid var(--rule);
   border-radius: 6px;
+}}
+.mermaid-source,
+.mermaid-render-target {{ display: none; }}
+.mermaid-diagram.mermaid-rendered .mermaid-render-target {{ display: block; }}
+.mermaid-diagram.mermaid-rendered .mermaid-static {{ display: none; }}
+.mermaid-static {{
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}}
+.mermaid-static-source {{
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }}
 .contains-task-list {{ list-style: none; padding-left: 1.2em; }}
 .task-list-item input {{ margin-right: .45em; }}
@@ -1285,7 +1730,7 @@ mark {{ background: var(--mark-bg); color: inherit; padding: .05em .16em; border
   }}
   main {{ width: auto; margin: 0; }}
   h1, h2, h3, h4, h5, h6 {{ break-after: avoid; page-break-after: avoid; }}
-  p, blockquote, pre, table, ul, ol, .math-block, .mermaid, .callout {{
+  p, blockquote, pre, table, ul, ol, .math-block, .mermaid-diagram, .callout {{
     break-inside: avoid;
     page-break-inside: avoid;
   }}
@@ -1335,11 +1780,26 @@ window.MathJax = {
 "#,
         );
     }
-    if body.contains("class=\"mermaid\"") {
+    if body.contains("class=\"mermaid-diagram\"") {
         scripts.push_str(
             r#"<script type="module">
 import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
-mermaid.initialize({ startOnLoad: true, securityLevel: "strict" });
+mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+(async () => {
+  for (const [index, figure] of document.querySelectorAll(".mermaid-diagram").entries()) {
+    const source = figure.querySelector(".mermaid-source")?.textContent ?? "";
+    const target = figure.querySelector(".mermaid-render-target");
+    if (!source.trim() || !target) continue;
+    try {
+      const rendered = await mermaid.render(`vellum-mermaid-${index}`, source);
+      target.innerHTML = rendered.svg;
+      rendered.bindFunctions?.(target);
+      figure.classList.add("mermaid-rendered");
+    } catch (_) {
+      figure.classList.add("mermaid-runtime-failed");
+    }
+  }
+})();
 </script>
 "#,
         );
@@ -1456,6 +1916,8 @@ mod tests {
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
         assert!(html.contains("mathjax@3"));
         assert!(html.contains("mermaid.esm.min.mjs"));
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains(">Export HTML<"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
@@ -1801,9 +2263,41 @@ mod tests {
             "Mermaid",
         )
         .unwrap();
-        assert!(html.contains("<pre class=\"mermaid\">graph TD\n  A --&gt; B</pre>"));
-        assert!(html.contains(".mermaid"));
+        assert!(html.contains("<figure class=\"mermaid-diagram\">"));
+        assert!(html.contains("<pre class=\"mermaid-source\">graph TD\n  A --&gt; B</pre>"));
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains(">A<"));
+        assert!(html.contains(">B<"));
+        assert!(html.contains(".mermaid-diagram"));
         assert!(html.contains("mermaid.esm.min.mjs"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_flowchart_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nflowchart LR\n  Start[Draft] --> Save[Save]\n  Save --> Print[Print or save PDF]\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("viewBox=\"0 0 712 104\""));
+        assert!(html.contains(">Draft<"));
+        assert!(html.contains(">Save<"));
+        assert!(html.contains(">Print or save PDF<"));
+        assert!(html.contains("mermaid-render-target"));
+        assert!(html.contains("mermaid-rendered"));
+    }
+
+    #[test]
+    fn unsupported_mermaid_export_falls_back_to_source() {
+        let html = export_markdown_to_html(
+            "```mermaid\nsequenceDiagram\n  Alice->>Bob: Hi\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<pre class=\"mermaid-static mermaid-static-source\">sequenceDiagram\n  Alice-&gt;&gt;Bob: Hi</pre>"));
     }
 
     #[test]
@@ -1814,6 +2308,7 @@ mod tests {
         )
         .unwrap();
         assert!(html.contains("A[&lt;tag&gt;] --&gt; B"));
+        assert!(html.contains("&lt;tag&gt;</tspan>"));
         assert!(html.contains("<code class=\"language-rust\">fn main() {}\n</code>"));
     }
 
