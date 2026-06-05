@@ -21,6 +21,7 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Find and replace
 - Command palette
 - Paste or drop images into a configurable document asset folder
+- Export HTML with local image assets copied beside the exported file
 - Auto save
 - Watch for external file changes, deletions, and renames
 - Conflict detection and handling

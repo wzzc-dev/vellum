@@ -1,6 +1,10 @@
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use markdown::{CompileOptions, Options, to_html_with_options};
 
 pub(super) fn export_markdown_to_html(markdown: &str, title: &str) -> Result<String> {
@@ -15,6 +19,21 @@ pub(super) fn export_markdown_to_html(markdown: &str, title: &str) -> Result<Str
     Ok(wrap_html_document(&body, document_title))
 }
 
+pub(super) fn export_markdown_to_html_file(
+    markdown: &str,
+    title: &str,
+    source_dir: Option<&Path>,
+    output_path: &Path,
+) -> Result<()> {
+    let markdown = match source_dir {
+        Some(source_dir) => rewrite_local_image_assets(markdown, source_dir, output_path)?,
+        None => markdown.to_string(),
+    };
+    let html = export_markdown_to_html(&markdown, title)?;
+    fs::write(output_path, html)
+        .with_context(|| format!("failed to write {}", output_path.display()))
+}
+
 fn markdown_options() -> Options {
     let mut options = Options::gfm();
     options.compile = CompileOptions {
@@ -24,6 +43,329 @@ fn markdown_options() -> Options {
         ..CompileOptions::gfm()
     };
     options
+}
+
+struct ExportAssetContext<'a> {
+    source_dir: &'a Path,
+    output_dir: PathBuf,
+    asset_dir_name: String,
+    copied: HashMap<PathBuf, String>,
+    used_names: HashSet<String>,
+}
+
+impl<'a> ExportAssetContext<'a> {
+    fn new(source_dir: &'a Path, output_path: &Path) -> Self {
+        let output_dir = output_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Self {
+            source_dir,
+            output_dir,
+            asset_dir_name: export_asset_dir_name(output_path),
+            copied: HashMap::new(),
+            used_names: HashSet::new(),
+        }
+    }
+
+    fn exported_destination(&mut self, destination: &str) -> Result<Option<String>> {
+        if should_leave_image_destination(destination) {
+            return Ok(None);
+        }
+
+        let source_path = resolve_local_image_path(self.source_dir, destination);
+        if !source_path.is_file() {
+            return Ok(None);
+        }
+        let cache_key = source_path
+            .canonicalize()
+            .unwrap_or_else(|_| source_path.clone());
+        if let Some(destination) = self.copied.get(&cache_key) {
+            return Ok(Some(destination.clone()));
+        }
+
+        let file_name = self.unique_asset_file_name(&source_path);
+        let asset_dir = self.output_dir.join(&self.asset_dir_name);
+        fs::create_dir_all(&asset_dir)
+            .with_context(|| format!("failed to create {}", asset_dir.display()))?;
+        let target_path = asset_dir.join(&file_name);
+        fs::copy(&source_path, &target_path).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source_path.display(),
+                target_path.display()
+            )
+        })?;
+
+        let exported = format!("{}/{}", self.asset_dir_name, file_name);
+        self.copied.insert(cache_key, exported.clone());
+        Ok(Some(exported))
+    }
+
+    fn unique_asset_file_name(&mut self, source_path: &Path) -> String {
+        let stem = source_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image");
+        let ext = source_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+        let stem = sanitize_asset_name_part(stem);
+        let ext = sanitize_asset_extension(ext);
+        let mut candidate = format!("{stem}.{ext}");
+        if self.used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+
+        for index in 2.. {
+            candidate = format!("{stem}-{index}.{ext}");
+            if self.used_names.insert(candidate.clone()) {
+                return candidate;
+            }
+        }
+
+        unreachable!("unbounded suffix search should always find an asset name")
+    }
+}
+
+fn rewrite_local_image_assets(
+    markdown: &str,
+    source_dir: &Path,
+    output_path: &Path,
+) -> Result<String> {
+    let mut assets = ExportAssetContext::new(source_dir, output_path);
+    let mut out = String::with_capacity(markdown.len());
+    let mut fence_marker: Option<FenceMarker> = None;
+
+    for segment in markdown.split_inclusive('\n') {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        let newline = &segment[line.len()..];
+
+        if let Some(marker) = fence_marker {
+            out.push_str(segment);
+            if marker.closes(line) {
+                fence_marker = None;
+            }
+            continue;
+        }
+
+        if let Some(marker) = FenceMarker::opening(line.trim_start()) {
+            fence_marker = Some(marker);
+            out.push_str(segment);
+            continue;
+        }
+
+        out.push_str(&rewrite_line_image_assets(line, &mut assets)?);
+        out.push_str(newline);
+    }
+
+    Ok(out)
+}
+
+fn rewrite_line_image_assets(line: &str, assets: &mut ExportAssetContext<'_>) -> Result<String> {
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0usize;
+
+    while index < line.len() {
+        let rest = &line[index..];
+        if rest.starts_with('`') {
+            let len = code_span_len(rest).unwrap_or(1);
+            out.push_str(&rest[..len]);
+            index += len;
+        } else if let Some(image) = parse_markdown_image(rest) {
+            if let Some(destination) = assets.exported_destination(&image.destination)? {
+                out.push_str("![");
+                out.push_str(image.label);
+                out.push_str("](");
+                out.push_str(&markdown_link_destination(&destination));
+                out.push_str(image.title_suffix);
+                out.push(')');
+            } else {
+                out.push_str(image.raw);
+            }
+            index += image.raw.len();
+        } else if let Some(ch) = rest.chars().next() {
+            out.push(ch);
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    Ok(out)
+}
+
+struct MarkdownImage<'a> {
+    raw: &'a str,
+    label: &'a str,
+    destination: String,
+    title_suffix: &'a str,
+}
+
+fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
+    let after_open = rest.strip_prefix("![")?;
+    let close_label = find_unescaped_char(after_open, ']')?;
+    let label = &after_open[..close_label];
+    let after_label = &after_open[close_label + 1..];
+    let destination_body = after_label.strip_prefix('(')?;
+    let close_destination = find_image_destination_close(destination_body)?;
+    let inner = &destination_body[..close_destination];
+    let (destination, title_suffix) = split_image_destination(inner)?;
+    let raw_len = 2 + close_label + 1 + 1 + close_destination + 1;
+    Some(MarkdownImage {
+        raw: &rest[..raw_len],
+        label,
+        destination,
+        title_suffix,
+    })
+}
+
+fn split_image_destination(inner: &str) -> Option<(String, &str)> {
+    let trimmed_start = inner.trim_start();
+    let leading_ws = inner.len() - trimmed_start.len();
+    if let Some(after_open) = trimmed_start.strip_prefix('<') {
+        let close = find_unescaped_char(after_open, '>')?;
+        let destination = unescape_markdown_destination(&after_open[..close]);
+        let suffix_start = leading_ws + 1 + close + 1;
+        return Some((destination, &inner[suffix_start..]));
+    }
+
+    let relative_end = trimmed_start
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(trimmed_start.len());
+    if relative_end == 0 {
+        return None;
+    }
+    let destination = unescape_markdown_destination(&trimmed_start[..relative_end]);
+    Some((destination, &trimmed_start[relative_end..]))
+}
+
+fn find_unescaped_char(text: &str, needle: char) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == needle {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn find_image_destination_close(text: &str) -> Option<usize> {
+    let mut escaped = false;
+    let mut angle_depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '<' {
+            angle_depth += 1;
+        } else if ch == '>' && angle_depth > 0 {
+            angle_depth -= 1;
+        } else if ch == ')' && angle_depth == 0 {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn unescape_markdown_destination(destination: &str) -> String {
+    let mut out = String::with_capacity(destination.len());
+    let mut chars = destination.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn should_leave_image_destination(destination: &str) -> bool {
+    let trimmed = destination.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("data:")
+        || lower.starts_with("mailto:")
+}
+
+fn resolve_local_image_path(source_dir: &Path, destination: &str) -> PathBuf {
+    let destination = destination.trim();
+    let path = Path::new(destination);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        source_dir.join(path)
+    }
+}
+
+fn export_asset_dir_name(output_path: &Path) -> String {
+    let stem = output_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("document");
+    format!("{}_assets", sanitize_asset_name_part(stem))
+}
+
+fn sanitize_asset_name_part(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
+                '-'
+            } else {
+                ch
+            }
+        })
+        .collect::<String>()
+        .trim_matches([' ', '.'])
+        .to_string();
+
+    if sanitized.is_empty() {
+        "document".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn sanitize_asset_extension(ext: &str) -> String {
+    let sanitized = ext
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    if sanitized.is_empty() {
+        "bin".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn markdown_link_destination(destination: &str) -> String {
+    let needs_angle_destination = destination
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
+    if needs_angle_destination {
+        format!("<{}>", destination.replace('\\', r"\\").replace('>', r"\>"))
+    } else {
+        destination.to_string()
+    }
 }
 
 fn prepare_typora_extensions(markdown: &str) -> String {
@@ -984,6 +1326,17 @@ struct CalloutOpen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_export_dir(name: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("vellum-{name}-{nonce}"));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     #[test]
     fn exports_full_html_document() {
@@ -991,6 +1344,95 @@ mod tests {
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("<title>Draft &lt;One&gt;</title>"));
         assert!(html.contains("<h1 id=\"hello\">Hello</h1>"));
+    }
+
+    #[test]
+    fn html_file_export_copies_relative_image_assets() {
+        let root = temp_export_dir("html-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/cover.png"), b"cover").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "![Cover](assets/cover.png)",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("<img src=\"article_assets/cover.png\" alt=\"Cover\" />"));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover.png")).unwrap(),
+            b"cover"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_leaves_remote_images_and_code_spans_alone() {
+        let root = temp_export_dir("html-remote-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/hidden.png"), b"hidden").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "`![Hidden](assets/hidden.png)`\n\n![Remote](https://example.com/remote.png)",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("<code>![Hidden](assets/hidden.png)</code>"));
+        assert!(html.contains("src=\"https://example.com/remote.png\""));
+        assert!(!export_dir.join("article_assets").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_avoids_asset_name_collisions() {
+        let root = temp_export_dir("html-asset-collisions");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("one")).unwrap();
+        std::fs::create_dir_all(source.join("two")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("one/cover.png"), b"one").unwrap();
+        std::fs::write(source.join("two/cover.png"), b"two").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "![One](one/cover.png)\n\n![Two](two/cover.png)",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("src=\"article_assets/cover.png\""));
+        assert!(html.contains("src=\"article_assets/cover-2.png\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover.png")).unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover-2.png")).unwrap(),
+            b"two"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

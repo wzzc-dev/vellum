@@ -1,7 +1,5 @@
 use std::fs;
 
-use anyhow::Context as _;
-
 use super::layout::next_untitled_path;
 use super::*;
 use crate::path::{clear_last_opened_path, read_last_opened_path, write_last_opened_path};
@@ -278,7 +276,7 @@ impl VellumApp {
                 let mut dialog = FileDialog::new()
                     .add_filter("HTML", &["html", "htm"])
                     .set_file_name(&default_name);
-                if let Some(dir) = current_dir {
+                if let Some(dir) = current_dir.as_ref() {
                     dialog = dialog.set_directory(dir);
                 }
 
@@ -286,11 +284,12 @@ impl VellumApp {
                     return;
                 };
 
-                let result = super::export::export_markdown_to_html(&document_text, &display_name)
-                    .and_then(|html| {
-                        fs::write(&path, html)
-                            .with_context(|| format!("failed to write {}", path.display()))
-                    });
+                let result = super::export::export_markdown_to_html_file(
+                    &document_text,
+                    &display_name,
+                    current_dir.as_deref(),
+                    &path,
+                );
 
                 let _ = cx.update_window_entity(&view, |this, _, cx| {
                     match result {
