@@ -31,9 +31,10 @@ use crate::{
 };
 
 use super::{
-    BODY_FONT_SIZE, BODY_LINE_HEIGHT, MONOSPACE_FONT_FAMILY,
     layout::block_presentation,
+    typography::{body_font_size, body_line_height},
     view::{MarkdownEditor, SurfaceSelectionAnchor},
+    MONOSPACE_FONT_FAMILY,
 };
 
 const LIST_MARKER_COLUMN_WIDTH: f32 = 28.;
@@ -816,9 +817,9 @@ pub(super) fn render_document_surface(
             .id("empty-surface")
             .block_mouse_except_scroll()
             .w_full()
-            .min_h(px(BODY_LINE_HEIGHT))
-            .text_size(px(BODY_FONT_SIZE))
-            .line_height(px(BODY_LINE_HEIGHT))
+            .min_h(px(body_line_height()))
+            .text_size(px(body_font_size()))
+            .line_height(px(body_line_height()))
             .text_color(cx.theme().muted_foreground)
             .on_mouse_down(MouseButton::Left, move |_, window, app: &mut App| {
                 app.stop_propagation();
@@ -1839,8 +1840,8 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
         .text_color(palette.muted_text_color)
         .child(
             div()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .font_weight(FontWeight::MEDIUM)
                 .child(title),
         )
@@ -1848,7 +1849,7 @@ fn image_placeholder(title: String, detail: Option<String>, palette: RenderPalet
             this.child(
                 div()
                     .text_sm()
-                    .line_height(px(BODY_LINE_HEIGHT))
+                    .line_height(px(body_line_height()))
                     .child(detail),
             )
         })
@@ -1862,8 +1863,8 @@ fn render_front_matter_block(block: &RenderBlock, palette: RenderPalette) -> Any
     if entries.is_empty() {
         body = body.child(
             div()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .text_color(palette.muted_text_color)
                 .child("No metadata yet"),
         );
@@ -1909,7 +1910,7 @@ fn render_metadata_entry(entry: &MetadataPreviewEntry, palette: RenderPalette) -
                 .px_2()
                 .py(px(2.))
                 .text_sm()
-                .line_height(px(BODY_LINE_HEIGHT))
+                .line_height(px(body_line_height()))
                 .text_color(palette.muted_text_color)
                 .child(entry.key.clone()),
         )
@@ -1917,8 +1918,8 @@ fn render_metadata_entry(entry: &MetadataPreviewEntry, palette: RenderPalette) -
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .text_color(palette.text_color)
                 .child(entry.value.clone()),
         )
@@ -2018,8 +2019,8 @@ fn render_footnote_block(
         .child(
             div()
                 .w_full()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .text_color(palette.text_color)
                 .child(body),
         )
@@ -2033,7 +2034,7 @@ fn render_footnote_label_chip(label: String, palette: RenderPalette) -> AnyEleme
         .px_2()
         .py(px(2.))
         .text_sm()
-        .line_height(px(BODY_LINE_HEIGHT))
+        .line_height(px(body_line_height()))
         .text_color(palette.muted_text_color)
         .child(label)
         .into_any_element()
@@ -2135,8 +2136,8 @@ fn render_toc_block(blocks: &[RenderBlock], palette: RenderPalette) -> AnyElemen
     if entries.is_empty() {
         body = body.child(
             div()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .text_color(palette.muted_text_color)
                 .child("No headings yet"),
         );
@@ -2189,8 +2190,8 @@ fn render_toc_entry(entry: &TocPreviewEntry, palette: RenderPalette) -> AnyEleme
         .child(
             div()
                 .min_w(px(0.))
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .font_weight(if entry.depth <= 2 {
                     FontWeight::MEDIUM
                 } else {
@@ -2369,7 +2370,7 @@ fn render_mermaid_connector(
 
     connector
         .min_w(if horizontal { px(48.) } else { px(0.) })
-        .text_size(px(BODY_FONT_SIZE))
+        .text_size(px(body_font_size()))
         .font_family(MONOSPACE_FONT_FAMILY)
         .child(if horizontal { "-->" } else { "v" })
         .into_any_element()
@@ -2391,8 +2392,8 @@ fn render_mermaid_node_card(node: &MermaidNode, palette: RenderPalette) -> AnyEl
         .bg(palette.text_color.opacity(0.06))
         .px_3()
         .py_2()
-        .text_size(px(BODY_FONT_SIZE))
-        .line_height(px(BODY_LINE_HEIGHT))
+        .text_size(px(body_font_size()))
+        .line_height(px(body_line_height()))
         .text_color(palette.text_color)
         .child(label)
         .into_any_element()
@@ -2405,7 +2406,7 @@ fn render_mermaid_chip(label: String, palette: RenderPalette) -> AnyElement {
         .px_2()
         .py(px(2.))
         .text_sm()
-        .line_height(px(BODY_LINE_HEIGHT))
+        .line_height(px(body_line_height()))
         .text_color(palette.muted_text_color)
         .child(label)
         .into_any_element()
@@ -2427,8 +2428,8 @@ fn render_mermaid_source_fallback(source: &str, palette: RenderPalette) -> AnyEl
         .px_3()
         .py_2()
         .font_family(MONOSPACE_FONT_FAMILY)
-        .text_size(px(BODY_FONT_SIZE))
-        .line_height(px(BODY_LINE_HEIGHT))
+        .text_size(px(body_font_size()))
+        .line_height(px(body_line_height()))
         .text_color(palette.text_color)
         .child(source)
         .into_any_element()
@@ -2725,8 +2726,8 @@ fn render_table_block(
         .child(
             div()
                 .w_full()
-                .text_size(px(BODY_FONT_SIZE))
-                .line_height(px(BODY_LINE_HEIGHT))
+                .text_size(px(body_font_size()))
+                .line_height(px(body_line_height()))
                 .font_family(MONOSPACE_FONT_FAMILY)
                 .child(styled_text_for_block(block, palette, window)),
         )
@@ -3138,8 +3139,8 @@ fn render_list_lines(
                         .min_w(px(LIST_MARKER_COLUMN_WIDTH))
                         .text_color(palette.muted_text_color)
                         .font_weight(FontWeight::MEDIUM)
-                        .text_size(px(BODY_FONT_SIZE))
-                        .line_height(px(BODY_LINE_HEIGHT))
+                        .text_size(px(body_font_size()))
+                        .line_height(px(body_line_height()))
                         .child(marker),
                 )
                 .child(render_line_text(block, line, palette, window)),
@@ -3351,7 +3352,11 @@ fn render_math_block(
     } else {
         let tree = math_render_cache
             .borrow_mut()
-            .get_or_parse(&source, crate::core::math_render::MathRenderMode::Display, BODY_FONT_SIZE);
+            .get_or_parse(
+                &source,
+                crate::core::math_render::MathRenderMode::Display,
+                body_font_size(),
+            );
         let rendered = crate::core::math_render::math_tree_to_display_text(&tree);
         if rendered.is_empty() {
             source.clone()
@@ -3360,8 +3365,8 @@ fn render_math_block(
         }
     };
 
-    let text_size = px(BODY_FONT_SIZE);
-    let line_height = px(BODY_LINE_HEIGHT);
+    let text_size = px(body_font_size());
+    let line_height = px(body_line_height());
     let run_len = display_text.len().max(1);
 
     let styled = StyledText::new(display_text).with_runs(vec![TextStyle {

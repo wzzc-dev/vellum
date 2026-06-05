@@ -428,8 +428,9 @@ fn install_app_menus(_: &mut App, _: WindowHandle<Root>) {}
 impl VellumApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree_state = cx.new(|cx| TreeState::new(cx));
-        let preferences = preferences::load_preferences();
+        let mut preferences = preferences::load_preferences();
         editor::set_syntax_theme(preferences.syntax_theme);
+        preferences.font_size = editor::set_body_font_size(preferences.font_size);
         let editor = cx.new(|cx| MarkdownEditor::new(window, cx));
         editor.update(cx, |editor, cx| {
             editor.set_image_asset_dir(preferences.image_asset_dir.clone());
@@ -774,6 +775,20 @@ impl VellumApp {
             });
         }
         self.save_preferences();
+    }
+
+    fn set_font_size_preference(&mut self, size: u16, cx: &mut Context<Self>) {
+        let normalized = editor::set_body_font_size(size);
+        if self.preferences.font_size == normalized {
+            return;
+        }
+
+        self.preferences.font_size = normalized;
+        for tab in &self.tabs {
+            tab.editor.update(cx, |_, cx| cx.notify());
+        }
+        self.save_preferences();
+        cx.notify();
     }
 
     fn start_background_tasks(view: &Entity<Self>, window: &mut Window, cx: &mut App) {

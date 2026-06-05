@@ -1,7 +1,7 @@
 use std::{fs, path::Component};
 
 use anyhow::Result;
-use editor::SyntaxTheme;
+use editor::{DEFAULT_BODY_FONT_SIZE, SyntaxTheme, normalize_body_font_size};
 
 use crate::path::preferences_file_path;
 
@@ -27,7 +27,7 @@ impl Default for AppPreferences {
             typewriter_mode: false,
             focus_highlight_mode: false,
             image_asset_dir: "assets".to_string(),
-            font_size: 17,
+            font_size: DEFAULT_BODY_FONT_SIZE,
         }
     }
 }
@@ -92,7 +92,7 @@ fn parse_preferences(raw: &str) -> AppPreferences {
             "image_asset_dir" => preferences.image_asset_dir = normalize_image_asset_dir(value),
             "font_size" => {
                 if let Ok(size) = value.parse::<u16>() {
-                    preferences.font_size = size.clamp(12, 28);
+                    preferences.font_size = normalize_body_font_size(size);
                 }
             }
             _ => {}
@@ -200,6 +200,7 @@ mod tests {
         assert!(raw.contains("sidebar_visible=false\n"));
         assert!(raw.contains("typewriter_mode=true\n"));
         assert!(raw.contains("image_asset_dir=media\n"));
+        assert!(raw.contains("font_size=18\n"));
     }
 
     #[test]

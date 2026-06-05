@@ -863,6 +863,7 @@ impl VellumApp {
         let sidebar_visible = self.sidebar_visible;
         let status_bar_pinned = self.status_bar_pinned;
         let focus_mode = self.focus_mode;
+        let font_size = self.preferences.font_size;
         let active_editor = self.active_editor_entity();
         let active_editor_state = active_editor.read(cx);
         let typewriter_enabled = active_editor_state.typewriter_mode();
@@ -1074,6 +1075,74 @@ impl VellumApp {
                                                                         cx,
                                                                     );
                                                             },
+                                                        );
+                                                    })),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Editor Font Size"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("preferences-font-size-decrease")
+                                                    .label("-")
+                                                    .compact()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.set_font_size_preference(
+                                                            this.preferences
+                                                                .font_size
+                                                                .saturating_sub(1),
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(72.))
+                                                    .h(px(28.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded(px(4.))
+                                                    .border_1()
+                                                    .border_color(theme.border)
+                                                    .text_sm()
+                                                    .child(format!("{font_size}px")),
+                                            )
+                                            .child(
+                                                Button::new("preferences-font-size-increase")
+                                                    .label("+")
+                                                    .compact()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.set_font_size_preference(
+                                                            this.preferences
+                                                                .font_size
+                                                                .saturating_add(1),
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("preferences-font-size-default")
+                                                    .label("Default")
+                                                    .compact()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.set_font_size_preference(
+                                                            editor::DEFAULT_BODY_FONT_SIZE,
+                                                            cx,
                                                         );
                                                     })),
                                             ),

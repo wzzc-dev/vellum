@@ -68,4 +68,8 @@ pub use core::{
     SyncPolicy, SyncState, Transaction, math_source_to_display_text,
 };
 pub use ui::{EditorEvent, MarkdownEditor, bind_keys};
-pub use ui::theme::{SyntaxTheme, get_syntax_theme, set_syntax_theme};
+pub use ui::{
+    DEFAULT_BODY_FONT_SIZE, MAX_BODY_FONT_SIZE, MIN_BODY_FONT_SIZE, normalize_body_font_size,
+    set_body_font_size,
+    theme::{SyntaxTheme, get_syntax_theme, set_syntax_theme},
+};

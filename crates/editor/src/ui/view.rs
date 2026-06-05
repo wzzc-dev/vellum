@@ -31,11 +31,12 @@ use crate::{
 };
 
 use super::{
-    BODY_FONT_SIZE, BODY_LINE_HEIGHT, EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
+    EDITOR_CONTEXT, MAX_EDITOR_WIDTH,
     input_bridge::build_document_input,
     math_completion_panel::MathCompletionPanel,
     slash_command::{SlashCommandAction, SlashCommandPanel},
     surface::{render_document_surface, rendered_visible_end},
+    typography::{body_font_size, body_line_height},
 };
 
 #[derive(Debug, Clone)]
@@ -1474,8 +1475,8 @@ impl Render for MarkdownEditor {
                                                     .h_full()
                                                     .px(px(0.))
                                                     .py(px(0.))
-                                                    .text_size(px(BODY_FONT_SIZE))
-                                                    .line_height(px(BODY_LINE_HEIGHT))
+                                                    .text_size(px(body_font_size()))
+                                                    .line_height(px(body_line_height()))
                                                     .opacity(0.),
                                             )
                                             .child(render_document_surface(

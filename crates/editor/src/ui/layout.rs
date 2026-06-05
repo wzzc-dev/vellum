@@ -1,6 +1,8 @@
 use crate::core::document::BlockKind;
 
-use super::{BODY_FONT_SIZE, BODY_LINE_HEIGHT, CODE_FONT_SIZE, CODE_LINE_HEIGHT};
+use super::typography::{
+    body_font_size, body_line_height, code_font_size, code_line_height, scale_typography,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditableSurfaceKind {
@@ -21,80 +23,80 @@ pub(crate) struct BlockPresentation {
 pub(crate) fn block_presentation(kind: &BlockKind) -> BlockPresentation {
     match kind {
         BlockKind::Heading { depth: 1 } => BlockPresentation {
-            font_size: 34.,
-            line_height: 42.,
+            font_size: scale_typography(34.),
+            line_height: scale_typography(42.),
             row_spacing_y: 8.,
             block_padding_y: 6.,
             preview_paragraph_gap_rem: 0.32,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::Heading { depth: 2 } => BlockPresentation {
-            font_size: 28.,
-            line_height: 36.,
+            font_size: scale_typography(28.),
+            line_height: scale_typography(36.),
             row_spacing_y: 7.,
             block_padding_y: 5.,
             preview_paragraph_gap_rem: 0.3,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::Heading { depth: 3 } => BlockPresentation {
-            font_size: 24.,
-            line_height: 32.,
+            font_size: scale_typography(24.),
+            line_height: scale_typography(32.),
             row_spacing_y: 6.,
             block_padding_y: 4.,
             preview_paragraph_gap_rem: 0.28,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::Heading { depth: 4 } => BlockPresentation {
-            font_size: 20.,
-            line_height: 28.,
+            font_size: scale_typography(20.),
+            line_height: scale_typography(28.),
             row_spacing_y: 5.,
             block_padding_y: 4.,
             preview_paragraph_gap_rem: 0.26,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::Heading { .. } => BlockPresentation {
-            font_size: 18.,
-            line_height: 26.,
+            font_size: scale_typography(18.),
+            line_height: scale_typography(26.),
             row_spacing_y: 5.,
             block_padding_y: 4.,
             preview_paragraph_gap_rem: 0.24,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::CodeFence { .. } => BlockPresentation {
-            font_size: CODE_FONT_SIZE,
-            line_height: CODE_LINE_HEIGHT,
+            font_size: code_font_size(),
+            line_height: code_line_height(),
             row_spacing_y: 6.,
             block_padding_y: 6.,
             preview_paragraph_gap_rem: 0.35,
             surface_kind: EditableSurfaceKind::CodeEditor,
         },
         BlockKind::SourceCode => BlockPresentation {
-            font_size: CODE_FONT_SIZE,
-            line_height: CODE_LINE_HEIGHT,
+            font_size: code_font_size(),
+            line_height: code_line_height(),
             row_spacing_y: 2.,
             block_padding_y: 2.,
             preview_paragraph_gap_rem: 0.,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::Table => BlockPresentation {
-            font_size: BODY_FONT_SIZE,
-            line_height: BODY_LINE_HEIGHT,
+            font_size: body_font_size(),
+            line_height: body_line_height(),
             row_spacing_y: 6.,
             block_padding_y: 5.,
             preview_paragraph_gap_rem: 0.35,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         BlockKind::ThematicBreak => BlockPresentation {
-            font_size: BODY_FONT_SIZE,
-            line_height: BODY_LINE_HEIGHT,
+            font_size: body_font_size(),
+            line_height: body_line_height(),
             row_spacing_y: 8.,
             block_padding_y: 6.,
             preview_paragraph_gap_rem: 0.4,
             surface_kind: EditableSurfaceKind::AutoGrowText,
         },
         _ => BlockPresentation {
-            font_size: BODY_FONT_SIZE,
-            line_height: BODY_LINE_HEIGHT,
+            font_size: body_font_size(),
+            line_height: body_line_height(),
             row_spacing_y: 4.,
             block_padding_y: 3.,
             preview_paragraph_gap_rem: 0.35,
