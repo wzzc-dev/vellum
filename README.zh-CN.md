@@ -55,6 +55,8 @@ cargo test -p workspace
 cargo test --workspace
 ```
 
+手动发布验收清单见 [`docs/acceptance/manual-checklist.md`](./docs/acceptance/manual-checklist.md)。
+
 ## 说明
 
 - 侧边栏目前只显示 `.md`、`.markdown`、`.mdown`

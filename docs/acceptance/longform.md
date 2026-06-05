@@ -1,0 +1,61 @@
+---
+title: Vellum Longform Acceptance
+tags: [acceptance, export]
+---
+
+# Vellum Longform Acceptance
+
+[toc]
+
+## Draft Scope
+
+This document is a compact end-to-end sample for longform writing. It exercises headings, outline entries, lists, tables, code, local images, inline math, block math, diagrams, footnotes, and a generated table of contents.
+
+![Acceptance cover](assets/cover.svg)
+
+## Editing Blocks
+
+- Draft the introduction.
+- Review the outline.
+- Export the finished article.
+
+| Area | Expected behavior | Status |
+| --- | --- | --- |
+| Editor | Live preview keeps Markdown structure editable | Ready |
+| Assets | Local image paths remain document-relative | Ready |
+| Export | HTML includes copied local assets and print styles | Ready |
+
+## Code Sample
+
+```rust
+fn export_status(ok: bool) -> &'static str {
+    if ok {
+        "ready"
+    } else {
+        "needs review"
+    }
+}
+```
+
+## Math Notes
+
+Inline math should render in exported HTML: $E = mc^2$.
+
+$$
+\int_0^1 x^2 dx = \frac{1}{3}
+$$
+
+## Mermaid Diagram
+
+```mermaid
+flowchart TD
+  Draft[Draft note] --> Save[Save and reopen]
+  Save --> Export[Export HTML]
+  Export --> Print[Print or save PDF]
+```
+
+## Footnote
+
+The acceptance pass should verify that footnotes survive export and remain linked.[^acceptance]
+
+[^acceptance]: This footnote checks GFM footnote rendering in the exported document.

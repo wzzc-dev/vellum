@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">Vellum acceptance cover</title>
+  <desc id="desc">A quiet document workspace with a page, sidebar, and export path.</desc>
+  <rect width="960" height="420" fill="#f7f6f2"/>
+  <rect x="70" y="54" width="820" height="312" rx="18" fill="#ffffff" stroke="#d7d3ca" stroke-width="2"/>
+  <rect x="96" y="86" width="184" height="248" rx="10" fill="#f2efe7"/>
+  <rect x="320" y="88" width="432" height="24" rx="4" fill="#202124"/>
+  <rect x="320" y="136" width="540" height="12" rx="6" fill="#aaa397"/>
+  <rect x="320" y="164" width="500" height="12" rx="6" fill="#c9c2b8"/>
+  <rect x="320" y="202" width="340" height="88" rx="8" fill="#ebe8df"/>
+  <path d="M346 262 L404 216 L468 276 L522 230 L628 286" fill="none" stroke="#2563eb" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="404" cy="216" r="10" fill="#2563eb"/>
+  <circle cx="522" cy="230" r="10" fill="#2563eb"/>
+  <rect x="320" y="314" width="420" height="12" rx="6" fill="#aaa397"/>
+</svg>

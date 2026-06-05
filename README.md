@@ -58,6 +58,8 @@ cargo test -p workspace
 cargo test --workspace
 ```
 
+Manual release checks live in [`docs/acceptance/manual-checklist.md`](./docs/acceptance/manual-checklist.md).
+
 ## Notes
 
 - The sidebar currently shows only `.md`, `.markdown`, and `.mdown`

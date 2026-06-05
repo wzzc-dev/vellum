@@ -1437,6 +1437,33 @@ mod tests {
     }
 
     #[test]
+    fn exports_longform_acceptance_sample() {
+        let root = temp_export_dir("longform-acceptance");
+        let output = root.join("longform.html");
+        let sample_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/acceptance");
+        let markdown = include_str!("../../../../docs/acceptance/longform.md");
+
+        export_markdown_to_html_file(markdown, "Fallback", Some(&sample_dir), &output).unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("<title>Vellum Longform Acceptance</title>"));
+        assert!(html.contains("<a href=\"#draft-scope\">Draft Scope</a>"));
+        assert!(html.contains("<h2 id=\"editing-blocks\">Editing Blocks</h2>"));
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<code class=\"language-rust\">"));
+        assert!(html.contains("src=\"longform_assets/cover.svg\""));
+        assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
+        assert!(html.contains("mathjax@3"));
+        assert!(html.contains("mermaid.esm.min.mjs"));
+        assert!(html.contains("data-footnotes"));
+        assert!(html.contains("@media print"));
+        assert!(root.join("longform_assets/cover.svg").is_file());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn html_file_export_copies_relative_image_assets() {
         let root = temp_export_dir("html-assets");
         let source = root.join("source");
