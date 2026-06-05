@@ -217,6 +217,20 @@ impl MarkdownEditor {
         reload_path
     }
 
+    pub fn apply_file_event_without_window(
+        &mut self,
+        event: FileSyncEvent,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        let effects = self.controller.apply_file_event(event);
+        let reload_path = effects.reload_path.clone();
+        self.snapshot = self.controller.snapshot();
+        if effects.changed || effects.selection_changed {
+            self.emit_changed(cx);
+        }
+        reload_path
+    }
+
     pub fn apply_disk_state(
         &mut self,
         path: PathBuf,

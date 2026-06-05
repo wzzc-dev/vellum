@@ -707,8 +707,15 @@ impl VellumApp {
 
         for tab in self.tabs.iter_mut() {
             if tab.editor.read(cx).document_path() == Some(&path) {
-                let _ = tab.editor.update(cx, |editor, cx| {
-                    editor.open_path(new_path.clone(), window, cx)
+                tab.editor.update(cx, |editor, cx| {
+                    editor.apply_file_event(
+                        FileSyncEvent::Relocated {
+                            from: path.clone(),
+                            to: new_path.clone(),
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         }
@@ -757,6 +764,20 @@ impl VellumApp {
             self.set_status(format!("Failed to rename: {err}"));
             cx.notify();
             return;
+        }
+
+        for tab in self.tabs.iter_mut() {
+            if tab.editor.read(cx).document_path() == Some(&path) {
+                tab.editor.update(cx, |editor, cx| {
+                    editor.apply_file_event_without_window(
+                        FileSyncEvent::Relocated {
+                            from: path.clone(),
+                            to: new_path.clone(),
+                        },
+                        cx,
+                    );
+                });
+            }
         }
 
         if self.workspace.selected_file.as_ref() == Some(&path) {

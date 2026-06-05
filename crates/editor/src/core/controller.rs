@@ -3765,6 +3765,47 @@ mod tests {
     }
 
     #[test]
+    fn relocation_updates_path_without_discarding_dirty_text() {
+        let old_path = PathBuf::from("drafts/old.md");
+        let new_path = PathBuf::from("drafts/renamed.md");
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(old_path.clone()),
+                suggested_path: Some(old_path.clone()),
+                text: "Original\n".to_string(),
+                modified_at: None,
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::SyncDocumentState {
+            text: "Unsaved edit\n".to_string(),
+            selection: SelectionState::collapsed("Unsaved edit".len()),
+        });
+
+        let effects = controller.apply_file_event(FileSyncEvent::Relocated {
+            from: old_path,
+            to: new_path.clone(),
+        });
+
+        assert!(effects.changed);
+        assert!(!effects.selection_changed);
+        assert_eq!(effects.reload_path, Some(new_path.clone()));
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.path, Some(new_path.clone()));
+        assert_eq!(snapshot.display_name, "renamed.md");
+        assert_eq!(snapshot.document_text, "Unsaved edit\n");
+        assert_eq!(snapshot.sync_state, SyncState::Dirty);
+        assert!(snapshot.dirty);
+        assert!(!snapshot.is_missing);
+        assert_eq!(
+            snapshot.status_message,
+            format!("File moved to {}", new_path.display())
+        );
+    }
+
+    #[test]
     fn toggle_task_range_updates_checkbox_markup() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
