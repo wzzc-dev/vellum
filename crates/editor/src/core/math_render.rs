@@ -309,8 +309,8 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
             (vec![MathNode::Text(text)], end)
         }
         "begin" => {
-            let env_name = parse_env_name(chars, i);
-            let (env_end, rows) = parse_env_body(chars, i, &env_name);
+            let (env_name, body_start) = parse_env_name(chars, i);
+            let (env_end, rows) = parse_env_body(chars, body_start, &env_name);
             (vec![MathNode::Matrix { rows }], env_end)
         }
         "left" | "right" | "bigl" | "bigr" | "Bigl" | "Bigr" | "biggl" | "biggr" => {
@@ -355,7 +355,7 @@ fn parse_command_or_char(chars: &[char], start: usize) -> (Vec<MathNode>, usize)
     }
 }
 
-fn parse_env_name(chars: &[char], start: usize) -> String {
+fn parse_env_name(chars: &[char], start: usize) -> (String, usize) {
     let mut i = start;
     let len = chars.len();
     while i < len && chars[i] == ' ' {
@@ -368,59 +368,53 @@ fn parse_env_name(chars: &[char], start: usize) -> String {
             name.push(chars[i]);
             i += 1;
         }
-        name.trim().to_string()
+        let body_start = if i < len && chars[i] == '}' {
+            i + 1
+        } else {
+            i
+        };
+        (name.trim().to_string(), body_start)
     } else {
-        String::new()
+        (String::new(), start)
     }
 }
 
-fn parse_env_body(chars: &[char], start: usize, _env_name: &str) -> (usize, Vec<Vec<MathNode>>) {
-    let input: String = chars.iter().collect();
-    let mut i = start;
+fn parse_env_body(chars: &[char], start: usize, env_name: &str) -> (usize, Vec<Vec<MathNode>>) {
     let len = chars.len();
+    let end_marker: Vec<char> = if env_name.is_empty() {
+        "\\end".chars().collect()
+    } else {
+        format!("\\end{{{env_name}}}").chars().collect()
+    };
 
+    let mut end_start = len;
+    let mut end = len;
+    let mut i = start;
     while i < len {
-        if chars[i] == '\\' {
-            let rest = &input[i..];
-            if rest.starts_with("\\end") {
-                let mut j = i + 4;
-                while j < len && chars[j] == ' ' {
-                    j += 1;
-                }
-                if j < len && chars[j] == '{' {
-                    let brace_close = input[j..].find('}').map(|p| j + p + 1).unwrap_or(len);
-                    i = brace_close;
-                    break;
-                }
-            }
+        if starts_with_chars(chars, i, &end_marker) {
+            end_start = i;
+            end = i + end_marker.len();
+            break;
         }
         i += 1;
     }
 
-    let body_start = start;
-    let body: String = chars[body_start..i].iter().collect();
-    let body = body.trim_end();
-
-    let body_without_end = if let Some(pos) = body.rfind("\\end") {
-        &body[..pos]
-    } else {
-        body
-    };
-
+    let body = &chars[start..end_start];
     let mut rows = Vec::new();
-    for row_str in body_without_end.split('\\') {
-        let row_str = row_str.trim();
-        if row_str.is_empty() {
+    for row_chars in split_math_rows(body) {
+        if trim_chars(row_chars).is_empty() {
             continue;
         }
+
         let mut cells = Vec::new();
-        for cell_str in row_str.split('&') {
-            let cell_str = cell_str.trim();
+        for cell_chars in split_math_cells(row_chars) {
+            let cell_str = trim_chars(cell_chars).iter().collect::<String>();
             if cell_str.is_empty() {
                 cells.push(MathNode::Text(String::new()));
                 continue;
             }
-            let tree = parse_math(cell_str);
+
+            let tree = parse_math(&cell_str);
             if tree.nodes.len() == 1 {
                 cells.push(tree.nodes.into_iter().next().unwrap());
             } else {
@@ -436,7 +430,55 @@ fn parse_env_body(chars: &[char], start: usize, _env_name: &str) -> (usize, Vec<
         rows.push(vec![MathNode::Text(String::new())]);
     }
 
-    (i, rows)
+    (end, rows)
+}
+
+fn starts_with_chars(chars: &[char], start: usize, needle: &[char]) -> bool {
+    start + needle.len() <= chars.len() && chars[start..start + needle.len()] == *needle
+}
+
+fn split_math_rows(chars: &[char]) -> Vec<&[char]> {
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '\\' {
+            rows.push(&chars[start..i]);
+            i += 2;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    rows.push(&chars[start..]);
+    rows
+}
+
+fn split_math_cells(chars: &[char]) -> Vec<&[char]> {
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '&' && (i == 0 || chars[i - 1] != '\\') {
+            cells.push(&chars[start..i]);
+            start = i + 1;
+        }
+        i += 1;
+    }
+    cells.push(&chars[start..]);
+    cells
+}
+
+fn trim_chars(chars: &[char]) -> &[char] {
+    let mut start = 0;
+    let mut end = chars.len();
+    while start < end && chars[start].is_whitespace() {
+        start += 1;
+    }
+    while end > start && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    &chars[start..end]
 }
 
 pub fn node_to_text(node: &MathNode) -> String {
@@ -900,6 +942,36 @@ mod tests {
             }
             _ => panic!("expected sqrt"),
         }
+    }
+
+    #[test]
+    fn parses_matrix_environment_without_environment_name_in_body() {
+        let tree = parse_math("\\begin{matrix}a & b \\\\ c & d\\end{matrix}");
+
+        match &tree.nodes[0] {
+            MathNode::Matrix { rows } => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            }
+            _ => panic!("expected matrix"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "a b; c d");
+    }
+
+    #[test]
+    fn parses_aligned_environment_rows_and_alignment_cells() {
+        let tree = parse_math("\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}");
+
+        match &tree.nodes[0] {
+            MathNode::Matrix { rows } => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            }
+            _ => panic!("expected matrix"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "a = b; c = d");
     }
 
     #[test]
