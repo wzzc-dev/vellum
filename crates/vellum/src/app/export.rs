@@ -75,15 +75,16 @@ impl<'a> ExportAssetContext<'a> {
             return Ok(None);
         }
 
-        let source_path = resolve_local_image_path(self.source_dir, destination);
-        if !source_path.is_file() {
+        let Some((source_path, reference_suffix)) =
+            local_image_source_path(self.source_dir, destination)
+        else {
             return Ok(None);
-        }
+        };
         let cache_key = source_path
             .canonicalize()
             .unwrap_or_else(|_| source_path.clone());
         if let Some(destination) = self.copied.get(&cache_key) {
-            return Ok(Some(destination.clone()));
+            return Ok(Some(format!("{destination}{reference_suffix}")));
         }
 
         let file_name = self.unique_asset_file_name(&source_path);
@@ -101,7 +102,7 @@ impl<'a> ExportAssetContext<'a> {
 
         let exported = format!("{}/{}", self.asset_dir_name, file_name);
         self.copied.insert(cache_key, exported.clone());
-        Ok(Some(exported))
+        Ok(Some(format!("{exported}{reference_suffix}")))
     }
 
     fn unique_asset_file_name(&mut self, source_path: &Path) -> String {
@@ -567,6 +568,30 @@ fn should_leave_image_destination(destination: &str) -> bool {
         || lower.starts_with("https://")
         || lower.starts_with("data:")
         || lower.starts_with("mailto:")
+}
+
+fn local_image_source_path<'a>(
+    source_dir: &Path,
+    destination: &'a str,
+) -> Option<(PathBuf, &'a str)> {
+    let source_path = resolve_local_image_path(source_dir, destination);
+    if source_path.is_file() {
+        return Some((source_path, ""));
+    }
+
+    let (path_part, suffix) = split_local_image_reference_suffix(destination)?;
+    if path_part.trim().is_empty() {
+        return None;
+    }
+    let source_path = resolve_local_image_path(source_dir, path_part);
+    source_path.is_file().then_some((source_path, suffix))
+}
+
+fn split_local_image_reference_suffix(destination: &str) -> Option<(&str, &str)> {
+    let suffix_start = destination
+        .char_indices()
+        .find_map(|(index, ch)| matches!(ch, '?' | '#').then_some(index))?;
+    Some((&destination[..suffix_start], &destination[suffix_start..]))
 }
 
 fn resolve_local_image_path(source_dir: &Path, destination: &str) -> PathBuf {
@@ -2707,6 +2732,43 @@ mod tests {
         assert!(html.contains("class=\"wide\""));
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/raw.png")).unwrap(),
+            b"raw"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_preserves_local_image_query_and_fragment() {
+        let root = temp_export_dir("html-image-suffix-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/cover.png"), b"cover").unwrap();
+        std::fs::write(source.join("assets/raw.svg"), b"raw").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "![Cover](assets/cover.png?cache=1#hero)\n\n",
+                "<img src=\"assets/raw.svg#icon\" alt=\"Raw\">",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("src=\"article_assets/cover.png?cache=1#hero\""));
+        assert!(html.contains("src=\"article_assets/raw.svg#icon\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover.png")).unwrap(),
+            b"cover"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/raw.svg")).unwrap(),
             b"raw"
         );
 
