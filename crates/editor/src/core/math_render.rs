@@ -70,6 +70,10 @@ pub enum MathNode {
         numerator: Box<MathNode>,
         denominator: Box<MathNode>,
     },
+    Binomial {
+        top: Box<MathNode>,
+        bottom: Box<MathNode>,
+    },
     Sqrt {
         content: Box<MathNode>,
         index: Option<Box<MathNode>>,
@@ -138,6 +142,23 @@ fn parse_nodes(input: &str, start: usize) -> ParseResult {
         }
 
         if ch == '\\' {
+            if let Some((cmd, mut command_end)) = peek_command_name(&chars, i) {
+                if is_binomial_infix_command(&cmd) {
+                    while command_end < len && chars[command_end] == ' ' {
+                        command_end += 1;
+                    }
+
+                    let numerator = nodes_to_single_node(std::mem::take(&mut nodes));
+                    let (denominator_nodes, end) = parse_nodes(input, command_end);
+                    let denominator = nodes_to_single_node(denominator_nodes);
+                    nodes.push(MathNode::Binomial {
+                        top: Box::new(numerator),
+                        bottom: Box::new(denominator),
+                    });
+                    i = end;
+                    continue;
+                }
+            }
             let (cmd_nodes, end) = parse_command(&chars, i);
             nodes.extend(cmd_nodes);
             i = end;
@@ -272,6 +293,17 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
                 end2,
             )
         }
+        "binom" | "dbinom" | "tbinom" => {
+            let (top, end1) = parse_single_arg(chars, i);
+            let (bottom, end2) = parse_single_arg(chars, end1);
+            (
+                vec![MathNode::Binomial {
+                    top: Box::new(top),
+                    bottom: Box::new(bottom),
+                }],
+                end2,
+            )
+        }
         "sqrt" => {
             if i < len && chars[i] == '[' {
                 let input: String = chars.iter().collect();
@@ -350,6 +382,60 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
             } else {
                 (vec![MathNode::Text(format!("\\{cmd}"))], i)
             }
+        }
+    }
+}
+
+fn peek_command_name(chars: &[char], start: usize) -> Option<(String, usize)> {
+    if start >= chars.len() || chars[start] != '\\' {
+        return None;
+    }
+
+    let mut i = start + 1;
+    let mut cmd = String::new();
+    while i < chars.len() && chars[i].is_ascii_alphabetic() {
+        cmd.push(chars[i]);
+        i += 1;
+    }
+
+    if cmd.is_empty() {
+        None
+    } else {
+        Some((cmd, i))
+    }
+}
+
+fn is_binomial_infix_command(cmd: &str) -> bool {
+    matches!(cmd, "choose")
+}
+
+fn nodes_to_single_node(mut nodes: Vec<MathNode>) -> MathNode {
+    trim_edge_text_nodes(&mut nodes);
+    if nodes.len() == 1 {
+        nodes.pop().unwrap()
+    } else {
+        MathNode::Group(nodes)
+    }
+}
+
+fn trim_edge_text_nodes(nodes: &mut Vec<MathNode>) {
+    while let Some(MathNode::Text(text)) = nodes.first_mut() {
+        let trimmed = text.trim_start().to_string();
+        if trimmed.is_empty() {
+            nodes.remove(0);
+        } else {
+            *text = trimmed;
+            break;
+        }
+    }
+
+    while let Some(MathNode::Text(text)) = nodes.last_mut() {
+        let trimmed = text.trim_end().to_string();
+        if trimmed.is_empty() {
+            nodes.pop();
+        } else {
+            *text = trimmed;
+            break;
         }
     }
 }
@@ -546,6 +632,11 @@ pub fn node_to_text(node: &MathNode) -> String {
             let num_text = node_to_text(numerator);
             let den_text = node_to_text(denominator);
             format!("{}/{}", num_text, den_text)
+        }
+        MathNode::Binomial { top, bottom } => {
+            let top_text = node_to_text(top);
+            let bottom_text = node_to_text(bottom);
+            format!("C({}, {})", top_text.trim(), bottom_text.trim())
         }
         MathNode::Sqrt { content, index } => {
             let text = node_to_text(content);
@@ -983,6 +1074,34 @@ mod tests {
             }
             _ => panic!("expected fraction"),
         }
+    }
+
+    #[test]
+    fn parses_binomial_command() {
+        let tree = parse_math("\\binom{n}{k}");
+        assert_eq!(tree.nodes.len(), 1);
+        match &tree.nodes[0] {
+            MathNode::Binomial { top, bottom } => {
+                assert_eq!(**top, MathNode::Text("n".to_string()));
+                assert_eq!(**bottom, MathNode::Text("k".to_string()));
+            }
+            _ => panic!("expected binomial"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "C(n, k)");
+    }
+
+    #[test]
+    fn parses_braced_choose_as_binomial() {
+        let tree = parse_math("{n \\choose k}");
+        assert_eq!(tree.nodes.len(), 1);
+        match &tree.nodes[0] {
+            MathNode::Binomial { top, bottom } => {
+                assert_eq!(**top, MathNode::Text("n".to_string()));
+                assert_eq!(**bottom, MathNode::Text("k".to_string()));
+            }
+            _ => panic!("expected binomial"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "C(n, k)");
     }
 
     #[test]

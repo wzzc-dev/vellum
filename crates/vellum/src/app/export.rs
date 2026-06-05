@@ -3261,6 +3261,7 @@ mod tests {
         assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">E = mc²</span>"));
         assert!(html.contains("<span class=\"math math-inline\">\\(E = mc^2\\)</span>"));
         assert!(html.contains("a² + b² = c²; E = mc²"));
+        assert!(html.contains("C(n, k) = C(n, k) = n!/k!(n-k)!"));
         assert!(html.contains("\\begin{aligned}"));
         assert!(html.contains("E &amp;= mc^2"));
         assert!(html.contains("mathjax@3"));

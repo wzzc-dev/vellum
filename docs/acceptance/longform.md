@@ -90,6 +90,12 @@ x^2 & x > 0 \\
 \end{cases}
 $$
 
+Binomial math should keep combination notation readable in preview and export:
+
+$$
+\binom{n}{k} = {n \choose k} = \frac{n!}{k!(n-k)!}
+$$
+
 ## Mermaid Diagrams
 
 ```mermaid

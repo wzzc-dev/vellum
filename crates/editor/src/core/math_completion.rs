@@ -39,6 +39,12 @@ const MATH_COMPLETIONS: &[MathCompletionItem] = &[
         category: Construct,
     },
     MathCompletionItem {
+        command: "binom",
+        snippet: "\\binom{}{}",
+        description: "Binomial coefficient",
+        category: Construct,
+    },
+    MathCompletionItem {
         command: "sqrt",
         snippet: "\\sqrt{}",
         description: "Square root",
@@ -393,5 +399,18 @@ mod tests {
         assert!(filter_math_completions("beg")
             .iter()
             .any(|index| math_completion_items()[*index].command == "begin"));
+    }
+
+    #[test]
+    fn binomial_completion_uses_two_editable_slots() {
+        let binom = math_completion_items()
+            .iter()
+            .find(|item| item.command == "binom")
+            .expect("binom completion");
+
+        assert_eq!(binom.snippet, "\\binom{}{}");
+        assert!(filter_math_completions("bin")
+            .iter()
+            .any(|index| math_completion_items()[*index].command == "binom"));
     }
 }
