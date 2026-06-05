@@ -210,15 +210,13 @@ fn rewrite_line_image_assets(
                 out.push_str(image.raw);
             }
             index += image.raw.len();
-        } else if let Some(image) = parse_html_image(rest) {
-            if let Some(destination) = assets.exported_destination(&image.destination)? {
-                out.push_str(&image.raw[..image.value_range.start]);
-                out.push_str(&escape_attr_value(&destination));
-                out.push_str(&image.raw[image.value_range.end..]);
+        } else if let Some(tag) = parse_html_asset_tag(rest) {
+            if let Some(rewritten) = rewrite_html_asset_tag(&tag, assets)? {
+                out.push_str(&rewritten);
             } else {
-                out.push_str(image.raw);
+                out.push_str(tag.raw);
             }
-            index += image.raw.len();
+            index += tag.raw.len();
         } else if let Some(ch) = rest.chars().next() {
             out.push(ch);
             index += ch.len_utf8();
@@ -357,10 +355,10 @@ struct MarkdownImage<'a> {
     title_suffix: &'a str,
 }
 
-struct HtmlImage<'a> {
+struct HtmlAssetTag<'a> {
     raw: &'a str,
-    destination: String,
-    value_range: Range<usize>,
+    src_range: Option<Range<usize>>,
+    srcset_range: Option<Range<usize>>,
 }
 
 fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
@@ -381,15 +379,118 @@ fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
     })
 }
 
-fn parse_html_image(rest: &str) -> Option<HtmlImage<'_>> {
-    let raw_len = html_image_tag_len(rest)?;
+fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
+    let allows_src = html_asset_tag_allows_src(rest)?;
+    let raw_len = html_asset_tag_len(rest)?;
     let raw = &rest[..raw_len];
-    let value_range = html_attr_value_range(raw, "src")?;
-    Some(HtmlImage {
+    let src_range = allows_src.then(|| html_attr_value_range(raw, "src")).flatten();
+    let srcset_range = html_attr_value_range(raw, "srcset");
+    if src_range.is_none() && srcset_range.is_none() {
+        return None;
+    }
+
+    Some(HtmlAssetTag {
         raw,
-        destination: decode_html_entities(&raw[value_range.clone()]),
-        value_range,
+        src_range,
+        srcset_range,
     })
+}
+
+struct HtmlAttributeReplacement {
+    range: Range<usize>,
+    value: String,
+}
+
+fn rewrite_html_asset_tag(
+    tag: &HtmlAssetTag<'_>,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
+    let mut replacements = Vec::new();
+
+    if let Some(range) = tag.src_range.clone() {
+        let destination = decode_html_entities(&tag.raw[range.clone()]);
+        if let Some(destination) = assets.exported_destination(&destination)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: escape_attr_value(&destination),
+            });
+        }
+    }
+
+    if let Some(range) = tag.srcset_range.clone() {
+        if let Some(srcset) = rewrite_html_srcset(&tag.raw[range.clone()], assets)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: srcset,
+            });
+        }
+    }
+
+    if replacements.is_empty() {
+        return Ok(None);
+    }
+
+    replacements.sort_by_key(|replacement| replacement.range.start);
+    let mut out = String::with_capacity(tag.raw.len());
+    let mut cursor = 0usize;
+    for replacement in replacements {
+        out.push_str(&tag.raw[cursor..replacement.range.start]);
+        out.push_str(&replacement.value);
+        cursor = replacement.range.end;
+    }
+    out.push_str(&tag.raw[cursor..]);
+    Ok(Some(out))
+}
+
+fn rewrite_html_srcset(
+    value: &str,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
+    let mut out = String::with_capacity(value.len());
+    let mut changed = false;
+    let mut candidate_start = 0usize;
+
+    for (index, ch) in value.char_indices() {
+        if ch == ',' {
+            changed |=
+                rewrite_html_srcset_candidate(&value[candidate_start..index], assets, &mut out)?;
+            out.push(ch);
+            candidate_start = index + ch.len_utf8();
+        }
+    }
+
+    changed |= rewrite_html_srcset_candidate(&value[candidate_start..], assets, &mut out)?;
+    Ok(changed.then_some(out))
+}
+
+fn rewrite_html_srcset_candidate(
+    candidate: &str,
+    assets: &mut ExportAssetContext<'_>,
+    out: &mut String,
+) -> Result<bool> {
+    let trimmed = candidate.trim_start();
+    let leading_len = candidate.len() - trimmed.len();
+    let url_end = trimmed
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(trimmed.len());
+
+    if url_end == 0 {
+        out.push_str(candidate);
+        return Ok(false);
+    }
+
+    let url = &trimmed[..url_end];
+    let destination = decode_html_entities(url);
+    if let Some(destination) = assets.exported_destination(&destination)? {
+        out.push_str(&candidate[..leading_len]);
+        out.push_str(&escape_attr_value(&destination));
+        out.push_str(&trimmed[url_end..]);
+        Ok(true)
+    } else {
+        out.push_str(candidate);
+        Ok(false)
+    }
 }
 
 fn split_image_destination(inner: &str) -> Option<(String, &str)> {
@@ -446,19 +547,40 @@ fn find_image_destination_close(text: &str) -> Option<usize> {
     None
 }
 
-fn html_image_tag_len(rest: &str) -> Option<usize> {
-    if !rest
-        .get(..4)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<img"))
-    {
-        return None;
+fn html_asset_tag_len(rest: &str) -> Option<usize> {
+    if html_named_tag_matches(rest, "img") || html_named_tag_matches(rest, "source") {
+        html_tag_close(rest).map(|close| close + 1)
+    } else {
+        None
     }
-    let boundary = rest.as_bytes().get(4).copied();
-    if !matches!(boundary, Some(b'>') | Some(b'/') | Some(b' ' | b'\t' | b'\r' | b'\n')) {
-        return None;
+}
+
+fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
+    if html_named_tag_matches(rest, "img") {
+        Some(true)
+    } else if html_named_tag_matches(rest, "source") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn html_named_tag_matches(rest: &str, tag_name: &str) -> bool {
+    let name_end = 1 + tag_name.len();
+    if rest.as_bytes().first() != Some(&b'<') {
+        return false;
+    }
+    if !rest
+        .get(1..name_end)
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag_name))
+    {
+        return false;
     }
 
-    html_tag_close(rest).map(|close| close + 1)
+    matches!(
+        rest.as_bytes().get(name_end).copied(),
+        Some(b'>') | Some(b'/') | Some(b' ' | b'\t' | b'\r' | b'\n')
+    )
 }
 
 fn html_tag_close(tag: &str) -> Option<usize> {
@@ -2733,6 +2855,64 @@ mod tests {
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/raw.png")).unwrap(),
             b"raw"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_srcset_assets() {
+        let root = temp_export_dir("html-raw-srcset-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/cover.png"), b"cover").unwrap();
+        std::fs::write(source.join("assets/cover@2x.png"), b"cover2x").unwrap();
+        std::fs::write(source.join("assets/fallback.png"), b"fallback").unwrap();
+        std::fs::write(source.join("assets/mobile.png"), b"mobile").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "<picture>",
+                "<source media=\"(min-width: 600px)\" ",
+                "srcset=\"assets/cover.png 1x, ",
+                "assets/cover@2x.png?scale=2&amp;theme=print#sharp 2x\">",
+                "<img src=\"assets/fallback.png\" ",
+                "srcset='assets/mobile.png 480w, https://example.com/remote.png 960w' ",
+                "alt=\"Cover\">",
+                "</picture>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("src=\"article_assets/fallback.png\""));
+        assert!(html.contains(
+            "srcset=\"article_assets/cover.png 1x, article_assets/cover@2x.png?scale=2&amp;theme=print#sharp 2x\""
+        ));
+        assert!(html.contains(
+            "srcset='article_assets/mobile.png 480w, https://example.com/remote.png 960w'"
+        ));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover.png")).unwrap(),
+            b"cover"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/cover@2x.png")).unwrap(),
+            b"cover2x"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/fallback.png")).unwrap(),
+            b"fallback"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/mobile.png")).unwrap(),
+            b"mobile"
         );
 
         std::fs::remove_dir_all(root).unwrap();
