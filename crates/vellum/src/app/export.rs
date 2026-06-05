@@ -1662,6 +1662,7 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
     let mut saw_sequence = false;
     let mut participants = Vec::new();
     let mut participant_indices = HashMap::new();
+    let mut fragment_depth = 0usize;
     let mut items = Vec::new();
 
     for raw_line in source.lines() {
@@ -1696,6 +1697,19 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
                 );
             }
             items.push(StaticMermaidSequenceItem::Note(note.clone()));
+            continue;
+        }
+
+        if let Some(fragment) = parse_static_sequence_fragment(line) {
+            if fragment.kind == StaticMermaidFragmentKind::End {
+                if fragment_depth == 0 {
+                    continue;
+                }
+                fragment_depth = fragment_depth.saturating_sub(1);
+            } else if static_sequence_fragment_opens(fragment.kind) {
+                fragment_depth += 1;
+            }
+            items.push(StaticMermaidSequenceItem::Fragment(fragment));
             continue;
         }
 
@@ -1782,6 +1796,42 @@ fn parse_static_sequence_note(line: &str) -> Option<StaticMermaidNote> {
     })
 }
 
+fn parse_static_sequence_fragment(line: &str) -> Option<StaticMermaidFragment> {
+    for (keyword, kind) in [
+        ("loop", StaticMermaidFragmentKind::Loop),
+        ("alt", StaticMermaidFragmentKind::Alt),
+        ("else", StaticMermaidFragmentKind::Else),
+        ("opt", StaticMermaidFragmentKind::Opt),
+        ("par", StaticMermaidFragmentKind::Par),
+        ("and", StaticMermaidFragmentKind::And),
+        ("critical", StaticMermaidFragmentKind::Critical),
+        ("option", StaticMermaidFragmentKind::Option),
+        ("break", StaticMermaidFragmentKind::Break),
+        ("end", StaticMermaidFragmentKind::End),
+    ] {
+        if let Some(label) = strip_static_sequence_keyword(line, keyword) {
+            return Some(StaticMermaidFragment {
+                kind,
+                label: clean_static_mermaid_note_text(label),
+            });
+        }
+    }
+
+    None
+}
+
+fn static_sequence_fragment_opens(kind: StaticMermaidFragmentKind) -> bool {
+    matches!(
+        kind,
+        StaticMermaidFragmentKind::Loop
+            | StaticMermaidFragmentKind::Alt
+            | StaticMermaidFragmentKind::Opt
+            | StaticMermaidFragmentKind::Par
+            | StaticMermaidFragmentKind::Critical
+            | StaticMermaidFragmentKind::Break
+    )
+}
+
 fn static_sequence_non_message_directive(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower == "autonumber"
@@ -1807,6 +1857,22 @@ fn strip_static_ascii_prefix<'a>(source: &'a str, prefix: &str) -> Option<&'a st
     let head = source.get(..prefix.len())?;
     head.eq_ignore_ascii_case(prefix)
         .then_some(&source[prefix.len()..])
+}
+
+fn strip_static_sequence_keyword<'a>(source: &'a str, keyword: &str) -> Option<&'a str> {
+    let head = source.get(..keyword.len())?;
+    if !head.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+
+    let rest = &source[keyword.len()..];
+    if rest.is_empty() {
+        Some("")
+    } else if rest.chars().next().is_some_and(char::is_whitespace) {
+        Some(rest.trim())
+    } else {
+        None
+    }
 }
 
 fn parse_static_sequence_message(line: &str) -> Option<StaticMermaidMessage> {
@@ -1939,6 +2005,9 @@ fn render_static_sequence_mermaid_svg(
                 participant_width,
                 participant_gap,
             ),
+            StaticMermaidSequenceItem::Fragment(fragment) => {
+                render_static_sequence_fragment(&mut out, fragment, y, width, margin)
+            }
         }
     }
 
@@ -2039,6 +2108,33 @@ fn render_static_sequence_note(
         30,
         2,
         "var(--fg)",
+    ));
+    out.push_str("</g>");
+}
+
+fn render_static_sequence_fragment(
+    out: &mut String,
+    fragment: &StaticMermaidFragment,
+    y: usize,
+    width: usize,
+    margin: usize,
+) {
+    let fragment_height = 34usize;
+    let x = margin;
+    let rect_y = y.saturating_sub(fragment_height / 2);
+    let rect_width = width.saturating_sub(margin * 2);
+    let label = static_mermaid_fragment_display_text(fragment);
+
+    out.push_str(&format!(
+        "<g class=\"mermaid-fragment\"><rect x=\"{x}\" y=\"{rect_y}\" width=\"{rect_width}\" height=\"{fragment_height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\" stroke-dasharray=\"4 5\"/>"
+    ));
+    out.push_str(&render_static_sequence_label(
+        &label,
+        x + rect_width / 2,
+        rect_y + fragment_height / 2,
+        42,
+        1,
+        "var(--muted)",
     ));
     out.push_str("</g>");
 }
@@ -2160,9 +2256,54 @@ enum StaticMermaidNotePlacement {
 }
 
 #[derive(Clone)]
+struct StaticMermaidFragment {
+    kind: StaticMermaidFragmentKind,
+    label: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StaticMermaidFragmentKind {
+    Loop,
+    Alt,
+    Else,
+    Opt,
+    Par,
+    And,
+    Critical,
+    Option,
+    Break,
+    End,
+}
+
+#[derive(Clone)]
 enum StaticMermaidSequenceItem {
     Message(StaticMermaidMessage),
     Note(StaticMermaidNote),
+    Fragment(StaticMermaidFragment),
+}
+
+fn static_mermaid_fragment_display_text(fragment: &StaticMermaidFragment) -> String {
+    let kind = static_mermaid_fragment_label(fragment.kind);
+    if fragment.label.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{kind}: {}", fragment.label)
+    }
+}
+
+fn static_mermaid_fragment_label(kind: StaticMermaidFragmentKind) -> &'static str {
+    match kind {
+        StaticMermaidFragmentKind::Loop => "loop",
+        StaticMermaidFragmentKind::Alt => "alt",
+        StaticMermaidFragmentKind::Else => "else",
+        StaticMermaidFragmentKind::Opt => "opt",
+        StaticMermaidFragmentKind::Par => "par",
+        StaticMermaidFragmentKind::And => "and",
+        StaticMermaidFragmentKind::Critical => "critical",
+        StaticMermaidFragmentKind::Option => "option",
+        StaticMermaidFragmentKind::Break => "break",
+        StaticMermaidFragmentKind::End => "end",
+    }
 }
 
 fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
@@ -3934,6 +4075,24 @@ mod tests {
         assert!(html.contains(">Follow up</tspan>"));
         assert!(html.contains(">Start</tspan>"));
         assert!(html.contains(">Done</tspan>"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_sequence_fragment_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nsequenceDiagram\n  Alice->>App: Start\n  loop Every day <check>\n  App-->>Alice: Reminder\n  alt Approved\n  Alice->>App: Publish\n  else Needs work\n  Alice->>App: Revise\n  end\n  end\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("class=\"mermaid-fragment\""));
+        assert!(html.contains(">loop: Every day &lt;check&gt;</tspan>"));
+        assert!(html.contains(">alt: Approved</tspan>"));
+        assert!(html.contains(">else: Needs work</tspan>"));
+        assert!(html.contains(">end</tspan>"));
+        assert!(html.contains(">Reminder</tspan>"));
+        assert!(html.contains(">Revise</tspan>"));
     }
 
     #[test]

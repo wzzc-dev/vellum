@@ -97,7 +97,9 @@ sequenceDiagram
   participant Browser
   Writer->>App: Export print HTML
   Note over Writer,App: Sequence note remains visible
+  loop Print review
   App-->>Browser: Open exported document
+  end
   Browser-->>Writer: Save PDF
 ```
 

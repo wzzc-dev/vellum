@@ -165,6 +165,7 @@ struct MermaidPreview {
     participants: Vec<MermaidParticipant>,
     messages: Vec<MermaidSequenceMessage>,
     notes: Vec<MermaidSequenceNote>,
+    fragments: Vec<MermaidSequenceFragment>,
     sequence_items: Vec<MermaidSequenceItem>,
     unsupported_lines: usize,
 }
@@ -226,9 +227,30 @@ enum MermaidSequenceNotePlacement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSequenceFragment {
+    kind: MermaidSequenceFragmentKind,
+    label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MermaidSequenceFragmentKind {
+    Loop,
+    Alt,
+    Else,
+    Opt,
+    Par,
+    And,
+    Critical,
+    Option,
+    Break,
+    End,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum MermaidSequenceItem {
     Message(MermaidSequenceMessage),
     Note(MermaidSequenceNote),
+    Fragment(MermaidSequenceFragment),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2388,17 +2410,18 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                 .child("Mermaid"),
         );
 
-    if !preview.messages.is_empty() || !preview.notes.is_empty() {
+    if !preview.messages.is_empty() || !preview.notes.is_empty() || !preview.fragments.is_empty() {
         header = header.child(render_mermaid_chip("sequence".to_string(), palette));
         header = header.child(
             div()
                 .text_sm()
                 .text_color(palette.muted_text_color.opacity(0.7))
                 .child(format!(
-                    "{} participants, {} messages, {} notes",
+                    "{} participants, {} messages, {} notes, {} fragments",
                     preview.participants.len(),
                     preview.messages.len(),
-                    preview.notes.len()
+                    preview.notes.len(),
+                    preview.fragments.len()
                 )),
         );
     } else if let Some(direction) = &preview.direction {
@@ -2416,7 +2439,7 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
     }
 
     let mut body = div().w_full().flex().flex_col().gap_2();
-    if !preview.messages.is_empty() || !preview.notes.is_empty() {
+    if !preview.messages.is_empty() || !preview.notes.is_empty() || !preview.fragments.is_empty() {
         body = body.child(render_mermaid_sequence_preview(&preview, palette));
         if preview.sequence_items.len() > 8 {
             body = body.child(
@@ -2513,6 +2536,9 @@ fn render_mermaid_sequence_preview(
             MermaidSequenceItem::Note(note) => {
                 sequence.child(render_mermaid_sequence_note_card(preview, note, palette))
             }
+            MermaidSequenceItem::Fragment(fragment) => {
+                sequence.child(render_mermaid_sequence_fragment_card(fragment, palette))
+            }
         };
     }
 
@@ -2589,6 +2615,32 @@ fn render_mermaid_sequence_note_card(
         )
         .child(render_mermaid_chip(note.text.clone(), palette))
         .into_any_element()
+}
+
+fn render_mermaid_sequence_fragment_card(
+    fragment: &MermaidSequenceFragment,
+    palette: RenderPalette,
+) -> AnyElement {
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.035))
+        .p_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(render_mermaid_chip(
+            mermaid_sequence_fragment_label(fragment.kind).to_string(),
+            palette,
+        ));
+
+    if !fragment.label.trim().is_empty() {
+        card = card.child(render_mermaid_chip(fragment.label.clone(), palette));
+    }
+
+    card.into_any_element()
 }
 
 fn render_mermaid_participant_card(label: &str, palette: RenderPalette) -> AnyElement {
@@ -2802,6 +2854,7 @@ fn mermaid_is_sequence_diagram(source: &str) -> bool {
 fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
     let mut preview = MermaidPreview::default();
     let mut participant_indices = HashMap::new();
+    let mut fragment_depth = 0usize;
     let mut saw_sequence = false;
 
     for raw_line in source.lines() {
@@ -2839,6 +2892,22 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
                 .sequence_items
                 .push(MermaidSequenceItem::Note(note.clone()));
             preview.notes.push(note);
+            continue;
+        }
+
+        if let Some(fragment) = parse_mermaid_sequence_fragment(line) {
+            if fragment.kind == MermaidSequenceFragmentKind::End {
+                if fragment_depth == 0 {
+                    continue;
+                }
+                fragment_depth = fragment_depth.saturating_sub(1);
+            } else if mermaid_sequence_fragment_opens(fragment.kind) {
+                fragment_depth += 1;
+            }
+            preview
+                .sequence_items
+                .push(MermaidSequenceItem::Fragment(fragment.clone()));
+            preview.fragments.push(fragment);
             continue;
         }
 
@@ -2923,6 +2992,42 @@ fn parse_mermaid_sequence_note(line: &str) -> Option<MermaidSequenceNote> {
     })
 }
 
+fn parse_mermaid_sequence_fragment(line: &str) -> Option<MermaidSequenceFragment> {
+    for (keyword, kind) in [
+        ("loop", MermaidSequenceFragmentKind::Loop),
+        ("alt", MermaidSequenceFragmentKind::Alt),
+        ("else", MermaidSequenceFragmentKind::Else),
+        ("opt", MermaidSequenceFragmentKind::Opt),
+        ("par", MermaidSequenceFragmentKind::Par),
+        ("and", MermaidSequenceFragmentKind::And),
+        ("critical", MermaidSequenceFragmentKind::Critical),
+        ("option", MermaidSequenceFragmentKind::Option),
+        ("break", MermaidSequenceFragmentKind::Break),
+        ("end", MermaidSequenceFragmentKind::End),
+    ] {
+        if let Some(label) = strip_mermaid_sequence_keyword(line, keyword) {
+            return Some(MermaidSequenceFragment {
+                kind,
+                label: clean_mermaid_note_text(label),
+            });
+        }
+    }
+
+    None
+}
+
+fn mermaid_sequence_fragment_opens(kind: MermaidSequenceFragmentKind) -> bool {
+    matches!(
+        kind,
+        MermaidSequenceFragmentKind::Loop
+            | MermaidSequenceFragmentKind::Alt
+            | MermaidSequenceFragmentKind::Opt
+            | MermaidSequenceFragmentKind::Par
+            | MermaidSequenceFragmentKind::Critical
+            | MermaidSequenceFragmentKind::Break
+    )
+}
+
 fn is_mermaid_sequence_non_message_directive(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower == "autonumber"
@@ -2948,6 +3053,22 @@ fn strip_ascii_prefix<'a>(source: &'a str, prefix: &str) -> Option<&'a str> {
     let head = source.get(..prefix.len())?;
     head.eq_ignore_ascii_case(prefix)
         .then_some(&source[prefix.len()..])
+}
+
+fn strip_mermaid_sequence_keyword<'a>(source: &'a str, keyword: &str) -> Option<&'a str> {
+    let head = source.get(..keyword.len())?;
+    if !head.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+
+    let rest = &source[keyword.len()..];
+    if rest.is_empty() {
+        Some("")
+    } else if rest.chars().next().is_some_and(char::is_whitespace) {
+        Some(rest.trim())
+    } else {
+        None
+    }
 }
 
 fn parse_mermaid_sequence_message(line: &str) -> Option<MermaidSequenceMessage> {
@@ -3219,6 +3340,21 @@ fn clean_mermaid_note_text(source: &str) -> String {
         .trim_matches('\'')
         .trim()
         .to_string()
+}
+
+fn mermaid_sequence_fragment_label(kind: MermaidSequenceFragmentKind) -> &'static str {
+    match kind {
+        MermaidSequenceFragmentKind::Loop => "loop",
+        MermaidSequenceFragmentKind::Alt => "alt",
+        MermaidSequenceFragmentKind::Else => "else",
+        MermaidSequenceFragmentKind::Opt => "opt",
+        MermaidSequenceFragmentKind::Par => "par",
+        MermaidSequenceFragmentKind::And => "and",
+        MermaidSequenceFragmentKind::Critical => "critical",
+        MermaidSequenceFragmentKind::Option => "option",
+        MermaidSequenceFragmentKind::Break => "break",
+        MermaidSequenceFragmentKind::End => "end",
+    }
 }
 
 fn mermaid_graph_direction(preview: &MermaidPreview) -> MermaidGraphDirection {
@@ -4912,7 +5048,8 @@ fn build_editor_context_menu(
 mod tests {
     use super::{
         FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
-        MermaidParticipant, MermaidSequenceItem, MermaidSequenceMessage, MermaidSequenceNote,
+        MermaidParticipant, MermaidSequenceFragment, MermaidSequenceFragmentKind,
+        MermaidSequenceItem, MermaidSequenceMessage, MermaidSequenceNote,
         MermaidSequenceNotePlacement, MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
@@ -5564,6 +5701,89 @@ mod tests {
                     to: "Alice".to_string(),
                     label: "Done".to_string(),
                     dashed: true,
+                }),
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_sequence_fragments_in_order() {
+        let preview = parse_mermaid_preview(
+            "sequenceDiagram\n  Alice->>App: Start\n  loop Every day <check>\n  App-->>Alice: Reminder\n  alt Approved\n  Alice->>App: Publish\n  else Needs work\n  Alice->>App: Revise\n  end\n  end\n",
+        );
+
+        assert_eq!(
+            preview.fragments,
+            vec![
+                MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Loop,
+                    label: "Every day <check>".to_string(),
+                },
+                MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Alt,
+                    label: "Approved".to_string(),
+                },
+                MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Else,
+                    label: "Needs work".to_string(),
+                },
+                MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::End,
+                    label: String::new(),
+                },
+                MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::End,
+                    label: String::new(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.sequence_items,
+            vec![
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Alice".to_string(),
+                    to: "App".to_string(),
+                    label: "Start".to_string(),
+                    dashed: false,
+                }),
+                MermaidSequenceItem::Fragment(MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Loop,
+                    label: "Every day <check>".to_string(),
+                }),
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "App".to_string(),
+                    to: "Alice".to_string(),
+                    label: "Reminder".to_string(),
+                    dashed: true,
+                }),
+                MermaidSequenceItem::Fragment(MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Alt,
+                    label: "Approved".to_string(),
+                }),
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Alice".to_string(),
+                    to: "App".to_string(),
+                    label: "Publish".to_string(),
+                    dashed: false,
+                }),
+                MermaidSequenceItem::Fragment(MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::Else,
+                    label: "Needs work".to_string(),
+                }),
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Alice".to_string(),
+                    to: "App".to_string(),
+                    label: "Revise".to_string(),
+                    dashed: false,
+                }),
+                MermaidSequenceItem::Fragment(MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::End,
+                    label: String::new(),
+                }),
+                MermaidSequenceItem::Fragment(MermaidSequenceFragment {
+                    kind: MermaidSequenceFragmentKind::End,
+                    label: String::new(),
                 }),
             ]
         );
