@@ -412,29 +412,42 @@ impl VellumApp {
                 WorkspaceEvent::Changed(_) | WorkspaceEvent::Unknown => {}
             }
 
-            let reload_path = self.active_editor_entity().update(cx, |editor, cx| {
-                editor.apply_file_event(map_workspace_event_for_editor(&event), window, cx)
-            });
-
-            let Some(path) = reload_path else {
-                continue;
-            };
-            if !path.is_file() || !is_markdown_path(&path) {
-                continue;
+            let mut reloads = Vec::new();
+            for tab in self.tabs.iter() {
+                let editor = tab.editor.clone();
+                let reload_path = editor.update(cx, |editor, cx| {
+                    editor.apply_file_event(map_workspace_event_for_editor(&event), window, cx)
+                });
+                if let Some(path) = reload_path {
+                    reloads.push((editor, path));
+                }
             }
 
-            let Ok(disk_text) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let modified_at = fs::metadata(&path)
-                .ok()
-                .and_then(|meta| meta.modified().ok());
-            self.active_editor_entity().update(cx, |editor, cx| {
-                editor.apply_disk_state(path.clone(), disk_text.clone(), modified_at, window, cx);
-            });
+            for (editor, path) in reloads {
+                if !path.is_file() || !is_markdown_path(&path) {
+                    continue;
+                }
+
+                let Ok(disk_text) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                let modified_at = fs::metadata(&path)
+                    .ok()
+                    .and_then(|meta| meta.modified().ok());
+                editor.update(cx, |editor, cx| {
+                    editor.apply_disk_state(
+                        path.clone(),
+                        disk_text.clone(),
+                        modified_at,
+                        window,
+                        cx,
+                    );
+                });
+            }
         }
 
         if should_refresh_tree {
+            self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
             self.refresh_tree(cx);
         }
     }
