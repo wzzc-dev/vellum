@@ -905,14 +905,18 @@ fn render_mermaid_block(source: &str) -> String {
 }
 
 fn render_static_mermaid_fallback(source: &str) -> String {
-    parse_static_mermaid_diagram(source)
-        .map(|diagram| render_static_mermaid_svg(diagram, static_mermaid_marker_id(source)))
-        .unwrap_or_else(|| {
-            format!(
-                "<pre class=\"mermaid-static mermaid-static-source\">{}</pre>",
-                escape_html(source)
-            )
-        })
+    if let Some(sequence) = parse_static_mermaid_sequence(source) {
+        return render_static_sequence_mermaid_svg(sequence, static_mermaid_marker_id(source));
+    }
+
+    if let Some(diagram) = parse_static_mermaid_diagram(source) {
+        return render_static_mermaid_svg(diagram, static_mermaid_marker_id(source));
+    }
+
+    format!(
+        "<pre class=\"mermaid-static mermaid-static-source\">{}</pre>",
+        escape_html(source)
+    )
 }
 
 fn static_mermaid_marker_id(source: &str) -> String {
@@ -1369,6 +1373,320 @@ fn clean_static_mermaid_label(source: &str) -> String {
         .to_string()
 }
 
+fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> {
+    let mut saw_sequence = false;
+    let mut participants = Vec::new();
+    let mut participant_indices = HashMap::new();
+    let mut messages = Vec::new();
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_sequence {
+            if line.eq_ignore_ascii_case("sequencediagram") {
+                saw_sequence = true;
+                continue;
+            }
+            return None;
+        }
+
+        if let Some(participant) = parse_static_sequence_participant(line) {
+            upsert_static_sequence_participant(
+                &mut participants,
+                &mut participant_indices,
+                participant,
+            );
+            continue;
+        }
+
+        if static_sequence_non_message_directive(line) {
+            continue;
+        }
+
+        let Some(message) = parse_static_sequence_message(line) else {
+            continue;
+        };
+
+        upsert_static_sequence_participant(
+            &mut participants,
+            &mut participant_indices,
+            StaticMermaidParticipant::new(&message.from),
+        );
+        upsert_static_sequence_participant(
+            &mut participants,
+            &mut participant_indices,
+            StaticMermaidParticipant::new(&message.to),
+        );
+        messages.push(message);
+    }
+
+    (saw_sequence && !participants.is_empty() && !messages.is_empty()).then_some(
+        StaticMermaidSequence {
+            participants,
+            participant_indices,
+            messages,
+        },
+    )
+}
+
+fn parse_static_sequence_participant(line: &str) -> Option<StaticMermaidParticipant> {
+    let keyword_end = line.find(char::is_whitespace).unwrap_or(line.len());
+    let keyword = &line[..keyword_end];
+    if !keyword.eq_ignore_ascii_case("participant") && !keyword.eq_ignore_ascii_case("actor") {
+        return None;
+    }
+
+    let rest = line[keyword_end..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let (id_source, label_source) = split_static_sequence_alias(rest).unwrap_or((rest, rest));
+    let id = clean_static_sequence_participant_id(id_source);
+    let label = clean_static_mermaid_label(label_source);
+    let label = if label.is_empty() { id.clone() } else { label };
+
+    (!id.is_empty()).then_some(StaticMermaidParticipant { id, label })
+}
+
+fn split_static_sequence_alias(source: &str) -> Option<(&str, &str)> {
+    let lower = source.to_ascii_lowercase();
+    lower
+        .find(" as ")
+        .map(|index| (&source[..index], &source[index + 4..]))
+}
+
+fn static_sequence_non_message_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "autonumber"
+        || lower == "end"
+        || lower.starts_with("activate ")
+        || lower.starts_with("deactivate ")
+        || lower.starts_with("destroy ")
+        || lower.starts_with("box ")
+        || lower.starts_with("rect ")
+        || lower.starts_with("note ")
+        || lower.starts_with("loop ")
+        || lower.starts_with("alt ")
+        || lower.starts_with("else")
+        || lower.starts_with("opt ")
+        || lower.starts_with("par ")
+        || lower.starts_with("and ")
+        || lower.starts_with("critical ")
+        || lower.starts_with("option ")
+        || lower.starts_with("break ")
+}
+
+fn parse_static_sequence_message(line: &str) -> Option<StaticMermaidMessage> {
+    let (operator_start, operator_end, operator) = find_static_sequence_message_operator(line)?;
+    let from = clean_static_sequence_participant_id(&line[..operator_start]);
+    let rest = line[operator_end..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = clean_static_sequence_participant_id(to_source);
+    let label = clean_static_mermaid_label(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(StaticMermaidMessage {
+        from,
+        to,
+        label,
+        dashed: operator.starts_with("--"),
+    })
+}
+
+fn find_static_sequence_message_operator(line: &str) -> Option<(usize, usize, &'static str)> {
+    for (index, _) in line.char_indices() {
+        for operator in [
+            "-->>+", "-->>-", "-->>", "->>+", "->>-", "->>", "--)+", "--)-", "--)", "-)+",
+            "-)-", "-)", "--x+", "--x-", "--x", "-x+", "-x-", "-x", "-->+", "-->-", "-->",
+            "->+", "->-", "->",
+        ] {
+            if line[index..].starts_with(operator) {
+                return Some((index, index + operator.len(), operator));
+            }
+        }
+    }
+    None
+}
+
+fn clean_static_sequence_participant_id(source: &str) -> String {
+    clean_static_mermaid_label(source)
+        .trim_start_matches(|ch| matches!(ch, '+' | '-'))
+        .trim_end_matches(|ch| matches!(ch, '+' | '-'))
+        .trim()
+        .to_string()
+}
+
+fn upsert_static_sequence_participant(
+    participants: &mut Vec<StaticMermaidParticipant>,
+    participant_indices: &mut HashMap<String, usize>,
+    participant: StaticMermaidParticipant,
+) {
+    if let Some(index) = participant_indices.get(&participant.id).copied() {
+        if participants[index].label == participants[index].id
+            && participant.label != participant.id
+        {
+            participants[index].label = participant.label;
+        }
+        return;
+    }
+
+    participant_indices.insert(participant.id.clone(), participants.len());
+    participants.push(participant);
+}
+
+fn render_static_sequence_mermaid_svg(
+    sequence: StaticMermaidSequence,
+    marker_id: String,
+) -> String {
+    let participant_width = 154usize;
+    let participant_height = 42usize;
+    let participant_gap = 48usize;
+    let margin = 28usize;
+    let lifeline_top = margin + participant_height + 18;
+    let message_start_y = lifeline_top + 40;
+    let message_gap = 56usize;
+    let participant_count = sequence.participants.len().max(1);
+    let message_count = sequence.messages.len().max(1);
+    let width = margin * 2
+        + participant_width * participant_count
+        + participant_gap * participant_count.saturating_sub(1);
+    let height = message_start_y + message_gap * message_count + margin;
+
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid sequence diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">\
+<defs><marker id=\"{marker_id}\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"var(--muted)\"/></marker></defs>"
+    );
+
+    for (index, participant) in sequence.participants.iter().enumerate() {
+        let center_x = static_sequence_participant_center_x(
+            index,
+            participant_width,
+            participant_gap,
+            margin,
+        );
+        let x = center_x - participant_width / 2;
+        let y = margin;
+        out.push_str(&format!(
+            "<g class=\"mermaid-participant\"><rect x=\"{x}\" y=\"{y}\" width=\"{participant_width}\" height=\"{participant_height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/>"
+        ));
+        out.push_str(&render_static_sequence_label(
+            &participant.label,
+            center_x,
+            y + participant_height / 2,
+            18,
+            2,
+            "var(--fg)",
+        ));
+        out.push_str(&format!(
+            "</g><line x1=\"{center_x}\" y1=\"{lifeline_top}\" x2=\"{center_x}\" y2=\"{}\" stroke=\"var(--rule)\" stroke-width=\"1.5\" stroke-dasharray=\"5 6\"/>",
+            height - margin
+        ));
+    }
+
+    for (index, message) in sequence.messages.iter().enumerate() {
+        let Some(from_index) = sequence.participant_indices.get(&message.from).copied() else {
+            continue;
+        };
+        let Some(to_index) = sequence.participant_indices.get(&message.to).copied() else {
+            continue;
+        };
+        let from_x = static_sequence_participant_center_x(
+            from_index,
+            participant_width,
+            participant_gap,
+            margin,
+        );
+        let to_x = static_sequence_participant_center_x(
+            to_index,
+            participant_width,
+            participant_gap,
+            margin,
+        );
+        let y = message_start_y + index * message_gap;
+        let dash = if message.dashed {
+            " stroke-dasharray=\"6 5\""
+        } else {
+            ""
+        };
+
+        if from_x == to_x {
+            let loop_width = 44usize;
+            let loop_height = 24usize;
+            let x2 = (from_x + loop_width).min(width - margin);
+            out.push_str(&format!(
+                "<path d=\"M {from_x} {y} H {x2} V {} H {from_x}\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>",
+                y + loop_height
+            ));
+            render_static_sequence_message_label(&mut out, &message.label, from_x + 28, y - 10);
+        } else {
+            out.push_str(&format!(
+                "<line x1=\"{from_x}\" y1=\"{y}\" x2=\"{to_x}\" y2=\"{y}\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>"
+            ));
+            render_static_sequence_message_label(
+                &mut out,
+                &message.label,
+                (from_x + to_x) / 2,
+                y - 10,
+            );
+        }
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn static_sequence_participant_center_x(
+    index: usize,
+    participant_width: usize,
+    participant_gap: usize,
+    margin: usize,
+) -> usize {
+    margin + participant_width / 2 + index * (participant_width + participant_gap)
+}
+
+fn render_static_sequence_label(
+    label: &str,
+    x: usize,
+    center_y: usize,
+    max_chars: usize,
+    max_lines: usize,
+    fill: &str,
+) -> String {
+    let lines = svg_label_lines(label, max_chars, max_lines);
+    let line_height = 15isize;
+    let first_y = center_y as isize - ((lines.len().saturating_sub(1) as isize * line_height) / 2);
+    let mut out = format!(
+        "<text x=\"{x}\" y=\"{first_y}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"13\" fill=\"{fill}\">"
+    );
+    for (index, line) in lines.iter().enumerate() {
+        let dy = if index == 0 { 0 } else { line_height };
+        out.push_str(&format!(
+            "<tspan x=\"{x}\" dy=\"{dy}\">{}</tspan>",
+            escape_html(line)
+        ));
+    }
+    out.push_str("</text>");
+    out
+}
+
+fn render_static_sequence_message_label(out: &mut String, label: &str, x: usize, y: usize) {
+    if label.is_empty() {
+        return;
+    }
+
+    out.push_str(&render_static_sequence_label(
+        label,
+        x,
+        y,
+        34,
+        1,
+        "var(--muted)",
+    ));
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticMermaidDirection {
     TopDown,
@@ -1392,6 +1710,33 @@ struct StaticMermaidEdge {
     from: StaticMermaidNode,
     to: StaticMermaidNode,
     label: Option<String>,
+}
+
+struct StaticMermaidSequence {
+    participants: Vec<StaticMermaidParticipant>,
+    participant_indices: HashMap<String, usize>,
+    messages: Vec<StaticMermaidMessage>,
+}
+
+struct StaticMermaidParticipant {
+    id: String,
+    label: String,
+}
+
+impl StaticMermaidParticipant {
+    fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            label: id.to_string(),
+        }
+    }
+}
+
+struct StaticMermaidMessage {
+    from: String,
+    to: String,
+    label: String,
+    dashed: bool,
 }
 
 fn parse_inline_math(rest: &str) -> Option<(&str, String)> {
@@ -2828,14 +3173,36 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_mermaid_export_falls_back_to_source() {
+    fn mermaid_export_has_static_sequence_fallback() {
         let html = export_markdown_to_html(
-            "```mermaid\nsequenceDiagram\n  Alice->>Bob: Hi\n```",
+            "```mermaid\nsequenceDiagram\n  participant Alice as Writer\n  actor Bob as Reviewer\n  Alice->>Bob: Hi <draft>\n  Bob-->>Alice: Looks good\n```",
             "Mermaid",
         )
         .unwrap();
 
-        assert!(html.contains("<pre class=\"mermaid-static mermaid-static-source\">sequenceDiagram\n  Alice-&gt;&gt;Bob: Hi</pre>"));
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("Mermaid sequence diagram preview"));
+        assert!(html.contains(">Writer</tspan>"));
+        assert!(html.contains(">Reviewer</tspan>"));
+        assert!(html.contains(">Hi &lt;draft&gt;</tspan>"));
+        assert!(html.contains(">Looks good</tspan>"));
+        assert!(html.contains("stroke-dasharray=\"6 5\""));
+        assert!(!html.contains(
+            "<pre class=\"mermaid-static mermaid-static-source\">sequenceDiagram"
+        ));
+    }
+
+    #[test]
+    fn unsupported_mermaid_export_falls_back_to_source() {
+        let html = export_markdown_to_html(
+            "```mermaid\npie\n  \"Draft\" : 2\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains(
+            "<pre class=\"mermaid-static mermaid-static-source\">pie\n  &quot;Draft&quot; : 2</pre>"
+        ));
     }
 
     #[test]
