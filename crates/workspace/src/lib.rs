@@ -81,6 +81,21 @@ impl WorkspaceState {
         events
     }
 
+    pub fn select_file(&mut self, path: PathBuf) {
+        self.expand_ancestors(&path);
+        self.selected_file = Some(path);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_file = None;
+    }
+
+    pub fn toggle_dir(&mut self, path: &Path) {
+        if !self.expanded_dirs.remove(path) {
+            self.expanded_dirs.insert(path.to_path_buf());
+        }
+    }
+
     pub fn tree_items(&self) -> Result<Vec<TreeItem>> {
         let Some(root) = &self.root else {
             return Ok(Vec::new());
@@ -96,7 +111,29 @@ impl WorkspaceState {
         if query.is_empty() {
             return self.tree_items();
         }
-        Ok(build_filtered_tree_item(root, root, &query)?.into_iter().collect())
+        Ok(build_filtered_tree_item(root, root, &query)?
+            .into_iter()
+            .collect())
+    }
+
+    fn expand_ancestors(&mut self, path: &Path) {
+        let Some(root) = &self.root else {
+            return;
+        };
+        if !path.starts_with(root) {
+            return;
+        }
+
+        let mut parent = path.parent();
+        while let Some(dir) = parent {
+            if dir.starts_with(root) {
+                self.expanded_dirs.insert(dir.to_path_buf());
+            }
+            if dir == root {
+                break;
+            }
+            parent = dir.parent();
+        }
     }
 }
 
@@ -173,16 +210,20 @@ fn build_filtered_tree_item(path: &Path, root: &Path, query: &str) -> Result<Opt
         } else {
             entries
                 .iter()
-                .filter_map(|entry| match build_filtered_tree_item(&entry.path(), root, query) {
-                    Ok(Some(item)) => Some(Ok(item)),
-                    Ok(None) => None,
-                    Err(err) => Some(Err(err)),
-                })
+                .filter_map(
+                    |entry| match build_filtered_tree_item(&entry.path(), root, query) {
+                        Ok(Some(item)) => Some(Ok(item)),
+                        Ok(None) => None,
+                        Err(err) => Some(Err(err)),
+                    },
+                )
                 .collect::<Result<Vec<_>>>()?
         };
 
         if direct_match || !children.is_empty() {
-            Ok(Some(TreeItem::new(id, label).expanded(true).children(children)))
+            Ok(Some(
+                TreeItem::new(id, label).expanded(true).children(children),
+            ))
         } else {
             Ok(None)
         }
@@ -366,6 +407,35 @@ mod tests {
             map_workspace_event(name_event(RenameMode::Any, &["note.md"])),
             WorkspaceEvent::Changed(PathBuf::from("note.md"))
         );
+    }
+
+    #[test]
+    fn selecting_file_expands_ancestor_directories() {
+        let workspace = TempWorkspace::new();
+        workspace.write("chapters/drafts/outline.md", "# Outline");
+
+        let mut state = workspace.state();
+        let selected_file = workspace.root.join("chapters/drafts/outline.md");
+
+        state.select_file(selected_file.clone());
+
+        assert_eq!(state.selected_file.as_ref(), Some(&selected_file));
+        assert!(state.expanded_dirs.contains(&workspace.root));
+        assert!(
+            state
+                .expanded_dirs
+                .contains(&workspace.root.join("chapters"))
+        );
+        assert!(
+            state
+                .expanded_dirs
+                .contains(&workspace.root.join("chapters/drafts"))
+        );
+
+        let items = state.tree_items().expect("tree should build");
+        assert_eq!(child_labels(&items[0]), vec!["chapters"]);
+        assert!(items[0].children[0].is_expanded());
+        assert!(items[0].children[0].children[0].is_expanded());
     }
 
     #[test]

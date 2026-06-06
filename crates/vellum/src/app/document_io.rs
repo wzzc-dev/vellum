@@ -64,12 +64,17 @@ impl VellumApp {
             return;
         }
 
-        self.workspace.selected_file = self
+        let selected_file = self
             .editor_snapshot
             .path
             .as_ref()
             .filter(|path| path.starts_with(&folder))
             .cloned();
+        if let Some(path) = selected_file {
+            self.workspace.select_file(path);
+        } else {
+            self.workspace.clear_selection();
+        }
         self.set_status(format!("Opened folder {}", folder.display()));
         self.refresh_tree(cx);
     }
@@ -106,6 +111,10 @@ impl VellumApp {
         for (i, tab) in self.tabs.iter().enumerate() {
             if tab.editor.read(cx).document_path() == Some(&path) {
                 self.switch_to_tab(i, window, cx);
+                self.workspace.select_file(path.clone());
+                self.remember_document_path(&path);
+                self.refresh_tree(cx);
+                cx.notify();
                 return;
             }
         }
@@ -123,15 +132,14 @@ impl VellumApp {
                 if let Some(root) = workspace_root_for_document_path(
                     self.app_state.workspace_root.as_deref(),
                     &path,
-                )
-                {
+                ) {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
                         if self.set_workspace_root(Some(root), cx) {
                             self.refresh_tree(cx);
                         }
                     }
                 }
-                self.workspace.selected_file = Some(path.clone());
+                self.workspace.select_file(path.clone());
                 self.remember_document_path(&path);
                 self.clear_status();
                 cx.notify();
@@ -169,15 +177,14 @@ impl VellumApp {
                 if let Some(root) = workspace_root_for_document_path(
                     self.app_state.workspace_root.as_deref(),
                     &path,
-                )
-                {
+                ) {
                     if self.app_state.workspace_root.as_ref() != Some(&root) {
                         if self.set_workspace_root(Some(root), cx) {
                             self.refresh_tree(cx);
                         }
                     }
                 }
-                self.workspace.selected_file = Some(path.clone());
+                self.workspace.select_file(path.clone());
                 self.remember_document_path(&path);
                 self.clear_status();
                 self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
@@ -207,7 +214,11 @@ impl VellumApp {
         self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
         self.subscribe_active_editor(window, cx);
 
-        self.workspace.selected_file = suggested_path;
+        if let Some(path) = suggested_path {
+            self.workspace.select_file(path);
+        } else {
+            self.workspace.clear_selection();
+        }
         self.clear_status();
         cx.notify();
     }
@@ -240,7 +251,7 @@ impl VellumApp {
             .document_path()
             .cloned();
         if let Some(path) = saved_path {
-            self.workspace.selected_file = Some(path.clone());
+            self.workspace.select_file(path.clone());
             self.remember_document_path(&path);
         }
         if self.workspace.root.is_some() {
@@ -281,7 +292,7 @@ impl VellumApp {
             }
         }
 
-        self.workspace.selected_file = Some(path.clone());
+        self.workspace.select_file(path.clone());
         self.remember_document_path(&path);
         if self.workspace.root.is_some() && !refreshed_tree {
             self.refresh_tree(cx);
@@ -436,7 +447,7 @@ impl VellumApp {
                         .as_ref()
                         .is_some_and(|selected_file| path_is_or_descends(selected_file, path))
                     {
-                        self.workspace.selected_file = None;
+                        self.workspace.clear_selection();
                     }
                 }
                 WorkspaceEvent::Relocated { from, to } => {
@@ -446,7 +457,7 @@ impl VellumApp {
                         .as_ref()
                         .and_then(|selected_file| relocated_path(selected_file, from, to))
                     {
-                        self.workspace.selected_file = Some(relocated_path);
+                        self.workspace.select_file(relocated_path);
                     }
                     self.persist_relocated_paths(from, to, active_path_before.as_deref());
                 }
@@ -761,7 +772,7 @@ impl VellumApp {
                         removed_path_matches_document(selected_file, &path, is_dir)
                     })
                 {
-                    self.workspace.selected_file = None;
+                    self.workspace.clear_selection();
                 }
                 self.refresh_tree(cx);
                 cx.notify();
@@ -890,7 +901,7 @@ impl VellumApp {
             .as_ref()
             .and_then(|selected_file| relocated_path(selected_file, &path, &new_path))
         {
-            self.workspace.selected_file = Some(relocated_selected_file);
+            self.workspace.select_file(relocated_selected_file);
         }
         self.persist_relocated_paths(&path, &new_path, active_path_before.as_deref());
 
@@ -973,7 +984,7 @@ impl VellumApp {
             .as_ref()
             .and_then(|selected_file| relocated_path(selected_file, &path, &new_path))
         {
-            self.workspace.selected_file = Some(relocated_selected_file);
+            self.workspace.select_file(relocated_selected_file);
         }
         self.persist_relocated_paths(&path, &new_path, active_path_before.as_deref());
 

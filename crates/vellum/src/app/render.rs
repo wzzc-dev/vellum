@@ -181,8 +181,14 @@ impl VellumApp {
                                                 let view = view.clone();
                                                 let path = path.clone();
                                                 move |_, window, cx| {
-                                                    if path.is_file() {
-                                                        if let Some(entity) = view.upgrade() {
+                                                    if let Some(entity) = view.upgrade() {
+                                                        if path.is_dir() {
+                                                            let _ = entity.update(cx, |this, cx| {
+                                                                this.workspace.toggle_dir(&path);
+                                                                this.refresh_tree(cx);
+                                                                cx.notify();
+                                                            });
+                                                        } else if path.is_file() {
                                                             let _ = entity.update(cx, |this, cx| {
                                                                 this.open_file_in_current_tab(
                                                                     path.clone(),
