@@ -7246,6 +7246,76 @@ mod tests {
     }
 
     #[test]
+    fn reload_conflict_replaces_buffer_with_disk_version() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(PathBuf::from("note.md")),
+                suggested_path: Some(PathBuf::from("note.md")),
+                text: "baseline\n".to_string(),
+                modified_at: Some(SystemTime::UNIX_EPOCH),
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::SyncDocumentState {
+            text: "local draft\n".to_string(),
+            selection: SelectionState::collapsed("local draft".len()),
+        });
+        controller.apply_disk_state(
+            PathBuf::from("note.md"),
+            "disk draft\n".to_string(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(5)),
+        );
+
+        let effects = controller.dispatch(EditCommand::ReloadConflict);
+        let snapshot = controller.snapshot();
+
+        assert!(effects.changed);
+        assert!(effects.selection_changed);
+        assert!(!snapshot.has_conflict);
+        assert!(!snapshot.dirty);
+        assert_eq!(snapshot.sync_state, SyncState::Clean);
+        assert_eq!(snapshot.document_text, "disk draft\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed(0));
+        assert_eq!(snapshot.status_message, "Reloaded disk version");
+    }
+
+    #[test]
+    fn keep_current_conflict_preserves_local_buffer_as_dirty() {
+        let mut controller = EditorController::new(
+            DocumentSource::Text {
+                path: Some(PathBuf::from("note.md")),
+                suggested_path: Some(PathBuf::from("note.md")),
+                text: "baseline\n".to_string(),
+                modified_at: Some(SystemTime::UNIX_EPOCH),
+            },
+            SyncPolicy::default(),
+        );
+
+        controller.dispatch(EditCommand::SyncDocumentState {
+            text: "local draft\n".to_string(),
+            selection: SelectionState::collapsed("local draft".len()),
+        });
+        controller.apply_disk_state(
+            PathBuf::from("note.md"),
+            "disk draft\n".to_string(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(5)),
+        );
+
+        let effects = controller.dispatch(EditCommand::KeepCurrentConflict);
+        let snapshot = controller.snapshot();
+
+        assert!(effects.changed);
+        assert!(!effects.selection_changed);
+        assert!(!snapshot.has_conflict);
+        assert!(snapshot.dirty);
+        assert_eq!(snapshot.sync_state, SyncState::Dirty);
+        assert_eq!(snapshot.document_text, "local draft\n");
+        assert_eq!(snapshot.selection, SelectionState::collapsed("local draft".len()));
+        assert_eq!(snapshot.status_message, "Keeping current changes");
+    }
+
+    #[test]
     fn insert_math_block_on_empty_line_places_cursor_in_content_area() {
         let mut controller = EditorController::new(
             DocumentSource::Text {
