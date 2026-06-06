@@ -1,3 +1,5 @@
+use std::{collections::HashMap, path::Path};
+
 use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
 use gpui_component::{
     Selectable, Sizable as _,
@@ -213,6 +215,7 @@ impl VellumApp {
     pub(super) fn render_app_menu(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let recent_files: Vec<PathBuf> = self.recent_files.iter().take(10).cloned().collect();
+        let recent_file_labels = recent_file_menu_labels(&recent_files);
 
         Button::new("app-menu")
             .icon(IconName::Menu)
@@ -247,26 +250,13 @@ impl VellumApp {
                     )
                     .when(!recent_files.is_empty(), |menu| {
                         let recent_files = recent_files.clone();
+                        let recent_file_labels = recent_file_labels.clone();
                         let mut menu = menu.separator();
                         for (i, path) in recent_files.iter().enumerate() {
-                            let name = path
-                                .file_name()
-                                .and_then(|n: &std::ffi::OsStr| n.to_str())
-                                .unwrap_or("Unknown")
-                                .to_string();
-                            let label = if i == 0 {
-                                format!("① {}", name)
-                            } else if i == 1 {
-                                format!("② {}", name)
-                            } else if i == 2 {
-                                format!("③ {}", name)
-                            } else if i == 3 {
-                                format!("④ {}", name)
-                            } else if i == 4 {
-                                format!("⑤ {}", name)
-                            } else {
-                                format!("{}", name)
-                            };
+                            let label = recent_file_labels
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_else(|| numbered_recent_file_label(i, "Unknown"));
                             let path = path.clone();
                             let view = view.clone();
                             menu = menu.item(PopupMenuItem::new(label).on_click(
@@ -600,5 +590,125 @@ impl VellumApp {
                     }
                 })
             }))
+    }
+}
+
+fn recent_file_menu_labels(paths: &[PathBuf]) -> Vec<String> {
+    let mut name_counts = HashMap::new();
+    for path in paths {
+        *name_counts.entry(recent_file_name(path)).or_insert(0usize) += 1;
+    }
+
+    paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let name = recent_file_name(path);
+            let display_name = if name_counts.get(&name).copied().unwrap_or_default() > 1 {
+                disambiguated_recent_file_name(path, paths)
+            } else {
+                name
+            };
+            numbered_recent_file_label(index, &display_name)
+        })
+        .collect()
+}
+
+fn numbered_recent_file_label(index: usize, name: &str) -> String {
+    match index {
+        0 => format!("① {name}"),
+        1 => format!("② {name}"),
+        2 => format!("③ {name}"),
+        3 => format!("④ {name}"),
+        4 => format!("⑤ {name}"),
+        _ => name.to_string(),
+    }
+}
+
+fn recent_file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown")
+        .to_string()
+}
+
+fn disambiguated_recent_file_name(path: &Path, paths: &[PathBuf]) -> String {
+    let target_components = display_path_components(path);
+    if target_components.len() < 2 {
+        return path.to_string_lossy().replace('\\', "/");
+    }
+
+    for suffix_len in 2..=target_components.len() {
+        let candidate = target_components[target_components.len() - suffix_len..].join("/");
+        let matches = paths
+            .iter()
+            .filter(|other| {
+                let components = display_path_components(other);
+                components.len() >= suffix_len
+                    && components[components.len() - suffix_len..].join("/") == candidate
+            })
+            .count();
+        if matches == 1 {
+            return candidate;
+        }
+    }
+
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn display_path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            std::path::Component::Prefix(prefix) => {
+                Some(prefix.as_os_str().to_string_lossy().into_owned())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_file_labels_use_names_when_unique() {
+        let labels = recent_file_menu_labels(&[
+            PathBuf::from("/notes/project/draft.md"),
+            PathBuf::from("/notes/project/research.md"),
+        ]);
+
+        assert_eq!(labels, vec!["① draft.md", "② research.md"]);
+    }
+
+    #[test]
+    fn recent_file_labels_disambiguate_duplicate_names() {
+        let labels = recent_file_menu_labels(&[
+            PathBuf::from("/notes/project/draft.md"),
+            PathBuf::from("/notes/archive/draft.md"),
+            PathBuf::from("/notes/project/summary.md"),
+        ]);
+
+        assert_eq!(
+            labels,
+            vec!["① project/draft.md", "② archive/draft.md", "③ summary.md"]
+        );
+    }
+
+    #[test]
+    fn recent_file_labels_extend_suffix_until_duplicate_names_are_unique() {
+        let labels = recent_file_menu_labels(&[
+            PathBuf::from("/notes/client-a/project/draft.md"),
+            PathBuf::from("/notes/client-b/project/draft.md"),
+        ]);
+
+        assert_eq!(
+            labels,
+            vec![
+                "① client-a/project/draft.md",
+                "② client-b/project/draft.md"
+            ]
+        );
     }
 }
