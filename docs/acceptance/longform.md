@@ -96,6 +96,12 @@ $$
 \binom{n}{k} = {n \choose k} = \frac{n!}{k!(n-k)!}
 $$
 
+Accent and brace math should keep annotated variables readable in preview and export:
+
+$$
+\hat{x} + \vec{v} + \dot{y} + \underbrace{a + b}_{group}
+$$
+
 ## Mermaid Diagrams
 
 ```mermaid

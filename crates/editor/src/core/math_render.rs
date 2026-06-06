@@ -81,6 +81,10 @@ pub enum MathNode {
     Overline {
         content: Box<MathNode>,
     },
+    Accent {
+        content: Box<MathNode>,
+        accent: MathAccent,
+    },
     Matrix {
         rows: Vec<Vec<MathNode>>,
     },
@@ -92,6 +96,19 @@ pub enum MathNode {
     Cases {
         rows: Vec<Vec<MathNode>>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathAccent {
+    Hat,
+    Tilde,
+    VectorRight,
+    VectorLeft,
+    Dot,
+    DoubleDot,
+    Underline,
+    Overbrace,
+    Underbrace,
 }
 
 pub fn parse_math(source: &str) -> MathNodeTree {
@@ -343,6 +360,15 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
                 end,
             )
         }
+        "hat" | "widehat" => parse_accent_command(chars, i, MathAccent::Hat),
+        "tilde" | "widetilde" => parse_accent_command(chars, i, MathAccent::Tilde),
+        "vec" | "overrightarrow" => parse_accent_command(chars, i, MathAccent::VectorRight),
+        "overleftarrow" => parse_accent_command(chars, i, MathAccent::VectorLeft),
+        "dot" => parse_accent_command(chars, i, MathAccent::Dot),
+        "ddot" => parse_accent_command(chars, i, MathAccent::DoubleDot),
+        "underline" => parse_accent_command(chars, i, MathAccent::Underline),
+        "overbrace" => parse_accent_command(chars, i, MathAccent::Overbrace),
+        "underbrace" => parse_accent_command(chars, i, MathAccent::Underbrace),
         "text" | "mathrm" | "textup" => {
             let (content, end) = parse_single_arg(chars, i);
             let text = node_to_text(&content);
@@ -384,6 +410,21 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
             }
         }
     }
+}
+
+fn parse_accent_command(
+    chars: &[char],
+    start: usize,
+    accent: MathAccent,
+) -> (Vec<MathNode>, usize) {
+    let (content, end) = parse_single_arg(chars, start);
+    (
+        vec![MathNode::Accent {
+            content: Box::new(content),
+            accent,
+        }],
+        end,
+    )
 }
 
 fn peek_command_name(chars: &[char], start: usize) -> Option<(String, usize)> {
@@ -651,6 +692,10 @@ pub fn node_to_text(node: &MathNode) -> String {
             let text = node_to_text(content);
             format!("‾{}", text)
         }
+        MathNode::Accent { content, accent } => {
+            let text = node_to_text(content);
+            accent_to_text(*accent, &text)
+        }
         MathNode::Matrix { rows } => {
             matrix_rows_to_text(rows)
         }
@@ -660,6 +705,29 @@ pub fn node_to_text(node: &MathNode) -> String {
         MathNode::Cases { rows } => {
             format!("{{ {} }}", cases_rows_to_text(rows))
         }
+    }
+}
+
+fn accent_to_text(accent: MathAccent, text: &str) -> String {
+    match accent {
+        MathAccent::Hat => single_char_accent_or_named(text, "\u{0302}", "hat"),
+        MathAccent::Tilde => single_char_accent_or_named(text, "\u{0303}", "tilde"),
+        MathAccent::VectorRight => single_char_accent_or_named(text, "\u{20D7}", "vec"),
+        MathAccent::VectorLeft => single_char_accent_or_named(text, "\u{20D6}", "overleftarrow"),
+        MathAccent::Dot => single_char_accent_or_named(text, "\u{0307}", "dot"),
+        MathAccent::DoubleDot => single_char_accent_or_named(text, "\u{0308}", "ddot"),
+        MathAccent::Underline => single_char_accent_or_named(text, "\u{0332}", "underline"),
+        MathAccent::Overbrace => format!("⏞({})", text.trim()),
+        MathAccent::Underbrace => format!("⏟({})", text.trim()),
+    }
+}
+
+fn single_char_accent_or_named(text: &str, combining_mark: &str, name: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() == 1 {
+        format!("{trimmed}{combining_mark}")
+    } else {
+        format!("{name}({trimmed})")
     }
 }
 
@@ -1264,6 +1332,51 @@ mod tests {
         let tree = parse_math("\\overline{AB}");
         let text = math_tree_to_display_text(&tree);
         assert!(text.contains("AB"));
+    }
+
+    #[test]
+    fn parses_hat_accent() {
+        let tree = parse_math("\\hat{x}");
+        assert_eq!(tree.nodes.len(), 1);
+        match &tree.nodes[0] {
+            MathNode::Accent { content, accent } => {
+                assert_eq!(**content, MathNode::Text("x".to_string()));
+                assert_eq!(*accent, MathAccent::Hat);
+            }
+            _ => panic!("expected accent"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "x\u{0302}");
+    }
+
+    #[test]
+    fn display_text_for_vector_and_dot_accents() {
+        let tree = parse_math("\\vec{v} + \\dot{x} + \\ddot{y}");
+        let text = math_tree_to_display_text(&tree);
+
+        assert!(text.contains("v\u{20D7}"));
+        assert!(text.contains("x\u{0307}"));
+        assert!(text.contains("y\u{0308}"));
+    }
+
+    #[test]
+    fn display_text_for_named_multi_character_accent() {
+        let tree = parse_math("\\widehat{AB}");
+        assert_eq!(math_tree_to_display_text(&tree), "hat(AB)");
+    }
+
+    #[test]
+    fn display_text_for_underbrace_annotation() {
+        let tree = parse_math("\\underbrace{x + y}_{sum}");
+        let text = math_tree_to_display_text(&tree);
+
+        assert!(text.contains("⏟(x + y)"));
+        assert!(text.contains("_sum"));
+    }
+
+    #[test]
+    fn display_text_for_overbrace_annotation() {
+        let tree = parse_math("\\overbrace{a+b}^{n}");
+        assert_eq!(math_tree_to_display_text(&tree), "⏞(a+b)ⁿ");
     }
 
     #[test]
