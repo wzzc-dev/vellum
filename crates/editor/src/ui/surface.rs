@@ -162,6 +162,7 @@ struct HtmlImagePreview {
 struct MermaidPreview {
     direction: Option<String>,
     edges: Vec<MermaidEdge>,
+    subgraphs: Vec<MermaidSubgraph>,
     participants: Vec<MermaidParticipant>,
     messages: Vec<MermaidSequenceMessage>,
     notes: Vec<MermaidSequenceNote>,
@@ -186,6 +187,12 @@ struct MermaidEdge {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MermaidNode {
+    id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSubgraph {
     id: String,
     label: String,
 }
@@ -2450,7 +2457,12 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
             div()
                 .text_sm()
                 .text_color(palette.muted_text_color.opacity(0.7))
-                .child(format!("{} nodes, {} links", nodes.len(), preview.edges.len())),
+                .child(format!(
+                    "{} nodes, {} links, {} subgraphs",
+                    nodes.len(),
+                    preview.edges.len(),
+                    preview.subgraphs.len()
+                )),
         );
     }
 
@@ -2524,6 +2536,22 @@ fn has_mermaid_sequence_preview(preview: &MermaidPreview) -> bool {
 fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
     let direction = mermaid_graph_direction(preview);
     let mut graph = div().w_full().flex().flex_col().gap_2();
+    if !preview.subgraphs.is_empty() {
+        let mut subgraphs = div().w_full().flex().flex_wrap().gap_1();
+        for subgraph in preview.subgraphs.iter().take(6) {
+            subgraphs = subgraphs.child(render_mermaid_chip(
+                format!("subgraph: {}", subgraph.label),
+                palette,
+            ));
+        }
+        if preview.subgraphs.len() > 6 {
+            subgraphs = subgraphs.child(render_mermaid_chip(
+                format!("+{} subgraphs", preview.subgraphs.len() - 6),
+                palette,
+            ));
+        }
+        graph = graph.child(subgraphs);
+    }
     for edge in preview.edges.iter().take(8) {
         graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
     }
@@ -2881,6 +2909,11 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
 
         if let Some(direction) = mermaid_direction(line) {
             preview.direction = Some(direction);
+            continue;
+        }
+
+        if let Some(subgraph) = parse_mermaid_subgraph(line) {
+            preview.subgraphs.push(subgraph);
             continue;
         }
 
@@ -3249,6 +3282,15 @@ fn is_mermaid_non_edge_directive(line: &str) -> bool {
         || lower.starts_with("click ")
         || lower.starts_with("acctitle")
         || lower.starts_with("accdescr")
+}
+
+fn parse_mermaid_subgraph(line: &str) -> Option<MermaidSubgraph> {
+    let rest = strip_ascii_prefix(line, "subgraph ")?.trim();
+    let node = parse_mermaid_node(rest)?;
+    (!node.id.is_empty() || !node.label.is_empty()).then_some(MermaidSubgraph {
+        id: node.id,
+        label: node.label,
+    })
 }
 
 fn parse_mermaid_edges(line: &str) -> Vec<MermaidEdge> {
@@ -5141,6 +5183,7 @@ mod tests {
         MermaidParticipant, MermaidSequenceFragment, MermaidSequenceFragmentKind,
         MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
         MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement,
+        MermaidSubgraph,
         MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
@@ -5689,6 +5732,36 @@ mod tests {
                     label: Some("publish".to_string()),
                 },
             ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_flowchart_subgraphs() {
+        let preview = parse_mermaid_preview(
+            "flowchart LR\n  subgraph Workspace[Workspace files]\n    Draft[Draft] --> Save[Save]\n  end\n",
+        );
+
+        assert_eq!(
+            preview.subgraphs,
+            vec![MermaidSubgraph {
+                id: "Workspace".to_string(),
+                label: "Workspace files".to_string(),
+            }]
+        );
+        assert_eq!(
+            preview.edges,
+            vec![MermaidEdge {
+                from: MermaidNode {
+                    id: "Draft".to_string(),
+                    label: "Draft".to_string(),
+                },
+                to: MermaidNode {
+                    id: "Save".to_string(),
+                    label: "Save".to_string(),
+                },
+                label: None,
+            }]
         );
         assert_eq!(preview.unsupported_lines, 0);
     }

@@ -13,6 +13,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
 - Confirm the aligned, piecewise, binomial, and accent math blocks remain readable when the cursor leaves them.
 - Confirm the Mermaid blocks show structured previews when the cursor leaves them and return to source editing when clicked.
+- Confirm the Mermaid flowchart subgraph label remains visible in preview.
 - Confirm the Mermaid sequence note, loop fragment, and lifecycle events remain visible in preview.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
@@ -42,6 +43,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Export HTML from the app.
 - Use Export and Open for Print from the app.
 - Confirm the exported HTML opens in a browser with the table of contents, table, code block, images, math, Mermaid diagrams, and footnote present.
+- Confirm the exported flowchart includes the subgraph label when browser Mermaid rendering is unavailable.
 - Confirm the exported sequence diagram includes the note, loop fragment, and lifecycle events when browser Mermaid rendering is unavailable.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
 - Confirm the local appendix links, including the raw HTML link, point into the generated assets folder and open from the exported HTML.

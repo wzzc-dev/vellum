@@ -1209,6 +1209,7 @@ fn parse_static_mermaid_diagram(source: &str) -> Option<StaticMermaidDiagram> {
     let mut nodes = Vec::new();
     let mut node_indices = HashMap::new();
     let mut edges = Vec::new();
+    let mut subgraphs = Vec::new();
 
     for raw_line in source.lines() {
         let line = raw_line.trim().trim_end_matches(';').trim();
@@ -1218,6 +1219,11 @@ fn parse_static_mermaid_diagram(source: &str) -> Option<StaticMermaidDiagram> {
 
         if let Some(parsed_direction) = static_mermaid_direction(line) {
             direction = parsed_direction;
+            continue;
+        }
+
+        if let Some(subgraph) = parse_static_mermaid_subgraph(line) {
+            subgraphs.push(subgraph);
             continue;
         }
 
@@ -1242,6 +1248,7 @@ fn parse_static_mermaid_diagram(source: &str) -> Option<StaticMermaidDiagram> {
         nodes,
         node_indices,
         edges,
+        subgraphs,
     })
 }
 
@@ -1268,12 +1275,17 @@ fn render_static_mermaid_svg(diagram: StaticMermaidDiagram, marker_id: String) -
     let margin = 28usize;
     let count = diagram.nodes.len().max(1);
     let horizontal = diagram.direction == StaticMermaidDirection::LeftRight;
+    let subgraph_offset = if diagram.subgraphs.is_empty() {
+        0
+    } else {
+        diagram.subgraphs.len() * 34 + 12
+    };
     let width = if horizontal {
         margin * 2 + node_width * count + gap * count.saturating_sub(1)
     } else {
         margin * 2 + node_width
     };
-    let height = if horizontal {
+    let height = subgraph_offset + if horizontal {
         margin * 2 + node_height
     } else {
         margin * 2 + node_height * count + gap * count.saturating_sub(1)
@@ -1283,6 +1295,8 @@ fn render_static_mermaid_svg(diagram: StaticMermaidDiagram, marker_id: String) -
         "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">\
 <defs><marker id=\"{marker_id}\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"var(--muted)\"/></marker></defs>"
     );
+
+    render_static_mermaid_subgraphs(&mut out, &diagram.subgraphs, width, margin);
 
     for edge in &diagram.edges {
         let Some(from_index) = diagram.node_indices.get(&edge.from.id).copied() else {
@@ -1299,6 +1313,7 @@ fn render_static_mermaid_svg(diagram: StaticMermaidDiagram, marker_id: String) -
             node_height,
             gap,
             margin,
+            subgraph_offset,
         );
         out.push_str(&format!(
             "<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#{marker_id})\"/>"
@@ -1316,8 +1331,15 @@ fn render_static_mermaid_svg(diagram: StaticMermaidDiagram, marker_id: String) -
     }
 
     for (index, node) in diagram.nodes.iter().enumerate() {
-        let (x, y) =
-            static_mermaid_node_origin(index, horizontal, node_width, node_height, gap, margin);
+        let (x, y) = static_mermaid_node_origin(
+            index,
+            horizontal,
+            node_width,
+            node_height,
+            gap,
+            margin,
+            subgraph_offset,
+        );
         out.push_str(&render_static_mermaid_node(
             node,
             x,
@@ -1339,11 +1361,26 @@ fn static_mermaid_edge_points(
     node_height: usize,
     gap: usize,
     margin: usize,
+    subgraph_offset: usize,
 ) -> (usize, usize, usize, usize) {
-    let (from_x, from_y) =
-        static_mermaid_node_origin(from_index, horizontal, node_width, node_height, gap, margin);
-    let (to_x, to_y) =
-        static_mermaid_node_origin(to_index, horizontal, node_width, node_height, gap, margin);
+    let (from_x, from_y) = static_mermaid_node_origin(
+        from_index,
+        horizontal,
+        node_width,
+        node_height,
+        gap,
+        margin,
+        subgraph_offset,
+    );
+    let (to_x, to_y) = static_mermaid_node_origin(
+        to_index,
+        horizontal,
+        node_width,
+        node_height,
+        gap,
+        margin,
+        subgraph_offset,
+    );
 
     if horizontal {
         (
@@ -1369,11 +1406,42 @@ fn static_mermaid_node_origin(
     node_height: usize,
     gap: usize,
     margin: usize,
+    subgraph_offset: usize,
 ) -> (usize, usize) {
     if horizontal {
-        (margin + index * (node_width + gap), margin)
+        (
+            margin + index * (node_width + gap),
+            margin + subgraph_offset,
+        )
     } else {
-        (margin, margin + index * (node_height + gap))
+        (
+            margin,
+            margin + subgraph_offset + index * (node_height + gap),
+        )
+    }
+}
+
+fn render_static_mermaid_subgraphs(
+    out: &mut String,
+    subgraphs: &[StaticMermaidSubgraph],
+    width: usize,
+    margin: usize,
+) {
+    let rect_width = width.saturating_sub(margin * 2);
+    for (index, subgraph) in subgraphs.iter().enumerate() {
+        let x = margin;
+        let y = margin + index * 34;
+        let label = if subgraph.id == subgraph.label {
+            subgraph.label.clone()
+        } else {
+            format!("{} ({})", subgraph.label, subgraph.id)
+        };
+        out.push_str(&format!(
+            "<g class=\"mermaid-subgraph\"><rect x=\"{x}\" y=\"{y}\" width=\"{rect_width}\" height=\"28\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\" stroke-dasharray=\"4 5\"/><text x=\"{}\" y=\"{}\" text-anchor=\"start\" font-size=\"12\" fill=\"var(--muted)\">{}</text></g>",
+            x + 12,
+            y + 18,
+            escape_html(&label)
+        ));
     }
 }
 
@@ -1472,6 +1540,15 @@ fn static_mermaid_non_edge_directive(line: &str) -> bool {
         || lower.starts_with("click ")
         || lower.starts_with("acctitle")
         || lower.starts_with("accdescr")
+}
+
+fn parse_static_mermaid_subgraph(line: &str) -> Option<StaticMermaidSubgraph> {
+    let rest = strip_static_ascii_prefix(line, "subgraph ")?.trim();
+    let node = parse_static_mermaid_node(rest)?;
+    (!node.id.is_empty() || !node.label.is_empty()).then_some(StaticMermaidSubgraph {
+        id: node.id,
+        label: node.label,
+    })
 }
 
 fn parse_static_mermaid_edges(line: &str) -> Vec<StaticMermaidEdge> {
@@ -2286,10 +2363,17 @@ struct StaticMermaidDiagram {
     nodes: Vec<StaticMermaidNode>,
     node_indices: HashMap<String, usize>,
     edges: Vec<StaticMermaidEdge>,
+    subgraphs: Vec<StaticMermaidSubgraph>,
 }
 
 #[derive(Clone)]
 struct StaticMermaidNode {
+    id: String,
+    label: String,
+}
+
+#[derive(Clone)]
+struct StaticMermaidSubgraph {
     id: String,
     label: String,
 }
@@ -3395,6 +3479,8 @@ mod tests {
         assert!(html.contains("math-rendered"));
         assert!(html.contains("mermaid.esm.min.mjs"));
         assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("class=\"mermaid-subgraph\""));
+        assert!(html.contains(">Writing workflow (Writing)</text>"));
         assert!(html.contains(">Export HTML<"));
         assert!(html.contains("Mermaid sequence diagram preview"));
         assert!(html.contains("class=\"mermaid-lifecycle\""));
@@ -4168,6 +4254,21 @@ mod tests {
         assert!(html.contains(">Print or save PDF<"));
         assert!(html.contains("mermaid-render-target"));
         assert!(html.contains("mermaid-rendered"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_flowchart_subgraph_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nflowchart LR\n  subgraph Writing[Writing workflow]\n    Draft[Draft] --> Save[Save]\n  end\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("class=\"mermaid-subgraph\""));
+        assert!(html.contains(">Writing workflow (Writing)</text>"));
+        assert!(html.contains(">Draft<"));
+        assert!(html.contains(">Save<"));
     }
 
     #[test]

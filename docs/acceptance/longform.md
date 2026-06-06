@@ -106,9 +106,11 @@ $$
 
 ```mermaid
 flowchart TD
-  Draft[Draft note] --> Save[Save and reopen]
-  Save --> Export[Export HTML]
-  Export --> Print[Print or save PDF]
+  subgraph Writing[Writing workflow]
+    Draft[Draft note] --> Save[Save and reopen]
+    Save --> Export[Export HTML]
+    Export --> Print[Print or save PDF]
+  end
 ```
 
 ```mermaid
