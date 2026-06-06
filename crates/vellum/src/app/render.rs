@@ -906,6 +906,7 @@ impl VellumApp {
 
         let theme = cx.theme();
         let current_theme = self.preferences.syntax_theme;
+        let current_view_mode = self.preferences.view_mode;
         let sidebar_visible = self.sidebar_visible;
         let status_bar_pinned = self.status_bar_pinned;
         let focus_mode = self.focus_mode;
@@ -1038,6 +1039,59 @@ impl VellumApp {
                                                 )
                                                 .into_any_element(),
                                             ]),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("Default View"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("preferences-view-live-preview")
+                                                    .label("Live Preview")
+                                                    .compact()
+                                                    .selected(
+                                                        current_view_mode
+                                                            == editor::EditorViewMode::LivePreview,
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.set_view_mode_preference(
+                                                                editor::EditorViewMode::LivePreview,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )),
+                                            )
+                                            .child(
+                                                Button::new("preferences-view-source")
+                                                    .label("Source")
+                                                    .compact()
+                                                    .selected(
+                                                        current_view_mode
+                                                            == editor::EditorViewMode::Source,
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.set_view_mode_preference(
+                                                                editor::EditorViewMode::Source,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )),
+                                            ),
                                     ),
                             )
                             .child(

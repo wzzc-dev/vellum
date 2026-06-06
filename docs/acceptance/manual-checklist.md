@@ -67,5 +67,5 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 ## Preferences
 
 - Open Preferences from the app.
-- Change the syntax theme, editor font size, sidebar visibility, status bar, focus mode, typewriter mode, focus highlight, and image asset folder.
+- Change the syntax theme, default view mode, editor font size, sidebar visibility, status bar, focus mode, typewriter mode, focus highlight, and image asset folder.
 - Restart the app and confirm the preferences persist.

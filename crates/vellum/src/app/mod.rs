@@ -438,6 +438,7 @@ impl VellumApp {
             editor.set_image_asset_dir(preferences.image_asset_dir.clone());
             editor.set_typewriter_mode(preferences.typewriter_mode, window, cx);
             editor.set_focus_highlight_mode(preferences.focus_highlight_mode, cx);
+            editor.set_view_mode(preferences.view_mode, window, cx);
         });
         let focus_handle = cx.focus_handle();
         let editor_snapshot = editor.read(cx).snapshot();
@@ -454,6 +455,7 @@ impl VellumApp {
             cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
                 EditorEvent::Changed(snapshot) => {
                     this.editor_snapshot = snapshot.clone();
+                    this.remember_view_mode_preference(snapshot.view_mode);
                     if !snapshot.status_message.is_empty() {
                         this.shell_status_message.clear();
                     }
@@ -643,6 +645,7 @@ impl VellumApp {
             editor.set_image_asset_dir(self.preferences.image_asset_dir.clone());
             editor.set_typewriter_mode(self.preferences.typewriter_mode, window, cx);
             editor.set_focus_highlight_mode(self.preferences.focus_highlight_mode, cx);
+            editor.set_view_mode(self.preferences.view_mode, window, cx);
         });
     }
 
@@ -733,6 +736,7 @@ impl VellumApp {
                 cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::Changed(snapshot) => {
                         this.editor_snapshot = snapshot.clone();
+                        this.remember_view_mode_preference(snapshot.view_mode);
                         if !snapshot.status_message.is_empty() {
                             this.shell_status_message.clear();
                         }
@@ -819,6 +823,27 @@ impl VellumApp {
         if changed {
             self.save_preferences();
         }
+        cx.notify();
+    }
+
+    fn remember_view_mode_preference(&mut self, view_mode: editor::EditorViewMode) {
+        if self.preferences.view_mode == view_mode {
+            return;
+        }
+        self.preferences.view_mode = view_mode;
+        self.save_preferences();
+    }
+
+    fn set_view_mode_preference(
+        &mut self,
+        view_mode: editor::EditorViewMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remember_view_mode_preference(view_mode);
+        self.active_editor_entity().update(cx, |editor, cx| {
+            editor.set_view_mode(view_mode, window, cx);
+        });
         cx.notify();
     }
 

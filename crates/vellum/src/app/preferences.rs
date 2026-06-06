@@ -1,13 +1,14 @@
 use std::{fs, path::Component};
 
 use anyhow::Result;
-use editor::{DEFAULT_BODY_FONT_SIZE, SyntaxTheme, normalize_body_font_size};
+use editor::{DEFAULT_BODY_FONT_SIZE, EditorViewMode, SyntaxTheme, normalize_body_font_size};
 
 use crate::path::preferences_file_path;
 
 #[derive(Debug, Clone)]
 pub(super) struct AppPreferences {
     pub syntax_theme: SyntaxTheme,
+    pub view_mode: EditorViewMode,
     pub sidebar_visible: bool,
     pub status_bar_pinned: bool,
     pub focus_mode: bool,
@@ -21,6 +22,7 @@ impl Default for AppPreferences {
     fn default() -> Self {
         Self {
             syntax_theme: SyntaxTheme::Default,
+            view_mode: EditorViewMode::LivePreview,
             sidebar_visible: true,
             status_bar_pinned: false,
             focus_mode: false,
@@ -84,6 +86,11 @@ fn parse_preferences(raw: &str) -> AppPreferences {
                     preferences.syntax_theme = theme;
                 }
             }
+            "view_mode" => {
+                if let Some(view_mode) = parse_view_mode(value) {
+                    preferences.view_mode = view_mode;
+                }
+            }
             "sidebar_visible" => update_bool(value, &mut preferences.sidebar_visible),
             "status_bar_pinned" => update_bool(value, &mut preferences.status_bar_pinned),
             "focus_mode" => update_bool(value, &mut preferences.focus_mode),
@@ -103,8 +110,9 @@ fn parse_preferences(raw: &str) -> AppPreferences {
 
 fn serialize_preferences(preferences: &AppPreferences) -> String {
     format!(
-        "syntax_theme={}\nsidebar_visible={}\nstatus_bar_pinned={}\nfocus_mode={}\ntypewriter_mode={}\nfocus_highlight_mode={}\nimage_asset_dir={}\nfont_size={}\n",
+        "syntax_theme={}\nview_mode={}\nsidebar_visible={}\nstatus_bar_pinned={}\nfocus_mode={}\ntypewriter_mode={}\nfocus_highlight_mode={}\nimage_asset_dir={}\nfont_size={}\n",
         theme_key(preferences.syntax_theme),
+        view_mode_key(preferences.view_mode),
         preferences.sidebar_visible,
         preferences.status_bar_pinned,
         preferences.focus_mode,
@@ -113,6 +121,23 @@ fn serialize_preferences(preferences: &AppPreferences) -> String {
         preferences.image_asset_dir,
         preferences.font_size,
     )
+}
+
+fn parse_view_mode(value: &str) -> Option<EditorViewMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "live_preview" | "live-preview" | "livepreview" | "preview" => {
+            Some(EditorViewMode::LivePreview)
+        }
+        "source" | "source_mode" | "source-mode" => Some(EditorViewMode::Source),
+        _ => None,
+    }
+}
+
+fn view_mode_key(view_mode: EditorViewMode) -> &'static str {
+    match view_mode {
+        EditorViewMode::LivePreview => "live_preview",
+        EditorViewMode::Source => "source",
+    }
 }
 
 fn parse_theme(value: &str) -> Option<SyntaxTheme> {
@@ -171,9 +196,10 @@ mod tests {
     #[test]
     fn parses_known_preferences_and_ignores_unknown_keys() {
         let preferences = parse_preferences(
-            "syntax_theme=github\nsidebar_visible=false\nstatus_bar_pinned=yes\nfocus_mode=off\ntypewriter_mode=1\nfocus_highlight_mode=true\nimage_asset_dir=media/images\nfont_size=99\nunknown=value\n",
+            "syntax_theme=github\nview_mode=source\nsidebar_visible=false\nstatus_bar_pinned=yes\nfocus_mode=off\ntypewriter_mode=1\nfocus_highlight_mode=true\nimage_asset_dir=media/images\nfont_size=99\nunknown=value\n",
         );
         assert_eq!(preferences.syntax_theme, SyntaxTheme::GitHub);
+        assert_eq!(preferences.view_mode, EditorViewMode::Source);
         assert!(!preferences.sidebar_visible);
         assert!(preferences.status_bar_pinned);
         assert!(!preferences.focus_mode);
@@ -187,6 +213,7 @@ mod tests {
     fn serializes_preferences_as_stable_key_value_lines() {
         let preferences = AppPreferences {
             syntax_theme: SyntaxTheme::Dracula,
+            view_mode: EditorViewMode::Source,
             sidebar_visible: false,
             status_bar_pinned: true,
             focus_mode: false,
@@ -197,6 +224,7 @@ mod tests {
         };
         let raw = serialize_preferences(&preferences);
         assert!(raw.contains("syntax_theme=dracula\n"));
+        assert!(raw.contains("view_mode=source\n"));
         assert!(raw.contains("sidebar_visible=false\n"));
         assert!(raw.contains("typewriter_mode=true\n"));
         assert!(raw.contains("image_asset_dir=media\n"));
@@ -217,5 +245,13 @@ mod tests {
         assert_eq!(normalize_image_asset_dir("media/images"), "media/images");
         assert_eq!(normalize_image_asset_dir("/tmp/assets"), "assets");
         assert_eq!(normalize_image_asset_dir(""), "assets");
+    }
+
+    #[test]
+    fn parses_view_mode_aliases() {
+        assert_eq!(parse_view_mode("live-preview"), Some(EditorViewMode::LivePreview));
+        assert_eq!(parse_view_mode("preview"), Some(EditorViewMode::LivePreview));
+        assert_eq!(parse_view_mode("source-mode"), Some(EditorViewMode::Source));
+        assert_eq!(parse_view_mode("unknown"), None);
     }
 }
