@@ -179,6 +179,21 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
             "longform sample should cover math source {math_source}"
         );
     }
+    for math_visible_text in [
+        "E = mc\u{00b2}",
+        "\u{222b}\u{2080}\u{00b9} x\u{00b2} dx",
+        "a\u{00b2} + b\u{00b2} = c\u{00b2}; E = mc\u{00b2}",
+        "{ x\u{00b2} if x > 0; 0 if otherwise }",
+        "C(n, k) = C(n, k) = n!/k!(n-k)!",
+        "x\u{0302} + v\u{20D7} + y\u{0307} + \u{23DF}(a + b)_group",
+        "a b; c d",
+        "x = y + 1 z = x - 1",
+    ] {
+        assert!(
+            map.visible_text.contains(math_visible_text),
+            "longform live preview should include readable math text {math_visible_text}"
+        );
+    }
     assert!(
         map.blocks.iter().any(|block| matches!(
             block.embedded,
