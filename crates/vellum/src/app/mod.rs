@@ -5,17 +5,19 @@ use std::{
 
 use anyhow::Result;
 use editor::{
-    AlignTableColumnCenter, AlignTableColumnLeft, AlignTableColumnRight,
-    BoldSelection, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit, FocusNextBlock,
-    FocusPrevBlock, InsertCallout, InsertCodeFence, InsertFootnote, InsertFrontMatter,
-    InsertHorizontalRule, InsertHtmlBlock, InsertImage, InsertInlineMath, InsertMathBlock, InsertMermaidDiagram,
-    InsertTable, InsertTableColumn, InsertTableRow, InsertToc, ItalicSelection, LinkSelection,
-    MarkdownEditor, PromoteBlock, RedoEdit, SecondaryEnter,
-    DeleteTableColumn, DeleteTableRow, ToggleBlockquote, ToggleBulletList, ToggleFocusHighlightMode, ToggleHeading1, ToggleHeading2,
-    ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6, ToggleHighlight, ToggleInlineCode,
-    ToggleOrderedList, ToggleParagraph, ToggleSourceMode, ToggleStrikethrough, ToggleSubscript,
-    ToggleSuperscript, ToggleTaskList, ToggleTypewriterMode, UndoEdit, bind_keys as bind_editor_keys,
+    AlignTableColumnCenter, AlignTableColumnLeft, AlignTableColumnRight, BoldSelection,
+    DeleteTableColumn, DeleteTableRow, DemoteBlock, EditorEvent, EditorSnapshot, ExitBlockEdit,
+    FocusNextBlock, FocusPrevBlock, InsertCallout, InsertCodeFence, InsertFootnote,
+    InsertFrontMatter, InsertHorizontalRule, InsertHtmlBlock, InsertImage, InsertInlineMath,
+    InsertMathBlock, InsertMermaidDiagram, InsertTable, InsertTableColumn, InsertTableRow,
+    InsertToc, ItalicSelection, LinkSelection, MarkdownEditor, PromoteBlock, RedoEdit,
+    SecondaryEnter, ToggleBlockquote, ToggleBulletList, ToggleFocusHighlightMode, ToggleHeading1,
+    ToggleHeading2, ToggleHeading3, ToggleHeading4, ToggleHeading5, ToggleHeading6,
+    ToggleHighlight, ToggleInlineCode, ToggleOrderedList, ToggleParagraph, ToggleSourceMode,
+    ToggleStrikethrough, ToggleSubscript, ToggleSuperscript, ToggleTaskList, ToggleTypewriterMode,
+    UndoEdit, bind_keys as bind_editor_keys,
 };
+use gpui::Focusable;
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyBinding, ParentElement, Render, Styled, Subscription, Timer, VisualContext, Window,
@@ -34,7 +36,10 @@ use gpui_component::{
     tree::TreeState,
 };
 use rfd::FileDialog;
-use workspace::{WorkspaceEvent, WorkspaceState, is_markdown_path};
+use workspace::{
+    QuickOpenItem, TreeSortMode, WorkspaceEvent, WorkspaceSearchOptions, WorkspaceSearchResult,
+    WorkspaceState, is_markdown_path,
+};
 
 mod command_palette;
 mod commands;
@@ -66,6 +71,9 @@ actions!(
         FindNextMatch,
         FindPreviousMatch,
         OpenFindReplacePanel,
+        OpenQuickly,
+        OpenGlobalSearch,
+        RefreshFileTree,
         ReplaceOne,
         ReplaceAll,
         CloseTab,
@@ -128,10 +136,20 @@ struct VellumApp {
     find_regex: bool,
     replace_visible: bool,
     replace_query: String,
+    quick_open_visible: bool,
+    quick_open_query: String,
+    quick_open_items: Vec<QuickOpenItem>,
+    quick_open_selected_index: usize,
+    global_search_visible: bool,
+    global_search_query: String,
+    global_search_results: Vec<WorkspaceSearchResult>,
+    global_search_selected_index: usize,
     file_filter: String,
     outline_filter: String,
     find_query_input: Entity<InputState>,
     replace_query_input: Entity<InputState>,
+    quick_open_input: Entity<InputState>,
+    global_search_input: Entity<InputState>,
     file_filter_input: Entity<InputState>,
     outline_filter_input: Entity<InputState>,
     goto_line_visible: bool,
@@ -189,9 +207,11 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-e", ExportHtml, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-p", ExportPrintHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-alt-p", ExportPrintHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-p", OpenQuickly, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-alt-f", OpenFindReplacePanel, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-shift-f", OpenGlobalSearch, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-g", FindNextMatch, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-g", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
@@ -199,7 +219,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-w", CloseTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-[", PreviousTab, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-shift-]", NextTab, Some(APP_CONTEXT)),
-        KeyBinding::new("cmd-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("cmd-alt-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
         KeyBinding::new("cmd-l", OpenGotoLine, None),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
@@ -212,13 +232,15 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveNow, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-shift-s", SaveAs, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-alt-e", ExportHtml, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-p", ExportPrintHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-alt-p", ExportPrintHtml, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-p", OpenQuickly, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-f", OpenFindPanel, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-h", OpenFindReplacePanel, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-shift-f", OpenGlobalSearch, Some(APP_CONTEXT)),
         KeyBinding::new("f3", FindNextMatch, Some(APP_CONTEXT)),
         KeyBinding::new("shift-f3", FindPreviousMatch, Some(APP_CONTEXT)),
         KeyBinding::new("escape", CloseFindPanel, Some(APP_CONTEXT)),
-        KeyBinding::new("ctrl-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
+        KeyBinding::new("ctrl-alt-shift-f", ToggleFocusMode, Some(APP_CONTEXT)),
         KeyBinding::new("ctrl-l", OpenGotoLine, None),
         KeyBinding::new("ctrl-shift-p", OpenCommandPalette, Some(APP_CONTEXT)),
     ]);
@@ -261,6 +283,18 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
     cx.on_action(move |_: &OpenPreferences, cx| {
         update_vellum_app_from_menu(window, cx, |this, window, cx| {
             this.open_preferences(window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &OpenQuickly, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.open_quickly(window, cx);
+        });
+    });
+    let window = main_window;
+    cx.on_action(move |_: &OpenGlobalSearch, cx| {
+        update_vellum_app_from_menu(window, cx, |this, window, cx| {
+            this.open_global_search(window, cx);
         });
     });
     let window = main_window;
@@ -385,6 +419,9 @@ fn install_app_menus(cx: &mut App, main_window: WindowHandle<Root>) {
         Menu {
             name: "Find".into(),
             items: vec![
+                MenuItem::action("Open Quickly", OpenQuickly),
+                MenuItem::action("Global Search", OpenGlobalSearch),
+                MenuItem::separator(),
                 MenuItem::action("Find", OpenFindPanel),
                 MenuItem::action("Find and Replace", OpenFindReplacePanel),
                 MenuItem::action("Find Next", FindNextMatch),
@@ -444,7 +481,12 @@ impl VellumApp {
         let editor_snapshot = editor.read(cx).snapshot();
         let find_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
         let replace_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Replace"));
-        let file_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files"));
+        let quick_open_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Open quickly..."));
+        let global_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search workspace..."));
+        let file_filter_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter files"));
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
         let goto_line_input = cx.new(|cx| InputState::new(window, cx).placeholder("Go to line"));
@@ -494,6 +536,28 @@ impl VellumApp {
             |this: &mut Self, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     this.replace_query = this.replace_query_input.read(cx).value().to_string();
+                }
+            },
+        );
+
+        let quick_open_input_subscription = cx.subscribe(
+            &quick_open_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let value = this.quick_open_input.read(cx).value();
+                    this.set_quick_open_query(value);
+                    cx.notify();
+                }
+            },
+        );
+
+        let global_search_input_subscription = cx.subscribe(
+            &global_search_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let value = this.global_search_input.read(cx).value();
+                    this.set_global_search_query(value);
+                    cx.notify();
                 }
             },
         );
@@ -572,10 +636,20 @@ impl VellumApp {
             find_regex: false,
             replace_visible: false,
             replace_query: String::new(),
+            quick_open_visible: false,
+            quick_open_query: String::new(),
+            quick_open_items: Vec::new(),
+            quick_open_selected_index: 0,
+            global_search_visible: false,
+            global_search_query: String::new(),
+            global_search_results: Vec::new(),
+            global_search_selected_index: 0,
             file_filter: String::new(),
             outline_filter: String::new(),
             find_query_input,
             replace_query_input,
+            quick_open_input,
+            global_search_input,
             file_filter_input,
             outline_filter_input,
             goto_line_visible: false,
@@ -587,6 +661,8 @@ impl VellumApp {
                 editor_subscription,
                 find_input_subscription,
                 replace_input_subscription,
+                quick_open_input_subscription,
+                global_search_input_subscription,
                 outline_input_subscription,
                 file_input_subscription,
                 goto_line_input_subscription,
@@ -783,11 +859,7 @@ impl VellumApp {
         cx.notify();
     }
 
-    fn set_image_asset_dir_preference(
-        &mut self,
-        value: impl AsRef<str>,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_image_asset_dir_preference(&mut self, value: impl AsRef<str>, cx: &mut Context<Self>) {
         let normalized = preferences::normalize_image_asset_dir(value.as_ref());
         if self.preferences.image_asset_dir == normalized {
             return;
@@ -888,6 +960,24 @@ impl VellumApp {
         self.refresh_find_matches();
     }
 
+    fn set_quick_open_query(&mut self, query: impl Into<String>) {
+        let query = query.into();
+        if self.quick_open_query == query {
+            return;
+        }
+        self.quick_open_query = query;
+        self.refresh_quick_open_items();
+    }
+
+    fn set_global_search_query(&mut self, query: impl Into<String>) {
+        let query = query.into();
+        if self.global_search_query == query {
+            return;
+        }
+        self.global_search_query = query;
+        self.refresh_global_search_results();
+    }
+
     fn set_outline_filter(&mut self, filter: impl Into<String>) {
         self.outline_filter = filter.into();
     }
@@ -910,6 +1000,247 @@ impl VellumApp {
     fn close_find_panel(&mut self) {
         self.find_panel_visible = false;
         self.replace_visible = false;
+    }
+
+    fn open_quickly(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette.hide();
+        self.preferences_visible = false;
+        self.global_search_visible = false;
+        self.goto_line_visible = false;
+        self.quick_open_visible = true;
+        self.quick_open_query.clear();
+        self.quick_open_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
+        self.refresh_quick_open_items();
+        let focus = self.quick_open_input.focus_handle(cx);
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.quick_open_visible = false;
+        self.quick_open_query.clear();
+        self.quick_open_items.clear();
+        self.quick_open_selected_index = 0;
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn refresh_quick_open_items(&mut self) {
+        match self.workspace.quick_open_items(&self.quick_open_query, 80) {
+            Ok(items) => {
+                self.quick_open_items = items;
+                if self.quick_open_selected_index >= self.quick_open_items.len() {
+                    self.quick_open_selected_index = 0;
+                }
+            }
+            Err(err) => {
+                self.quick_open_items.clear();
+                self.quick_open_selected_index = 0;
+                self.set_status(format!("Open Quickly failed: {err}"));
+            }
+        }
+    }
+
+    fn select_next_quick_open_item(&mut self) {
+        if self.quick_open_items.is_empty() {
+            self.quick_open_selected_index = 0;
+        } else {
+            self.quick_open_selected_index =
+                (self.quick_open_selected_index + 1) % self.quick_open_items.len();
+        }
+    }
+
+    fn select_previous_quick_open_item(&mut self) {
+        if self.quick_open_items.is_empty() {
+            self.quick_open_selected_index = 0;
+        } else if self.quick_open_selected_index == 0 {
+            self.quick_open_selected_index = self.quick_open_items.len() - 1;
+        } else {
+            self.quick_open_selected_index -= 1;
+        }
+    }
+
+    fn apply_quick_open_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self
+            .quick_open_items
+            .get(self.quick_open_selected_index)
+            .cloned()
+        else {
+            self.set_status("No quick-open match".to_string());
+            cx.notify();
+            return;
+        };
+        let offset = item
+            .heading
+            .as_ref()
+            .map(|heading| heading.source_offset)
+            .unwrap_or(0);
+        self.quick_open_visible = false;
+        self.quick_open_query.clear();
+        self.open_file_at_source_range(item.path, offset..offset, window, cx);
+    }
+
+    fn open_global_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette.hide();
+        self.preferences_visible = false;
+        self.quick_open_visible = false;
+        self.goto_line_visible = false;
+        self.global_search_visible = true;
+        self.global_search_query.clear();
+        self.global_search_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
+        self.refresh_global_search_results();
+        let focus = self.global_search_input.focus_handle(cx);
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    fn close_global_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.global_search_visible = false;
+        self.global_search_query.clear();
+        self.global_search_results.clear();
+        self.global_search_selected_index = 0;
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn refresh_global_search_results(&mut self) {
+        let options = self.workspace_search_options();
+        match self
+            .workspace
+            .search_markdown(&self.global_search_query, options)
+        {
+            Ok(results) => {
+                self.global_search_results = results;
+                if self.global_search_selected_index >= self.global_search_match_count() {
+                    self.global_search_selected_index = 0;
+                }
+            }
+            Err(err) => {
+                self.global_search_results.clear();
+                self.global_search_selected_index = 0;
+                self.set_status(format!("Global search failed: {err}"));
+            }
+        }
+    }
+
+    fn workspace_search_options(&self) -> WorkspaceSearchOptions {
+        WorkspaceSearchOptions {
+            case_sensitive: self.find_case_sensitive,
+            whole_word: self.find_whole_word,
+            use_regex: self.find_regex,
+        }
+    }
+
+    fn set_find_case_sensitive(&mut self, value: bool) {
+        self.find_case_sensitive = value;
+        self.refresh_find_matches();
+        self.refresh_global_search_results();
+    }
+
+    fn set_find_whole_word(&mut self, value: bool) {
+        self.find_whole_word = value;
+        self.refresh_find_matches();
+        self.refresh_global_search_results();
+    }
+
+    fn set_find_regex(&mut self, value: bool) {
+        self.find_regex = value;
+        self.refresh_find_matches();
+        self.refresh_global_search_results();
+    }
+
+    fn global_search_match_count(&self) -> usize {
+        self.global_search_results
+            .iter()
+            .map(|result| result.matches.len())
+            .sum()
+    }
+
+    fn selected_global_search_match(&self) -> Option<(usize, usize)> {
+        let mut remaining = self.global_search_selected_index;
+        for (result_index, result) in self.global_search_results.iter().enumerate() {
+            if remaining < result.matches.len() {
+                return Some((result_index, remaining));
+            }
+            remaining -= result.matches.len();
+        }
+        None
+    }
+
+    fn select_next_global_search_match(&mut self) {
+        let count = self.global_search_match_count();
+        if count == 0 {
+            self.global_search_selected_index = 0;
+        } else {
+            self.global_search_selected_index = (self.global_search_selected_index + 1) % count;
+        }
+    }
+
+    fn select_previous_global_search_match(&mut self) {
+        let count = self.global_search_match_count();
+        if count == 0 {
+            self.global_search_selected_index = 0;
+        } else if self.global_search_selected_index == 0 {
+            self.global_search_selected_index = count - 1;
+        } else {
+            self.global_search_selected_index -= 1;
+        }
+    }
+
+    fn apply_global_search_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((result_index, match_index)) = self.selected_global_search_match() else {
+            self.set_status("No global-search match".to_string());
+            cx.notify();
+            return;
+        };
+        let result = self.global_search_results[result_index].clone();
+        let text_match = result.matches[match_index].clone();
+        self.open_file_at_source_range(result.path, text_match.range, window, cx);
+    }
+
+    fn open_file_at_source_range(
+        &mut self,
+        path: PathBuf,
+        range: std::ops::Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_file(path.clone(), window, cx);
+        self.active_editor_entity().update(cx, |editor, cx| {
+            editor.select_source_range(range.start, range.end, window, cx);
+        });
+        self.editor_snapshot = self.active_editor_entity().read(cx).snapshot();
+        self.workspace.select_file(path);
+        self.refresh_tree(cx);
+        cx.notify();
+    }
+
+    fn set_tree_sort_mode(&mut self, mode: TreeSortMode, cx: &mut Context<Self>) {
+        let mut sort = self.workspace.tree_sort();
+        sort.mode = mode;
+        self.workspace.set_tree_sort(sort);
+        self.refresh_tree(cx);
+    }
+
+    fn toggle_tree_directories_first(&mut self, cx: &mut Context<Self>) {
+        let mut sort = self.workspace.tree_sort();
+        sort.directories_first = !sort.directories_first;
+        self.workspace.set_tree_sort(sort);
+        self.refresh_tree(cx);
+    }
+
+    fn refresh_workspace_navigation(&mut self, cx: &mut Context<Self>) {
+        self.refresh_tree(cx);
+        if self.quick_open_visible {
+            self.refresh_quick_open_items();
+        }
+        if self.global_search_visible {
+            self.refresh_global_search_results();
+        }
     }
 
     fn refresh_find_matches(&mut self) {

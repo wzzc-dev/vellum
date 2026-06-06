@@ -7556,6 +7556,7 @@ dependencies = [
  "anyhow",
  "gpui-component",
  "notify 8.2.0",
+ "regex",
 ]
 
 [[package]]

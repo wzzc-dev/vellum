@@ -24,6 +24,11 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Save, close the tab, reopen the file, and confirm the edits persist.
 - Use the file tree filter to find a nested Markdown file, open it, then clear the filter.
 - Open a Markdown file from a nested workspace folder and confirm the sidebar remains rooted at the original workspace folder.
+- Open Quick Open with `Cmd/Ctrl+P`, search by file name, relative path, and heading text, then press Enter and confirm the matching Markdown file opens at the selected heading when applicable.
+- Open Global Search with `Cmd/Ctrl+Shift+F`, search for normal text and a `#tag`, and confirm results show file name, relative path, line snippet, match counts, and highlighted match text.
+- Click a Global Search result and confirm Vellum opens the file and selects the matching source text.
+- Toggle Global Search case-sensitive, whole-word, and regex options and confirm the result list updates.
+- Use the file tree refresh button and sort by name, natural order, and modified time; toggle directories-first and confirm the file tree order changes as expected.
 
 ## Assets
 

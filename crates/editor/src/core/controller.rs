@@ -914,6 +914,18 @@ impl EditorController {
         self.update_selection(SelectionState::collapsed(clamped))
     }
 
+    pub fn select_source_range(&mut self, range: Range<usize>) -> EditorEffects {
+        let len = self.document.text().len();
+        let start = range.start.min(len);
+        let end = range.end.min(len);
+        self.update_selection(SelectionState {
+            anchor_byte: start,
+            head_byte: end,
+            preferred_column: None,
+            affinity: SelectionAffinity::Upstream,
+        })
+    }
+
     pub fn replace_source_range(
         &mut self,
         range: Range<usize>,

@@ -23,6 +23,9 @@ files, live editing, and a quiet desktop UI without a plugin system.
 - Superscript footnote references and footnote definition previews
 - Syntax highlighting for Markdown and common code fence languages
 - Outline sidebar and workspace file tree
+- Open Quickly for workspace files and headings
+- Global Markdown search across the current workspace, including `#tag` text
+- File tree refresh and sorting by name, natural order, or modified time
 - Find and replace
 - Command palette
 - In-app preferences for theme, writing modes, and image assets
@@ -69,6 +72,7 @@ Manual release checks live in [`docs/acceptance/manual-checklist.md`](./docs/acc
 ## Notes
 
 - The sidebar currently shows only `.md`, `.markdown`, and `.mdown`
+- Workspace search and Open Quickly scan `.md`, `.markdown`, and `.mdown`
 - `Enter` performs semantic line breaks for paragraphs, lists, blockquotes, and similar blocks
 - Code blocks keep normal multi-line editing behavior
 - The current app model is single-window with multiple editor tabs

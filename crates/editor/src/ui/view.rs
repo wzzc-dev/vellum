@@ -171,6 +171,18 @@ impl MarkdownEditor {
         self.focus_input(window, cx);
     }
 
+    pub fn select_source_range(
+        &mut self,
+        start: usize,
+        end: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let effects = self.controller.select_source_range(start..end);
+        self.apply_effects(window, cx, effects);
+        self.focus_input(window, cx);
+    }
+
     pub fn set_typewriter_mode(
         &mut self,
         enabled: bool,

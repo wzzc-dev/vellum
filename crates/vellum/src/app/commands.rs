@@ -30,6 +30,10 @@ impl VellumApp {
         if self.command_palette.is_visible() {
             self.command_palette.hide();
             window.focus(&self.focus_handle);
+        } else if self.quick_open_visible {
+            self.close_quick_open(window, cx);
+        } else if self.global_search_visible {
+            self.close_global_search(window, cx);
         } else if self.preferences_visible {
             self.close_preferences(window, cx);
         } else if self.goto_line_visible {
@@ -37,6 +41,35 @@ impl VellumApp {
         } else {
             self.close_find_panel();
         }
+        cx.notify();
+    }
+
+    pub(super) fn on_open_quickly(
+        &mut self,
+        _: &OpenQuickly,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_quickly(window, cx);
+    }
+
+    pub(super) fn on_open_global_search(
+        &mut self,
+        _: &OpenGlobalSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_global_search(window, cx);
+    }
+
+    pub(super) fn on_refresh_file_tree(
+        &mut self,
+        _: &RefreshFileTree,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_workspace_navigation(cx);
+        self.set_status("Workspace refreshed".to_string());
         cx.notify();
     }
 
@@ -392,6 +425,16 @@ impl VellumApp {
             PaletteCommand::GotoLine => {
                 self.open_goto_line(window, cx);
             }
+            PaletteCommand::OpenQuickly => {
+                self.open_quickly(window, cx);
+            }
+            PaletteCommand::GlobalSearch => {
+                self.open_global_search(window, cx);
+            }
+            PaletteCommand::RefreshFileTree => {
+                self.refresh_workspace_navigation(cx);
+                self.set_status("Workspace refreshed".to_string());
+            }
             PaletteCommand::FindPanel => {
                 self.open_find_panel();
             }
@@ -461,6 +504,64 @@ impl VellumApp {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.select_next();
+        cx.notify();
+    }
+
+    pub(super) fn on_quick_open_enter(
+        &mut self,
+        _: &gpui_component::input::Enter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_quick_open_selection(window, cx);
+    }
+
+    pub(super) fn on_quick_open_move_up(
+        &mut self,
+        _: &gpui_component::input::MoveUp,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_previous_quick_open_item();
+        cx.notify();
+    }
+
+    pub(super) fn on_quick_open_move_down(
+        &mut self,
+        _: &gpui_component::input::MoveDown,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_next_quick_open_item();
+        cx.notify();
+    }
+
+    pub(super) fn on_global_search_enter(
+        &mut self,
+        _: &gpui_component::input::Enter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_global_search_selection(window, cx);
+    }
+
+    pub(super) fn on_global_search_move_up(
+        &mut self,
+        _: &gpui_component::input::MoveUp,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_previous_global_search_match();
+        cx.notify();
+    }
+
+    pub(super) fn on_global_search_move_down(
+        &mut self,
+        _: &gpui_component::input::MoveDown,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_next_global_search_match();
         cx.notify();
     }
 

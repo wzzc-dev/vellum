@@ -57,6 +57,7 @@ impl VellumApp {
         let filter_input = self.file_filter_input.clone();
         let is_filtering = !file_filter.trim().is_empty();
         let has_workspace = self.workspace.root.is_some();
+        let sort = self.workspace.tree_sort();
 
         let tree_items = if is_filtering {
             self.workspace.tree_items_matching(&file_filter)
@@ -68,7 +69,114 @@ impl VellumApp {
             Err(_) => Vec::new(),
         };
         let entries = Rc::new(entries);
-        let filter_bar = div().w_full().child(Input::new(&filter_input));
+        let sort_label = match sort.mode {
+            TreeSortMode::Name => "Name",
+            TreeSortMode::Natural => "Natural",
+            TreeSortMode::Modified => "Modified",
+        };
+        let filter_bar = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Input::new(&filter_input))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("file-tree-refresh")
+                            .icon(IconName::Search)
+                            .compact()
+                            .tooltip("Refresh workspace")
+                            .on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    if let Some(entity) = view.upgrade() {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.on_refresh_file_tree(&RefreshFileTree, window, cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("file-tree-sort-name")
+                            .label("Name")
+                            .compact()
+                            .selected(sort.mode == TreeSortMode::Name)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    if let Some(entity) = view.upgrade() {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.set_tree_sort_mode(TreeSortMode::Name, cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("file-tree-sort-natural")
+                            .label("Natural")
+                            .compact()
+                            .selected(sort.mode == TreeSortMode::Natural)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    if let Some(entity) = view.upgrade() {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.set_tree_sort_mode(TreeSortMode::Natural, cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("file-tree-sort-modified")
+                            .label("Modified")
+                            .compact()
+                            .selected(sort.mode == TreeSortMode::Modified)
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    if let Some(entity) = view.upgrade() {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.set_tree_sort_mode(TreeSortMode::Modified, cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("file-tree-directories-first")
+                            .icon(IconName::Folder)
+                            .compact()
+                            .selected(sort.directories_first)
+                            .tooltip("Toggle directories first")
+                            .on_click({
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    if let Some(entity) = view.upgrade() {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.toggle_tree_directories_first(cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .truncate()
+                            .child(sort_label),
+                    ),
+            );
 
         if entries.is_empty() {
             let empty_label = if !has_workspace {
@@ -104,59 +212,47 @@ impl VellumApp {
             .gap_2()
             .child(filter_bar)
             .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(
-                        uniform_list("file-tree", entries.len(), {
-                            let entries = entries.clone();
-                            move |visible_range, _window, _cx| {
-                                let mut items = Vec::with_capacity(visible_range.len());
-                                for ix in visible_range {
-                                    let entry = &entries[ix];
-                                    let path = entry.path.clone();
-                                    let is_selected_file = selected_path.as_ref() == Some(&path);
-                                    let is_folder = entry.is_folder;
-                                    let is_renaming = renaming_path.as_ref() == Some(&path);
+                div().flex_1().min_h(px(0.)).child(
+                    uniform_list("file-tree", entries.len(), {
+                        let entries = entries.clone();
+                        move |visible_range, _window, _cx| {
+                            let mut items = Vec::with_capacity(visible_range.len());
+                            for ix in visible_range {
+                                let entry = &entries[ix];
+                                let path = entry.path.clone();
+                                let is_selected_file = selected_path.as_ref() == Some(&path);
+                                let is_folder = entry.is_folder;
+                                let is_renaming = renaming_path.as_ref() == Some(&path);
 
-                                    let label = if is_folder {
-                                        if entry.is_expanded {
-                                            format!("v {}", entry.label)
-                                        } else {
-                                            format!("> {}", entry.label)
-                                        }
+                                let label = if is_folder {
+                                    if entry.is_expanded {
+                                        format!("v {}", entry.label)
                                     } else {
-                                        entry.label.clone()
-                                    };
+                                        format!("> {}", entry.label)
+                                    }
+                                } else {
+                                    entry.label.clone()
+                                };
 
-                                    let content = if is_renaming {
-                                        if let Some(input) = rename_input.as_ref() {
-                                            div()
-                                                .w_full()
-                                                .on_key_down({
-                                                    let view = view.clone();
-                                                    move |event: &gpui::KeyDownEvent, _, cx| {
-                                                        if event.keystroke.key.as_str() == "escape" {
-                                                            if let Some(entity) = view.upgrade() {
-                                                                let _ = entity.update(cx, |this, cx| {
+                                let content = if is_renaming {
+                                    if let Some(input) = rename_input.as_ref() {
+                                        div()
+                                            .w_full()
+                                            .on_key_down({
+                                                let view = view.clone();
+                                                move |event: &gpui::KeyDownEvent, _, cx| {
+                                                    if event.keystroke.key.as_str() == "escape" {
+                                                        if let Some(entity) = view.upgrade() {
+                                                            let _ =
+                                                                entity.update(cx, |this, cx| {
                                                                     this.cancel_rename(cx);
                                                                 });
-                                                            }
                                                         }
                                                     }
-                                                })
-                                                .child(Input::new(input).w_full().text_sm())
-                                                .into_any_element()
-                                        } else {
-                                            div()
-                                                .w_full()
-                                                .min_w(px(0.))
-                                                .overflow_hidden()
-                                                .text_color(foreground)
-                                                .truncate()
-                                                .child(label)
-                                                .into_any_element()
-                                        }
+                                                }
+                                            })
+                                            .child(Input::new(input).w_full().text_sm())
+                                            .into_any_element()
                                     } else {
                                         div()
                                             .w_full()
@@ -166,62 +262,72 @@ impl VellumApp {
                                             .truncate()
                                             .child(label)
                                             .into_any_element()
-                                    };
-
-                                    let item = ListItem::new(ix)
-                                        .selected(is_selected_file)
-                                        .rounded(px(6.))
-                                        .text_sm()
+                                    }
+                                } else {
+                                    div()
                                         .w_full()
-                                        .pr_2()
-                                        .pl(px(8. + entry.depth as f32 * 14.))
-                                        .child(content)
-                                        .when(!is_renaming, |this| {
-                                            this.on_click({
-                                                let view = view.clone();
-                                                let path = path.clone();
-                                                move |_, window, cx| {
-                                                    if let Some(entity) = view.upgrade() {
-                                                        if path.is_dir() {
-                                                            let _ = entity.update(cx, |this, cx| {
-                                                                this.workspace.toggle_dir(&path);
-                                                                this.refresh_tree(cx);
-                                                                cx.notify();
-                                                            });
-                                                        } else if path.is_file() {
-                                                            let _ = entity.update(cx, |this, cx| {
-                                                                this.open_file_in_current_tab(
-                                                                    path.clone(),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .text_color(foreground)
+                                        .truncate()
+                                        .child(label)
+                                        .into_any_element()
+                                };
+
+                                let item = ListItem::new(ix)
+                                    .selected(is_selected_file)
+                                    .rounded(px(6.))
+                                    .text_sm()
+                                    .w_full()
+                                    .pr_2()
+                                    .pl(px(8. + entry.depth as f32 * 14.))
+                                    .child(content)
+                                    .when(!is_renaming, |this| {
+                                        this.on_click({
+                                            let view = view.clone();
+                                            let path = path.clone();
+                                            move |_, window, cx| {
+                                                if let Some(entity) = view.upgrade() {
+                                                    if path.is_dir() {
+                                                        let _ = entity.update(cx, |this, cx| {
+                                                            this.workspace.toggle_dir(&path);
+                                                            this.refresh_tree(cx);
+                                                            cx.notify();
+                                                        });
+                                                    } else if path.is_file() {
+                                                        let _ = entity.update(cx, |this, cx| {
+                                                            this.open_file_in_current_tab(
+                                                                path.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
                                                     }
                                                 }
-                                            })
-                                        });
-
-                                    let menu_item = item.context_menu({
-                                        let view = view.clone();
-                                        let path = path.clone();
-                                        move |menu, _, _| {
-                                            build_file_tree_context_menu(
-                                                menu,
-                                                view.clone(),
-                                                path.clone(),
-                                                is_folder,
-                                            )
-                                        }
+                                            }
+                                        })
                                     });
 
-                                    items.push(menu_item.into_any_element());
-                                }
-                                items
+                                let menu_item = item.context_menu({
+                                    let view = view.clone();
+                                    let path = path.clone();
+                                    move |menu, _, _| {
+                                        build_file_tree_context_menu(
+                                            menu,
+                                            view.clone(),
+                                            path.clone(),
+                                            is_folder,
+                                        )
+                                    }
+                                });
+
+                                items.push(menu_item.into_any_element());
                             }
-                        })
-                        .size_full(),
-                    ),
+                            items
+                        }
+                    })
+                    .size_full(),
+                ),
             )
             .into_any_element()
     }
@@ -406,8 +512,7 @@ impl VellumApp {
                         let view = view.clone();
                         move |_, _, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.find_case_sensitive = !this.find_case_sensitive;
-                                this.refresh_find_matches();
+                                this.set_find_case_sensitive(!this.find_case_sensitive);
                                 cx.notify();
                             });
                         }
@@ -435,8 +540,7 @@ impl VellumApp {
                         let view = view.clone();
                         move |_, _, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.find_whole_word = !this.find_whole_word;
-                                this.refresh_find_matches();
+                                this.set_find_whole_word(!this.find_whole_word);
                                 cx.notify();
                             });
                         }
@@ -464,8 +568,7 @@ impl VellumApp {
                         let view = view.clone();
                         move |_, _, cx| {
                             let _ = view.update(cx, |this, cx| {
-                                this.find_regex = !this.find_regex;
-                                this.refresh_find_matches();
+                                this.set_find_regex(!this.find_regex);
                                 cx.notify();
                             });
                         }
@@ -627,11 +730,11 @@ impl VellumApp {
             .border_b_1()
             .border_color(cx.theme().border.opacity(0.18))
             .bg(cx.theme().background)
-            .on_action(cx.listener(
-                |this, _: &gpui_component::input::Enter, window, cx| {
+            .on_action(
+                cx.listener(|this, _: &gpui_component::input::Enter, window, cx| {
                     this.apply_goto_line(window, cx);
-                },
-            ))
+                }),
+            )
             .child(
                 div()
                     .flex_shrink_0()
@@ -735,7 +838,6 @@ impl VellumApp {
             .child(tabs)
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
-
 }
 
 impl Render for VellumApp {
@@ -824,6 +926,9 @@ impl Render for VellumApp {
             .on_action(cx.listener(Self::on_find_next_match))
             .on_action(cx.listener(Self::on_find_previous_match))
             .on_action(cx.listener(Self::on_open_find_replace_panel))
+            .on_action(cx.listener(Self::on_open_quickly))
+            .on_action(cx.listener(Self::on_open_global_search))
+            .on_action(cx.listener(Self::on_refresh_file_tree))
             .on_action(cx.listener(Self::on_replace_one))
             .on_action(cx.listener(Self::on_replace_all))
             .on_action(cx.listener(Self::on_close_tab))
@@ -894,11 +999,13 @@ impl Render for VellumApp {
                                     .when(show_tabs, |this| {
                                         this.child(self.render_tab_bar(window, cx))
                                     }),
-                            )
+                            ),
                     ),
             )
             .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(body))
             .child(self.render_command_palette(cx))
+            .child(self.render_quick_open(cx))
+            .child(self.render_global_search(cx))
             .child(self.render_preferences(cx))
             .when_some(status_bar, |this, status_bar| this.child(status_bar))
     }
@@ -1005,46 +1112,40 @@ impl VellumApp {
                                             .child("Theme"),
                                     )
                                     .child(
-                                        div()
-                                            .flex()
-                                            .gap_2()
-                                            .children([
-                                                theme_button(
-                                                    "preferences-theme-default",
-                                                    "Default",
-                                                    editor::SyntaxTheme::Default,
-                                                    current_theme
-                                                        == editor::SyntaxTheme::Default,
-                                                    view.clone(),
-                                                )
-                                                .into_any_element(),
-                                                theme_button(
-                                                    "preferences-theme-dracula",
-                                                    "Dracula",
-                                                    editor::SyntaxTheme::Dracula,
-                                                    current_theme
-                                                        == editor::SyntaxTheme::Dracula,
-                                                    view.clone(),
-                                                )
-                                                .into_any_element(),
-                                                theme_button(
-                                                    "preferences-theme-solarized",
-                                                    "Solarized",
-                                                    editor::SyntaxTheme::Solarized,
-                                                    current_theme
-                                                        == editor::SyntaxTheme::Solarized,
-                                                    view.clone(),
-                                                )
-                                                .into_any_element(),
-                                                theme_button(
-                                                    "preferences-theme-github",
-                                                    "GitHub",
-                                                    editor::SyntaxTheme::GitHub,
-                                                    current_theme == editor::SyntaxTheme::GitHub,
-                                                    view.clone(),
-                                                )
-                                                .into_any_element(),
-                                            ]),
+                                        div().flex().gap_2().children([
+                                            theme_button(
+                                                "preferences-theme-default",
+                                                "Default",
+                                                editor::SyntaxTheme::Default,
+                                                current_theme == editor::SyntaxTheme::Default,
+                                                view.clone(),
+                                            )
+                                            .into_any_element(),
+                                            theme_button(
+                                                "preferences-theme-dracula",
+                                                "Dracula",
+                                                editor::SyntaxTheme::Dracula,
+                                                current_theme == editor::SyntaxTheme::Dracula,
+                                                view.clone(),
+                                            )
+                                            .into_any_element(),
+                                            theme_button(
+                                                "preferences-theme-solarized",
+                                                "Solarized",
+                                                editor::SyntaxTheme::Solarized,
+                                                current_theme == editor::SyntaxTheme::Solarized,
+                                                view.clone(),
+                                            )
+                                            .into_any_element(),
+                                            theme_button(
+                                                "preferences-theme-github",
+                                                "GitHub",
+                                                editor::SyntaxTheme::GitHub,
+                                                current_theme == editor::SyntaxTheme::GitHub,
+                                                view.clone(),
+                                            )
+                                            .into_any_element(),
+                                        ]),
                                     ),
                             )
                             .child(
@@ -1130,13 +1231,15 @@ impl VellumApp {
                                                     .label("Status Bar")
                                                     .compact()
                                                     .selected(status_bar_pinned)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.set_status_bar_pinned(
-                                                            !this.status_bar_pinned,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })),
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.set_status_bar_pinned(
+                                                                !this.status_bar_pinned,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )),
                                             )
                                             .child(
                                                 Button::new("preferences-focus-mode")
@@ -1156,16 +1259,18 @@ impl VellumApp {
                                                     .label("Typewriter")
                                                     .compact()
                                                     .selected(typewriter_enabled)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.active_editor_entity().update(
-                                                            cx,
-                                                            |editor, cx| {
-                                                                editor.toggle_typewriter_mode(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        );
-                                                    })),
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.active_editor_entity().update(
+                                                                cx,
+                                                                |editor, cx| {
+                                                                    editor.toggle_typewriter_mode(
+                                                                        window, cx,
+                                                                    );
+                                                                },
+                                                            );
+                                                        },
+                                                    )),
                                             )
                                             .child(
                                                 Button::new("preferences-focus-highlight")
@@ -1176,10 +1281,9 @@ impl VellumApp {
                                                         this.active_editor_entity().update(
                                                             cx,
                                                             |editor, cx| {
-                                                                editor
-                                                                    .toggle_focus_highlight_mode(
-                                                                        cx,
-                                                                    );
+                                                                editor.toggle_focus_highlight_mode(
+                                                                    cx,
+                                                                );
                                                             },
                                                         );
                                                     })),
@@ -1270,17 +1374,444 @@ impl VellumApp {
                                     .child(Input::new(&self.preferences_asset_dir_input).w_full()),
                             )
                             .child(
+                                div().flex().justify_end().child(
+                                    Button::new("preferences-open-file")
+                                        .label("Open Config File")
+                                        .compact()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.open_preferences_file(cx);
+                                        })),
+                                ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_quick_open(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.quick_open_visible {
+            return div().into_any_element();
+        }
+
+        let theme = cx.theme();
+        let view = cx.entity();
+        let items = self.quick_open_items.clone();
+        let selected = self.quick_open_selected_index;
+        let has_workspace = self.workspace.root.is_some();
+
+        let rows: Vec<_> = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let is_selected = index == selected;
+                let path = item.path.clone();
+                let offset = item
+                    .heading
+                    .as_ref()
+                    .map(|heading| heading.source_offset)
+                    .unwrap_or(0);
+                let title = item
+                    .heading
+                    .as_ref()
+                    .map(|heading| format!("{}  #{}", item.file_name, heading.title))
+                    .unwrap_or_else(|| item.file_name.clone());
+                let detail = item
+                    .heading
+                    .as_ref()
+                    .map(|heading| format!("{} · heading {}", item.relative_path, heading.depth))
+                    .unwrap_or_else(|| {
+                        item.title
+                            .as_ref()
+                            .map(|title| format!("{} · {}", item.relative_path, title))
+                            .unwrap_or_else(|| item.relative_path.clone())
+                    });
+
+                div()
+                    .id(ElementId::Name(format!("quick-open-item-{index}").into()))
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(4.))
+                    .when(is_selected, |this| this.bg(theme.list_active))
+                    .when(!is_selected, |this| {
+                        this.hover(|this| this.bg(theme.list_hover))
+                    })
+                    .on_click({
+                        let view = view.clone();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.quick_open_selected_index = index;
+                                this.quick_open_visible = false;
+                                this.open_file_at_source_range(
+                                    path.clone(),
+                                    offset..offset,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
                                 div()
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .truncate()
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .truncate()
+                                    .child(detail),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        let empty_label = if !has_workspace {
+            "Open a folder to use Open Quickly"
+        } else if self.quick_open_query.trim().is_empty() {
+            "Type a file name, path, or heading"
+        } else {
+            "No matches"
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_quick_open(window, cx);
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .pt(px(72.0))
+                    .w_full()
+                    .child(
+                        div()
+                            .w(px(540.0))
+                            .max_h(px(480.0))
+                            .bg(theme.popover)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .shadow_xl()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_action(cx.listener(Self::on_quick_open_enter))
+                            .on_action(cx.listener(Self::on_quick_open_move_up))
+                            .on_action(cx.listener(Self::on_quick_open_move_down))
+                            .child(
+                                div()
+                                    .p_3()
+                                    .border_b_1()
+                                    .border_color(theme.border)
+                                    .child(Input::new(&self.quick_open_input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_y_scrollbar()
+                                    .p_2()
+                                    .when(rows.is_empty(), |this| {
+                                        this.child(
+                                            div()
+                                                .px_3()
+                                                .py_6()
+                                                .text_sm()
+                                                .text_color(theme.muted_foreground)
+                                                .child(empty_label),
+                                        )
+                                    })
+                                    .children(rows),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_global_search(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.global_search_visible {
+            return div().into_any_element();
+        }
+
+        let theme = cx.theme();
+        let view = cx.entity();
+        let has_workspace = self.workspace.root.is_some();
+        let match_count = self.global_search_match_count();
+        let selected = self.global_search_selected_index;
+        let mut flat_matches = Vec::new();
+        for (result_index, result) in self.global_search_results.iter().enumerate() {
+            for (match_index, text_match) in result.matches.iter().enumerate() {
+                flat_matches.push((
+                    result_index,
+                    match_index,
+                    result.clone(),
+                    text_match.clone(),
+                ));
+            }
+        }
+
+        let rows: Vec<_> = flat_matches
+            .into_iter()
+            .enumerate()
+            .map(
+                |(global_index, (_result_index, match_index, result, text_match))| {
+                    let is_selected = global_index == selected;
+                    let path = result.path.clone();
+                    let range = text_match.range.clone();
+                    let before = text_match.snippet[..text_match.snippet_match.start].to_string();
+                    let matched = text_match.snippet[text_match.snippet_match.clone()].to_string();
+                    let after = text_match.snippet[text_match.snippet_match.end..].to_string();
+
+                    div()
+                        .id(ElementId::Name(
+                            format!("global-search-match-{global_index}").into(),
+                        ))
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(4.))
+                        .when(is_selected, |this| this.bg(theme.list_active))
+                        .when(!is_selected, |this| {
+                            this.hover(|this| this.bg(theme.list_hover))
+                        })
+                        .on_click({
+                            let view = view.clone();
+                            move |_, window, cx| {
+                                let _ = view.update(cx, |this, cx| {
+                                    this.global_search_selected_index = global_index;
+                                    this.open_file_at_source_range(
+                                        path.clone(),
+                                        range.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w(px(0.))
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w(px(0.))
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(theme.foreground)
+                                                .truncate()
+                                                .child(result.file_name),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .truncate()
+                                                .child(format!(
+                                                    "{}:{} · match {}",
+                                                    result.relative_path,
+                                                    text_match.line_number,
+                                                    match_index + 1
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .flex()
+                                        .items_center()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(div().truncate().child(before))
+                                        .child(
+                                            div()
+                                                .px(px(2.))
+                                                .rounded(px(2.))
+                                                .bg(theme.primary.opacity(0.18))
+                                                .text_color(theme.primary)
+                                                .child(matched),
+                                        )
+                                        .child(div().truncate().child(after)),
+                                ),
+                        )
+                        .into_any_element()
+                },
+            )
+            .collect();
+
+        let empty_label = if !has_workspace {
+            "Open a folder to search the workspace"
+        } else if self.global_search_query.trim().is_empty() {
+            "Type to search Markdown files"
+        } else {
+            "No matches"
+        };
+        let count_label = if self.global_search_query.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{} match{} in {} file{}",
+                match_count,
+                if match_count == 1 { "" } else { "es" },
+                self.global_search_results.len(),
+                if self.global_search_results.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            )
+        };
+
+        let toggle_button = |id: &'static str,
+                             label: &'static str,
+                             selected: bool,
+                             tooltip: &'static str,
+                             view: Entity<VellumApp>,
+                             update: fn(&mut VellumApp, bool)| {
+            Button::new(id)
+                .label(label)
+                .compact()
+                .selected(selected)
+                .tooltip(tooltip)
+                .on_click(move |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        update(this, !selected);
+                        cx.notify();
+                    });
+                })
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_global_search(window, cx);
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .pt(px(72.0))
+                    .w_full()
+                    .child(
+                        div()
+                            .w(px(680.0))
+                            .max_h(px(560.0))
+                            .bg(theme.popover)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .shadow_xl()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_action(cx.listener(Self::on_global_search_enter))
+                            .on_action(cx.listener(Self::on_global_search_move_up))
+                            .on_action(cx.listener(Self::on_global_search_move_down))
+                            .child(
+                                div()
+                                    .p_3()
+                                    .border_b_1()
+                                    .border_color(theme.border)
                                     .flex()
-                                    .justify_end()
+                                    .flex_col()
+                                    .gap_2()
                                     .child(
-                                        Button::new("preferences-open-file")
-                                            .label("Open Config File")
-                                            .compact()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.open_preferences_file(cx);
-                                            })),
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(Input::new(&self.global_search_input).flex_1())
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(count_label),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(toggle_button(
+                                                "global-search-case",
+                                                "Aa",
+                                                self.find_case_sensitive,
+                                                "Case sensitive",
+                                                view.clone(),
+                                                VellumApp::set_find_case_sensitive,
+                                            ))
+                                            .child(toggle_button(
+                                                "global-search-word",
+                                                "W",
+                                                self.find_whole_word,
+                                                "Whole word",
+                                                view.clone(),
+                                                VellumApp::set_find_whole_word,
+                                            ))
+                                            .child(toggle_button(
+                                                "global-search-regex",
+                                                ".*",
+                                                self.find_regex,
+                                                "Regular expression",
+                                                view.clone(),
+                                                VellumApp::set_find_regex,
+                                            )),
                                     ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_y_scrollbar()
+                                    .p_2()
+                                    .when(rows.is_empty(), |this| {
+                                        this.child(
+                                            div()
+                                                .px_3()
+                                                .py_6()
+                                                .text_sm()
+                                                .text_color(theme.muted_foreground)
+                                                .child(empty_label),
+                                        )
+                                    })
+                                    .children(rows),
                             ),
                     ),
             )

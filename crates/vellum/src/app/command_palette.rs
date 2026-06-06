@@ -47,6 +47,9 @@ pub(crate) enum PaletteCommand {
     ToggleTypewriterMode,
     ToggleFocusHighlightMode,
     GotoLine,
+    OpenQuickly,
+    GlobalSearch,
+    RefreshFileTree,
     FindPanel,
     FindReplace,
     ExportHtml,
@@ -251,7 +254,14 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
     },
     CommandItem {
         label: "Insert Inline Math",
-        keywords: &["inline math", "math", "formula", "latex", "行内公式", "公式"],
+        keywords: &[
+            "inline math",
+            "math",
+            "formula",
+            "latex",
+            "行内公式",
+            "公式",
+        ],
         description: "Insert inline math formula",
         command: PaletteCommand::InlineMath,
     },
@@ -334,6 +344,24 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
         command: PaletteCommand::GotoLine,
     },
     CommandItem {
+        label: "Open Quickly",
+        keywords: &["quick", "open", "file", "heading", "快速打开", "文件"],
+        description: "Find workspace files and headings",
+        command: PaletteCommand::OpenQuickly,
+    },
+    CommandItem {
+        label: "Global Search",
+        keywords: &["global", "workspace", "search", "全文", "全局搜索"],
+        description: "Search Markdown files in the workspace",
+        command: PaletteCommand::GlobalSearch,
+    },
+    CommandItem {
+        label: "Refresh File Tree",
+        keywords: &["refresh", "reload", "files", "刷新"],
+        description: "Refresh workspace files and search indexes",
+        command: PaletteCommand::RefreshFileTree,
+    },
+    CommandItem {
         label: "Find",
         keywords: &["find", "search", "查找"],
         description: "Open find panel",
@@ -401,7 +429,14 @@ pub(crate) const ALL_COMMANDS: &[CommandItem] = &[
     },
     CommandItem {
         label: "Insert Math Block",
-        keywords: &["math block", "display math", "katex", "latex", "块公式", "数学"],
+        keywords: &[
+            "math block",
+            "display math",
+            "katex",
+            "latex",
+            "块公式",
+            "数学",
+        ],
         description: "Insert display math block",
         command: PaletteCommand::MathBlock,
     },
@@ -504,5 +539,20 @@ mod tests {
             .map(|index| ALL_COMMANDS[index].command)
             .collect();
         assert!(commands.contains(&PaletteCommand::ExportPrintHtml));
+    }
+
+    #[test]
+    fn workspace_navigation_commands_are_discoverable() {
+        let commands: Vec<_> = filter_commands("workspace")
+            .into_iter()
+            .map(|index| ALL_COMMANDS[index].command)
+            .collect();
+        assert!(commands.contains(&PaletteCommand::GlobalSearch));
+
+        let commands: Vec<_> = filter_commands("quick")
+            .into_iter()
+            .map(|index| ALL_COMMANDS[index].command)
+            .collect();
+        assert!(commands.contains(&PaletteCommand::OpenQuickly));
     }
 }
