@@ -190,6 +190,18 @@ impl VellumApp {
         self.editor_snapshot.word_count
     }
 
+    pub(super) fn document_character_count(&self) -> usize {
+        self.editor_snapshot.character_count
+    }
+
+    pub(super) fn document_line_count(&self) -> usize {
+        self.editor_snapshot.line_count
+    }
+
+    pub(super) fn document_reading_minutes(&self) -> usize {
+        self.editor_snapshot.reading_minutes
+    }
+
     fn status_message(&self) -> String {
         if self.shell_status_message.is_empty() {
             self.editor_snapshot.status_message.clone()
@@ -401,6 +413,21 @@ impl VellumApp {
                         div()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Words {}", self.document_word_count())),
+                    )
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Chars {}", self.document_character_count())),
+                    )
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Lines {}", self.document_line_count())),
+                    )
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Read {} min", self.document_reading_minutes())),
                     )
                     .when_some(find_status, |this, find_status| {
                         this.child(

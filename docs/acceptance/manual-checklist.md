@@ -11,6 +11,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the `[toc]` block renders a table of contents from the document headings and returns to source editing when clicked.
 - Confirm clicking a heading inside the rendered `[toc]` block moves the cursor to that heading.
 - Edit text inside a paragraph, a table cell, the code block, and the math block.
+- Confirm the status bar shows words, characters, lines, and reading time, and updates after editing text.
 - Confirm the aligned, piecewise, binomial, accent, array, and alignat math blocks remain readable when the cursor leaves them.
 - Confirm the Mermaid blocks show structured previews when the cursor leaves them and return to source editing when clicked.
 - Confirm the Mermaid flowchart subgraph label remains visible in preview.

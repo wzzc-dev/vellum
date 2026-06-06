@@ -71,6 +71,28 @@ pub(crate) fn count_document_words(text: &str) -> usize {
     count
 }
 
+pub(crate) fn count_document_characters(text: &str) -> usize {
+    text.chars()
+        .filter(|ch| !matches!(ch, '\n' | '\r'))
+        .count()
+}
+
+pub(crate) fn count_document_lines(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.split('\n').count()
+    }
+}
+
+pub(crate) fn estimate_reading_minutes(word_count: usize) -> usize {
+    if word_count == 0 {
+        0
+    } else {
+        word_count.div_ceil(200)
+    }
+}
+
 pub(crate) fn adjust_block_markup(text: &str, deepen: bool) -> Option<String> {
     let mut lines = text.lines();
     let first = lines.next()?;
@@ -1711,6 +1733,28 @@ mod tests {
     fn counts_words_across_cjk_and_ascii() {
         assert_eq!(count_document_words("hello world"), 2);
         assert_eq!(count_document_words("你好 world"), 3);
+    }
+
+    #[test]
+    fn counts_characters_without_line_breaks() {
+        assert_eq!(count_document_characters("hello\n世界\r\n"), 7);
+        assert_eq!(count_document_characters("a b"), 3);
+    }
+
+    #[test]
+    fn counts_document_lines_including_trailing_empty_line() {
+        assert_eq!(count_document_lines(""), 0);
+        assert_eq!(count_document_lines("one"), 1);
+        assert_eq!(count_document_lines("one\n"), 2);
+        assert_eq!(count_document_lines("one\n\nthree"), 3);
+    }
+
+    #[test]
+    fn estimates_reading_minutes_from_words() {
+        assert_eq!(estimate_reading_minutes(0), 0);
+        assert_eq!(estimate_reading_minutes(1), 1);
+        assert_eq!(estimate_reading_minutes(200), 1);
+        assert_eq!(estimate_reading_minutes(201), 2);
     }
 
     #[test]

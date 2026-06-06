@@ -18,7 +18,8 @@ use super::{
         AutoFormatAction, adjust_block_markup, adjust_list_markup_at_cursor,
         adjust_quoted_list_markup_at_cursor, adjust_selected_list_markup,
         adjust_selected_quoted_list_markup, byte_offset_for_line_column, clamp_to_char_boundary,
-        compute_document_diff, count_document_words, detect_auto_format,
+        compute_document_diff, count_document_characters, count_document_lines,
+        count_document_words, detect_auto_format, estimate_reading_minutes,
         is_thematic_break_marker, line_column_for_byte_offset, opening_fence_marker,
         pipe_table_enter_transform, semantic_enter_transform, set_blockquote_markup,
         set_heading_markup, set_list_markup, set_task_list_markup,
@@ -129,6 +130,9 @@ pub struct EditorSnapshot {
     pub has_conflict: bool,
     pub is_missing: bool,
     pub word_count: usize,
+    pub character_count: usize,
+    pub line_count: usize,
+    pub reading_minutes: usize,
     pub status_message: String,
     pub document_text: String,
     pub selection: SelectionState,
@@ -752,6 +756,7 @@ impl EditorController {
         let selection = clamp_selection_to_text(&document_text, self.selection.clone());
         let caret_byte = selection.cursor().min(document_text.len());
         let (line, column) = line_column_for_byte_offset(&document_text, caret_byte);
+        let word_count = count_document_words(&document_text);
         let display_map = match self.view_mode {
             EditorViewMode::LivePreview => {
                 let prev = self.prev_display_map.borrow().clone();
@@ -813,7 +818,10 @@ impl EditorController {
             saving: self.sync.saving,
             has_conflict: matches!(self.sync.conflict, ConflictState::Conflict { .. }),
             is_missing: self.sync.missing_on_disk,
-            word_count: count_document_words(&document_text),
+            word_count,
+            character_count: count_document_characters(&document_text),
+            line_count: count_document_lines(&document_text),
+            reading_minutes: estimate_reading_minutes(word_count),
             status_message: self.status_message.clone(),
             document_text,
             selection,
@@ -3686,6 +3694,9 @@ mod tests {
         assert_eq!(snapshot.path, Some(PathBuf::from("note.md")));
         assert_eq!(snapshot.display_name, "note.md");
         assert_eq!(snapshot.word_count, 1);
+        assert_eq!(snapshot.character_count, 7);
+        assert_eq!(snapshot.line_count, 1);
+        assert_eq!(snapshot.reading_minutes, 1);
         assert_eq!(snapshot.document_text, "# Title");
         assert_eq!(snapshot.selection, SelectionState::collapsed(0));
         assert_eq!(snapshot.visible_selection.cursor(), 0);
