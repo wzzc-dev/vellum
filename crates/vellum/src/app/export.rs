@@ -425,6 +425,7 @@ struct HtmlAssetTag<'a> {
     href_range: Option<Range<usize>>,
     src_range: Option<Range<usize>>,
     srcset_range: Option<Range<usize>>,
+    poster_range: Option<Range<usize>>,
 }
 
 fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
@@ -475,7 +476,14 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
         .flatten();
     let src_range = allows_src.then(|| html_attr_value_range(raw, "src")).flatten();
     let srcset_range = html_attr_value_range(raw, "srcset");
-    if href_range.is_none() && src_range.is_none() && srcset_range.is_none() {
+    let poster_range = html_named_tag_matches(raw, "video")
+        .then(|| html_attr_value_range(raw, "poster"))
+        .flatten();
+    if href_range.is_none()
+        && src_range.is_none()
+        && srcset_range.is_none()
+        && poster_range.is_none()
+    {
         return None;
     }
 
@@ -484,6 +492,7 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
         href_range,
         src_range,
         srcset_range,
+        poster_range,
     })
 }
 
@@ -523,6 +532,16 @@ fn rewrite_html_asset_tag(
             replacements.push(HtmlAttributeReplacement {
                 range,
                 value: srcset,
+            });
+        }
+    }
+
+    if let Some(range) = tag.poster_range.clone() {
+        let destination = decode_html_entities(&tag.raw[range.clone()]);
+        if let Some(destination) = assets.exported_destination(&destination)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: escape_attr_value(&destination),
             });
         }
     }
@@ -651,7 +670,10 @@ fn find_image_destination_close(text: &str) -> Option<usize> {
 fn html_asset_tag_len(rest: &str) -> Option<usize> {
     if html_named_tag_matches(rest, "a")
         || html_named_tag_matches(rest, "img")
+        || html_named_tag_matches(rest, "audio")
+        || html_named_tag_matches(rest, "video")
         || html_named_tag_matches(rest, "source")
+        || html_named_tag_matches(rest, "track")
     {
         html_tag_close(rest).map(|close| close + 1)
     } else {
@@ -660,11 +682,14 @@ fn html_asset_tag_len(rest: &str) -> Option<usize> {
 }
 
 fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
-    if html_named_tag_matches(rest, "img") {
+    if html_named_tag_matches(rest, "img")
+        || html_named_tag_matches(rest, "audio")
+        || html_named_tag_matches(rest, "video")
+        || html_named_tag_matches(rest, "source")
+        || html_named_tag_matches(rest, "track")
+    {
         Some(true)
     } else if html_named_tag_matches(rest, "a") {
-        Some(false)
-    } else if html_named_tag_matches(rest, "source") {
         Some(false)
     } else {
         None
@@ -5116,6 +5141,64 @@ mod tests {
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/mobile.png")).unwrap(),
             b"mobile"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_media_assets() {
+        let root = temp_export_dir("html-raw-media-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/poster.png"), b"poster").unwrap();
+        std::fs::write(source.join("assets/clip.mp4"), b"clip").unwrap();
+        std::fs::write(source.join("assets/clip.webm"), b"webm").unwrap();
+        std::fs::write(source.join("assets/captions.vtt"), b"captions").unwrap();
+        std::fs::write(source.join("assets/audio.mp3"), b"audio").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "<video controls poster=\"assets/poster.png\" src=\"assets/clip.mp4\">",
+                "<source src='assets/clip.webm' type=\"video/webm\">",
+                "<track kind=\"captions\" src=\"assets/captions.vtt\">",
+                "</video>\n",
+                "<audio controls src=\"assets/audio.mp3\"></audio>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("poster=\"article_assets/poster.png\""));
+        assert!(html.contains("src=\"article_assets/clip.mp4\""));
+        assert!(html.contains("src='article_assets/clip.webm'"));
+        assert!(html.contains("src=\"article_assets/captions.vtt\""));
+        assert!(html.contains("src=\"article_assets/audio.mp3\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/poster.png")).unwrap(),
+            b"poster"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/clip.mp4")).unwrap(),
+            b"clip"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/clip.webm")).unwrap(),
+            b"webm"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/captions.vtt")).unwrap(),
+            b"captions"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/audio.mp3")).unwrap(),
+            b"audio"
         );
 
         std::fs::remove_dir_all(root).unwrap();
