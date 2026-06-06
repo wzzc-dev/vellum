@@ -5609,12 +5609,14 @@ fn parse_html_image_preview(source: &str) -> Option<HtmlImagePreview> {
 }
 
 fn first_srcset_url(srcset: &str) -> Option<String> {
-    let candidate = srcset.split(',').next()?.trim_start();
-    let url_end = candidate
-        .char_indices()
-        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
-        .unwrap_or(candidate.len());
-    (url_end > 0).then(|| candidate[..url_end].to_string())
+    srcset.split(',').find_map(|candidate| {
+        let candidate = candidate.trim_start();
+        let url_end = candidate
+            .char_indices()
+            .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+            .unwrap_or(candidate.len());
+        (url_end > 0).then(|| candidate[..url_end].to_string())
+    })
 }
 
 fn find_html_tag<'a>(source: &'a str, tag_name: &str) -> Option<&'a str> {
@@ -7083,6 +7085,22 @@ mod tests {
     fn raw_html_image_preview_uses_img_srcset_candidate_without_src() {
         let preview = parse_html_image_preview(
             "<img alt=\"Mobile\" srcset='assets/mobile.png 480w, assets/cover.png 960w'>",
+        )
+        .unwrap();
+
+        assert_eq!(
+            preview,
+            HtmlImagePreview {
+                src: "assets/mobile.png".to_string(),
+                alt: "Mobile".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn raw_html_image_preview_skips_empty_srcset_candidates() {
+        let preview = parse_html_image_preview(
+            "<img alt=\"Mobile\" srcset=',  , assets/mobile.png 480w, assets/cover.png 960w'>",
         )
         .unwrap();
 
