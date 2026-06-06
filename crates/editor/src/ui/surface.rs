@@ -166,6 +166,7 @@ struct MermaidPreview {
     messages: Vec<MermaidSequenceMessage>,
     notes: Vec<MermaidSequenceNote>,
     fragments: Vec<MermaidSequenceFragment>,
+    lifecycles: Vec<MermaidSequenceLifecycle>,
     sequence_items: Vec<MermaidSequenceItem>,
     unsupported_lines: usize,
 }
@@ -247,10 +248,24 @@ enum MermaidSequenceFragmentKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSequenceLifecycle {
+    kind: MermaidSequenceLifecycleKind,
+    participant: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MermaidSequenceLifecycleKind {
+    Activate,
+    Deactivate,
+    Destroy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum MermaidSequenceItem {
     Message(MermaidSequenceMessage),
     Note(MermaidSequenceNote),
     Fragment(MermaidSequenceFragment),
+    Lifecycle(MermaidSequenceLifecycle),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2410,18 +2425,19 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                 .child("Mermaid"),
         );
 
-    if !preview.messages.is_empty() || !preview.notes.is_empty() || !preview.fragments.is_empty() {
+    if has_mermaid_sequence_preview(&preview) {
         header = header.child(render_mermaid_chip("sequence".to_string(), palette));
         header = header.child(
             div()
                 .text_sm()
                 .text_color(palette.muted_text_color.opacity(0.7))
                 .child(format!(
-                    "{} participants, {} messages, {} notes, {} fragments",
+                    "{} participants, {} messages, {} notes, {} fragments, {} lifecycle events",
                     preview.participants.len(),
                     preview.messages.len(),
                     preview.notes.len(),
-                    preview.fragments.len()
+                    preview.fragments.len(),
+                    preview.lifecycles.len()
                 )),
         );
     } else if let Some(direction) = &preview.direction {
@@ -2439,7 +2455,7 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
     }
 
     let mut body = div().w_full().flex().flex_col().gap_2();
-    if !preview.messages.is_empty() || !preview.notes.is_empty() || !preview.fragments.is_empty() {
+    if has_mermaid_sequence_preview(&preview) {
         body = body.child(render_mermaid_sequence_preview(&preview, palette));
         if preview.sequence_items.len() > 8 {
             body = body.child(
@@ -2498,6 +2514,13 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
         .into_any_element()
 }
 
+fn has_mermaid_sequence_preview(preview: &MermaidPreview) -> bool {
+    !preview.messages.is_empty()
+        || !preview.notes.is_empty()
+        || !preview.fragments.is_empty()
+        || !preview.lifecycles.is_empty()
+}
+
 fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
     let direction = mermaid_graph_direction(preview);
     let mut graph = div().w_full().flex().flex_col().gap_2();
@@ -2539,6 +2562,9 @@ fn render_mermaid_sequence_preview(
             MermaidSequenceItem::Fragment(fragment) => {
                 sequence.child(render_mermaid_sequence_fragment_card(fragment, palette))
             }
+            MermaidSequenceItem::Lifecycle(lifecycle) => sequence.child(
+                render_mermaid_sequence_lifecycle_card(preview, lifecycle, palette),
+            ),
         };
     }
 
@@ -2643,6 +2669,31 @@ fn render_mermaid_sequence_fragment_card(
     card.into_any_element()
 }
 
+fn render_mermaid_sequence_lifecycle_card(
+    preview: &MermaidPreview,
+    lifecycle: &MermaidSequenceLifecycle,
+    palette: RenderPalette,
+) -> AnyElement {
+    let participant = mermaid_sequence_participant_label(preview, &lifecycle.participant);
+
+    div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.03))
+        .p_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(render_mermaid_chip(
+            mermaid_sequence_lifecycle_label(lifecycle.kind).to_string(),
+            palette,
+        ))
+        .child(render_mermaid_participant_card(&participant, palette))
+        .into_any_element()
+}
+
 fn render_mermaid_participant_card(label: &str, palette: RenderPalette) -> AnyElement {
     div()
         .flex_1()
@@ -2672,6 +2723,14 @@ fn render_mermaid_sequence_arrow(dashed: bool, palette: RenderPalette) -> AnyEle
         .text_color(palette.muted_text_color)
         .child(if dashed { "-->>" } else { "->>" })
         .into_any_element()
+}
+
+fn mermaid_sequence_lifecycle_label(kind: MermaidSequenceLifecycleKind) -> &'static str {
+    match kind {
+        MermaidSequenceLifecycleKind::Activate => "activate",
+        MermaidSequenceLifecycleKind::Deactivate => "deactivate",
+        MermaidSequenceLifecycleKind::Destroy => "destroy",
+    }
 }
 
 fn mermaid_sequence_participant_label(preview: &MermaidPreview, id: &str) -> String {
@@ -2911,6 +2970,19 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
             continue;
         }
 
+        if let Some(lifecycle) = parse_mermaid_sequence_lifecycle(line) {
+            upsert_mermaid_participant(
+                &mut preview.participants,
+                &mut participant_indices,
+                MermaidParticipant::new(&lifecycle.participant),
+            );
+            preview
+                .sequence_items
+                .push(MermaidSequenceItem::Lifecycle(lifecycle.clone()));
+            preview.lifecycles.push(lifecycle);
+            continue;
+        }
+
         if is_mermaid_sequence_non_message_directive(line) {
             continue;
         }
@@ -3009,6 +3081,24 @@ fn parse_mermaid_sequence_fragment(line: &str) -> Option<MermaidSequenceFragment
             return Some(MermaidSequenceFragment {
                 kind,
                 label: clean_mermaid_note_text(label),
+            });
+        }
+    }
+
+    None
+}
+
+fn parse_mermaid_sequence_lifecycle(line: &str) -> Option<MermaidSequenceLifecycle> {
+    for (keyword, kind) in [
+        ("activate", MermaidSequenceLifecycleKind::Activate),
+        ("deactivate", MermaidSequenceLifecycleKind::Deactivate),
+        ("destroy", MermaidSequenceLifecycleKind::Destroy),
+    ] {
+        if let Some(participant) = strip_mermaid_sequence_keyword(line, keyword) {
+            let participant = clean_mermaid_sequence_participant_id(participant);
+            return (!participant.is_empty()).then_some(MermaidSequenceLifecycle {
+                kind,
+                participant,
             });
         }
     }
@@ -5049,8 +5139,9 @@ mod tests {
     use super::{
         FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
         MermaidParticipant, MermaidSequenceFragment, MermaidSequenceFragmentKind,
-        MermaidSequenceItem, MermaidSequenceMessage, MermaidSequenceNote,
-        MermaidSequenceNotePlacement, MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
+        MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
+        MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement,
+        MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
         image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
@@ -5784,6 +5875,61 @@ mod tests {
                 MermaidSequenceItem::Fragment(MermaidSequenceFragment {
                     kind: MermaidSequenceFragmentKind::End,
                     label: String::new(),
+                }),
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_sequence_lifecycle_events_in_order() {
+        let preview = parse_mermaid_preview(
+            "sequenceDiagram\n  Writer->>App: Start\n  activate App\n  App-->>Writer: Ready\n  deactivate App\n  destroy App\n",
+        );
+
+        assert_eq!(
+            preview.lifecycles,
+            vec![
+                MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Activate,
+                    participant: "App".to_string(),
+                },
+                MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Deactivate,
+                    participant: "App".to_string(),
+                },
+                MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Destroy,
+                    participant: "App".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.sequence_items,
+            vec![
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "Writer".to_string(),
+                    to: "App".to_string(),
+                    label: "Start".to_string(),
+                    dashed: false,
+                }),
+                MermaidSequenceItem::Lifecycle(MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Activate,
+                    participant: "App".to_string(),
+                }),
+                MermaidSequenceItem::Message(MermaidSequenceMessage {
+                    from: "App".to_string(),
+                    to: "Writer".to_string(),
+                    label: "Ready".to_string(),
+                    dashed: true,
+                }),
+                MermaidSequenceItem::Lifecycle(MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Deactivate,
+                    participant: "App".to_string(),
+                }),
+                MermaidSequenceItem::Lifecycle(MermaidSequenceLifecycle {
+                    kind: MermaidSequenceLifecycleKind::Destroy,
+                    participant: "App".to_string(),
                 }),
             ]
         );

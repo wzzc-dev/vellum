@@ -117,10 +117,13 @@ sequenceDiagram
   participant App as Vellum
   participant Browser
   Writer->>App: Export print HTML
+  activate App
   Note over Writer,App: Sequence note remains visible
   loop Print review
   App-->>Browser: Open exported document
   end
+  deactivate App
+  destroy Browser
   Browser-->>Writer: Save PDF
 ```
 

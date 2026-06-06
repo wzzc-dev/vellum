@@ -1713,6 +1713,16 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
             continue;
         }
 
+        if let Some(lifecycle) = parse_static_sequence_lifecycle(line) {
+            upsert_static_sequence_participant(
+                &mut participants,
+                &mut participant_indices,
+                StaticMermaidParticipant::new(&lifecycle.participant),
+            );
+            items.push(StaticMermaidSequenceItem::Lifecycle(lifecycle));
+            continue;
+        }
+
         if static_sequence_non_message_directive(line) {
             continue;
         }
@@ -1813,6 +1823,24 @@ fn parse_static_sequence_fragment(line: &str) -> Option<StaticMermaidFragment> {
             return Some(StaticMermaidFragment {
                 kind,
                 label: clean_static_mermaid_note_text(label),
+            });
+        }
+    }
+
+    None
+}
+
+fn parse_static_sequence_lifecycle(line: &str) -> Option<StaticMermaidLifecycle> {
+    for (keyword, kind) in [
+        ("activate", StaticMermaidLifecycleKind::Activate),
+        ("deactivate", StaticMermaidLifecycleKind::Deactivate),
+        ("destroy", StaticMermaidLifecycleKind::Destroy),
+    ] {
+        if let Some(participant) = strip_static_sequence_keyword(line, keyword) {
+            let participant = clean_static_sequence_participant_id(participant);
+            return (!participant.is_empty()).then_some(StaticMermaidLifecycle {
+                kind,
+                participant,
             });
         }
     }
@@ -2008,6 +2036,15 @@ fn render_static_sequence_mermaid_svg(
             StaticMermaidSequenceItem::Fragment(fragment) => {
                 render_static_sequence_fragment(&mut out, fragment, y, width, margin)
             }
+            StaticMermaidSequenceItem::Lifecycle(lifecycle) => render_static_sequence_lifecycle(
+                &mut out,
+                &sequence,
+                lifecycle,
+                y,
+                margin,
+                participant_width,
+                participant_gap,
+            ),
         }
     }
 
@@ -2136,6 +2173,56 @@ fn render_static_sequence_fragment(
         1,
         "var(--muted)",
     ));
+    out.push_str("</g>");
+}
+
+fn render_static_sequence_lifecycle(
+    out: &mut String,
+    sequence: &StaticMermaidSequence,
+    lifecycle: &StaticMermaidLifecycle,
+    y: usize,
+    margin: usize,
+    participant_width: usize,
+    participant_gap: usize,
+) {
+    let Some(index) = sequence
+        .participant_indices
+        .get(&lifecycle.participant)
+        .copied()
+    else {
+        return;
+    };
+
+    let center_x =
+        static_sequence_participant_center_x(index, participant_width, participant_gap, margin);
+    let width = 128usize;
+    let height = 30usize;
+    let x = center_x.saturating_sub(width / 2);
+    let rect_y = y.saturating_sub(height / 2);
+    let label = static_sequence_lifecycle_display_text(sequence, lifecycle);
+
+    out.push_str(&format!(
+        "<g class=\"mermaid-lifecycle\"><rect x=\"{x}\" y=\"{rect_y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--muted)\"/>"
+    ));
+    out.push_str(&render_static_sequence_label(
+        &label,
+        x + width / 2,
+        rect_y + height / 2,
+        28,
+        1,
+        "var(--muted)",
+    ));
+
+    if lifecycle.kind == StaticMermaidLifecycleKind::Destroy {
+        let cross_left = center_x.saturating_sub(9);
+        let cross_right = center_x + 9;
+        let cross_top = rect_y + height + 6;
+        let cross_bottom = cross_top + 18;
+        out.push_str(&format!(
+            "<line x1=\"{cross_left}\" y1=\"{cross_top}\" x2=\"{cross_right}\" y2=\"{cross_bottom}\" stroke=\"var(--muted)\" stroke-width=\"2\"/><line x1=\"{cross_right}\" y1=\"{cross_top}\" x2=\"{cross_left}\" y2=\"{cross_bottom}\" stroke=\"var(--muted)\" stroke-width=\"2\"/>"
+        ));
+    }
+
     out.push_str("</g>");
 }
 
@@ -2276,10 +2363,24 @@ enum StaticMermaidFragmentKind {
 }
 
 #[derive(Clone)]
+struct StaticMermaidLifecycle {
+    kind: StaticMermaidLifecycleKind,
+    participant: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StaticMermaidLifecycleKind {
+    Activate,
+    Deactivate,
+    Destroy,
+}
+
+#[derive(Clone)]
 enum StaticMermaidSequenceItem {
     Message(StaticMermaidMessage),
     Note(StaticMermaidNote),
     Fragment(StaticMermaidFragment),
+    Lifecycle(StaticMermaidLifecycle),
 }
 
 fn static_mermaid_fragment_display_text(fragment: &StaticMermaidFragment) -> String {
@@ -2303,6 +2404,29 @@ fn static_mermaid_fragment_label(kind: StaticMermaidFragmentKind) -> &'static st
         StaticMermaidFragmentKind::Option => "option",
         StaticMermaidFragmentKind::Break => "break",
         StaticMermaidFragmentKind::End => "end",
+    }
+}
+
+fn static_sequence_lifecycle_display_text(
+    sequence: &StaticMermaidSequence,
+    lifecycle: &StaticMermaidLifecycle,
+) -> String {
+    let action = static_sequence_lifecycle_label(lifecycle.kind);
+    let participant = sequence
+        .participant_indices
+        .get(&lifecycle.participant)
+        .and_then(|index| sequence.participants.get(*index))
+        .map(|participant| participant.label.as_str())
+        .unwrap_or(lifecycle.participant.as_str());
+
+    format!("{action} {participant}")
+}
+
+fn static_sequence_lifecycle_label(kind: StaticMermaidLifecycleKind) -> &'static str {
+    match kind {
+        StaticMermaidLifecycleKind::Activate => "activate",
+        StaticMermaidLifecycleKind::Deactivate => "deactivate",
+        StaticMermaidLifecycleKind::Destroy => "destroy",
     }
 }
 
@@ -3273,6 +3397,9 @@ mod tests {
         assert!(html.contains("<svg class=\"mermaid-static\""));
         assert!(html.contains(">Export HTML<"));
         assert!(html.contains("Mermaid sequence diagram preview"));
+        assert!(html.contains("class=\"mermaid-lifecycle\""));
+        assert!(html.contains(">activate Vellum</tspan>"));
+        assert!(html.contains(">destroy Browser</tspan>"));
         assert!(html.contains(">Save PDF</tspan>"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
@@ -4112,6 +4239,22 @@ mod tests {
         assert!(html.contains(">end</tspan>"));
         assert!(html.contains(">Reminder</tspan>"));
         assert!(html.contains(">Revise</tspan>"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_sequence_lifecycle_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nsequenceDiagram\n  participant App as Vellum\n  Writer->>App: Start\n  activate App\n  App-->>Writer: Ready\n  deactivate App\n  destroy App\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("class=\"mermaid-lifecycle\""));
+        assert!(html.contains(">activate Vellum</tspan>"));
+        assert!(html.contains(">deactivate Vellum</tspan>"));
+        assert!(html.contains(">destroy Vellum</tspan>"));
+        assert!(html.contains(">Ready</tspan>"));
     }
 
     #[test]
