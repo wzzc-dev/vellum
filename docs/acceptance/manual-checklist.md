@@ -40,6 +40,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - With the document open, edit the Markdown file in another editor and save it.
 - Confirm Vellum detects the external change and offers the expected reload or keep-current conflict path when local edits exist.
 - Rename the file in the workspace tree and confirm the open tab follows the new path.
+- Try renaming a file with a path separator or `..` and confirm the rename is rejected without moving it.
 - Restart the app after the rename and confirm the last-opened document restores from the new path.
 - Try opening a deleted recent file and confirm it is removed from the recent files menu.
 - Open another Markdown file from the workspace tree, use Save As for a copied file, and confirm both paths appear at the top of the recent files menu.

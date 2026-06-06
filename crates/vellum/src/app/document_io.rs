@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Component, Path},
+};
 
 use super::layout::next_untitled_path;
 use super::*;
@@ -586,6 +589,25 @@ fn workspace_root_for_document_path(current_root: Option<&Path>, path: &Path) ->
     path.parent().map(Path::to_path_buf)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameNameError {
+    Empty,
+    Invalid,
+}
+
+fn rename_destination(parent: &Path, raw_name: &str) -> Result<PathBuf, RenameNameError> {
+    let name = raw_name.trim();
+    if name.is_empty() {
+        return Err(RenameNameError::Empty);
+    }
+
+    let mut components = Path::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(name)), None) => Ok(parent.join(name)),
+        _ => Err(RenameNameError::Invalid),
+    }
+}
+
 impl VellumApp {
     pub(super) fn reveal_in_finder(&self, path: &std::path::Path) {
         #[cfg(target_os = "macos")]
@@ -801,25 +823,32 @@ impl VellumApp {
             return;
         };
 
-        let new_name = input.read(cx).value().to_string();
-        if new_name.is_empty() {
-            cx.notify();
-            return;
-        }
-
         let Some(parent) = path.parent() else {
             cx.notify();
             return;
         };
 
-        let new_path = parent.join(&new_name);
+        let new_name = input.read(cx).value().to_string();
+        let new_path = match rename_destination(parent, &new_name) {
+            Ok(path) => path,
+            Err(RenameNameError::Empty) => {
+                cx.notify();
+                return;
+            }
+            Err(RenameNameError::Invalid) => {
+                self.set_status("Rename failed: use a single file or folder name");
+                cx.notify();
+                return;
+            }
+        };
         if new_path == path {
             cx.notify();
             return;
         }
 
         if new_path.exists() {
-            self.set_status(format!("A file named \"{}\" already exists", new_name));
+            let name = new_path.file_name().unwrap_or_default().to_string_lossy();
+            self.set_status(format!("A file named \"{}\" already exists", name));
             cx.notify();
             return;
         }
@@ -878,25 +907,32 @@ impl VellumApp {
             return;
         };
 
-        let new_name = input.read(cx).value().to_string();
-        if new_name.is_empty() {
-            cx.notify();
-            return;
-        }
-
         let Some(parent) = path.parent() else {
             cx.notify();
             return;
         };
 
-        let new_path = parent.join(&new_name);
+        let new_name = input.read(cx).value().to_string();
+        let new_path = match rename_destination(parent, &new_name) {
+            Ok(path) => path,
+            Err(RenameNameError::Empty) => {
+                cx.notify();
+                return;
+            }
+            Err(RenameNameError::Invalid) => {
+                self.set_status("Rename failed: use a single file or folder name");
+                cx.notify();
+                return;
+            }
+        };
         if new_path == path {
             cx.notify();
             return;
         }
 
         if new_path.exists() {
-            self.set_status(format!("A file named \"{}\" already exists", new_name));
+            let name = new_path.file_name().unwrap_or_default().to_string_lossy();
+            self.set_status(format!("A file named \"{}\" already exists", name));
             cx.notify();
             return;
         }
@@ -1078,6 +1114,38 @@ mod tests {
         assert_eq!(
             workspace_root_for_document_path(Some(&root), &path),
             Some(PathBuf::from("/notes/project-old"))
+        );
+    }
+
+    #[test]
+    fn rename_destination_accepts_single_trimmed_name() {
+        assert_eq!(
+            rename_destination(Path::new("/notes"), "  draft.md  "),
+            Ok(PathBuf::from("/notes/draft.md"))
+        );
+    }
+
+    #[test]
+    fn rename_destination_rejects_empty_names() {
+        assert_eq!(
+            rename_destination(Path::new("/notes"), "  "),
+            Err(RenameNameError::Empty)
+        );
+    }
+
+    #[test]
+    fn rename_destination_rejects_path_like_names() {
+        assert_eq!(
+            rename_destination(Path::new("/notes"), "../draft.md"),
+            Err(RenameNameError::Invalid)
+        );
+        assert_eq!(
+            rename_destination(Path::new("/notes"), "folder/draft.md"),
+            Err(RenameNameError::Invalid)
+        );
+        assert_eq!(
+            rename_destination(Path::new("/notes"), "/tmp/draft.md"),
+            Err(RenameNameError::Invalid)
         );
     }
 
