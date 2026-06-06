@@ -172,11 +172,19 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
         )),
         "longform sample should include a Mermaid diagram"
     );
-    assert!(
-        LONGFORM_ACCEPTANCE_SAMPLE.contains("flowchart")
-            && LONGFORM_ACCEPTANCE_SAMPLE.contains("sequenceDiagram"),
-        "longform sample should cover flowchart and sequence Mermaid diagrams"
-    );
+    for diagram_header in [
+        "flowchart",
+        "sequenceDiagram",
+        "stateDiagram-v2",
+        "classDiagram",
+        "erDiagram",
+        "pie showData",
+    ] {
+        assert!(
+            LONGFORM_ACCEPTANCE_SAMPLE.contains(diagram_header),
+            "longform sample should cover Mermaid diagram type {diagram_header}"
+        );
+    }
     assert!(
         map.blocks
             .iter()
@@ -185,8 +193,8 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
                 Some(EmbeddedNodeKind::Diagram { ref language }) if language == "mermaid"
             ))
             .count()
-            >= 2,
-        "longform sample should include both Mermaid diagram blocks"
+            >= 6,
+        "longform sample should include each supported Mermaid diagram block"
     );
     assert!(
         map.blocks.iter().any(|block| matches!(
