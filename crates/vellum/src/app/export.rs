@@ -72,12 +72,38 @@ impl<'a> ExportAssetContext<'a> {
     }
 
     fn exported_destination(&mut self, destination: &str) -> Result<Option<String>> {
+        let base_dir = self.source_dir.to_path_buf();
+        self.exported_destination_from(&base_dir, destination)
+    }
+
+    fn exported_css_destination_from(
+        &mut self,
+        base_dir: &Path,
+        destination: &str,
+    ) -> Result<Option<String>> {
+        let Some(destination) = self.exported_destination_from(base_dir, destination)? else {
+            return Ok(None);
+        };
+
+        let asset_prefix = format!("{}/", self.asset_dir_name);
+        Ok(Some(
+            destination
+                .strip_prefix(&asset_prefix)
+                .unwrap_or(&destination)
+                .to_string(),
+        ))
+    }
+
+    fn exported_destination_from(
+        &mut self,
+        base_dir: &Path,
+        destination: &str,
+    ) -> Result<Option<String>> {
         if should_leave_local_destination(destination) {
             return Ok(None);
         }
 
-        let Some((source_path, reference_suffix)) =
-            local_asset_source_path(self.source_dir, destination)
+        let Some((source_path, reference_suffix)) = local_asset_source_path(base_dir, destination)
         else {
             return Ok(None);
         };
@@ -93,17 +119,50 @@ impl<'a> ExportAssetContext<'a> {
         fs::create_dir_all(&asset_dir)
             .with_context(|| format!("failed to create {}", asset_dir.display()))?;
         let target_path = asset_dir.join(&file_name);
-        fs::copy(&source_path, &target_path).with_context(|| {
+
+        let exported = format!("{}/{}", self.asset_dir_name, file_name);
+        self.copied.insert(cache_key, exported.clone());
+        self.copy_export_asset(&source_path, &target_path)?;
+        Ok(Some(format!("{exported}{reference_suffix}")))
+    }
+
+    fn copy_export_asset(&mut self, source_path: &Path, target_path: &Path) -> Result<()> {
+        if is_css_asset(source_path) {
+            return self.copy_css_asset(source_path, target_path);
+        }
+
+        fs::copy(source_path, target_path).with_context(|| {
             format!(
                 "failed to copy {} to {}",
                 source_path.display(),
                 target_path.display()
             )
         })?;
+        Ok(())
+    }
 
-        let exported = format!("{}/{}", self.asset_dir_name, file_name);
-        self.copied.insert(cache_key, exported.clone());
-        Ok(Some(format!("{exported}{reference_suffix}")))
+    fn copy_css_asset(&mut self, source_path: &Path, target_path: &Path) -> Result<()> {
+        let bytes = fs::read(source_path)
+            .with_context(|| format!("failed to read {}", source_path.display()))?;
+        let Ok(css) = String::from_utf8(bytes) else {
+            fs::copy(source_path, target_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+            return Ok(());
+        };
+
+        let base_dir = source_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.source_dir.to_path_buf());
+        let rewritten = rewrite_css_asset_urls(&css, &base_dir, self)?.unwrap_or(css);
+        fs::write(target_path, rewritten)
+            .with_context(|| format!("failed to write {}", target_path.display()))?;
+        Ok(())
     }
 
     fn unique_asset_file_name(&mut self, source_path: &Path) -> String {
@@ -721,6 +780,24 @@ struct CssUrlFunction {
 }
 
 fn rewrite_css_urls(value: &str, assets: &mut ExportAssetContext<'_>) -> Result<Option<String>> {
+    let base_dir = assets.source_dir.to_path_buf();
+    rewrite_css_urls_with_base(value, &base_dir, false, assets)
+}
+
+fn rewrite_css_asset_urls(
+    value: &str,
+    base_dir: &Path,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
+    rewrite_css_urls_with_base(value, base_dir, true, assets)
+}
+
+fn rewrite_css_urls_with_base(
+    value: &str,
+    base_dir: &Path,
+    asset_relative: bool,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
     let mut out = String::with_capacity(value.len());
     let mut changed = false;
     let mut index = 0usize;
@@ -741,7 +818,12 @@ fn rewrite_css_urls(value: &str, assets: &mut ExportAssetContext<'_>) -> Result<
 
         let raw = &value[start..start + function.raw_len];
         let destination = decode_html_entities(&raw[function.value_range.clone()]);
-        if let Some(destination) = assets.exported_destination(&destination)? {
+        let destination = if asset_relative {
+            assets.exported_css_destination_from(base_dir, &destination)?
+        } else {
+            assets.exported_destination_from(base_dir, &destination)?
+        };
+        if let Some(destination) = destination {
             out.push_str(&raw[..function.value_range.start]);
             out.push_str(&css_url_replacement(&destination, function.quote));
             out.push_str(&raw[function.value_range.end..]);
@@ -1192,6 +1274,12 @@ fn resolve_local_asset_path(source_dir: &Path, destination: &str) -> PathBuf {
     } else {
         source_dir.join(path)
     }
+}
+
+fn is_css_asset(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("css"))
 }
 
 fn export_asset_dir_name(output_path: &Path) -> String {
@@ -5547,8 +5635,21 @@ mod tests {
         let source = root.join("source");
         let export_dir = root.join("export");
         std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(source.join("assets/fonts")).unwrap();
+        std::fs::create_dir_all(source.join("assets/images")).unwrap();
         std::fs::create_dir_all(&export_dir).unwrap();
-        std::fs::write(source.join("assets/article.css"), b"css").unwrap();
+        std::fs::write(
+            source.join("assets/article.css"),
+            concat!(
+                ".hero { background: url(\"images/bg.png#hero\"); }\n",
+                "@font-face { src: url(fonts/body.woff2?cache=1) format(\"woff2\"); }\n",
+                ".remote { background: url(https://example.com/remote.png); }\n",
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        std::fs::write(source.join("assets/images/bg.png"), b"bg").unwrap();
+        std::fs::write(source.join("assets/fonts/body.woff2"), b"font").unwrap();
         std::fs::write(source.join("assets/frame.html"), b"frame").unwrap();
         std::fs::write(source.join("assets/widget.svg"), b"widget").unwrap();
         std::fs::write(source.join("assets/report.pdf"), b"report").unwrap();
@@ -5572,9 +5673,18 @@ mod tests {
         assert!(html.contains("src=\"article_assets/frame.html#draft\""));
         assert!(html.contains("src='article_assets/widget.svg'"));
         assert!(html.contains("data=\"article_assets/report.pdf?download=1#page-2\""));
+        let css = std::fs::read_to_string(export_dir.join("article_assets/article.css")).unwrap();
+        assert!(css.contains("url(\"bg.png#hero\")"));
+        assert!(css.contains("url(body.woff2?cache=1) format(\"woff2\")"));
+        assert!(css.contains("url(https://example.com/remote.png)"));
+        assert!(!css.contains("article_assets/bg.png"));
         assert_eq!(
-            std::fs::read(export_dir.join("article_assets/article.css")).unwrap(),
-            b"css"
+            std::fs::read(export_dir.join("article_assets/bg.png")).unwrap(),
+            b"bg"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/body.woff2")).unwrap(),
+            b"font"
         );
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/frame.html")).unwrap(),
