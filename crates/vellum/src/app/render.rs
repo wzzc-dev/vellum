@@ -30,7 +30,7 @@ fn flatten_tree_items(
     let mut result = Vec::new();
     for item in items {
         let path = PathBuf::from(item.id.as_ref());
-        let is_folder = !item.children.is_empty();
+        let is_folder = path.is_dir();
         let is_expanded = item.is_expanded();
         result.push(FileTreeEntry {
             path: path.clone(),
@@ -53,123 +53,169 @@ impl VellumApp {
         let foreground = cx.theme().foreground;
         let renaming_path = self.renaming_path.clone();
         let rename_input = self.rename_input.clone();
+        let file_filter = self.file_filter.clone();
+        let filter_input = self.file_filter_input.clone();
+        let is_filtering = !file_filter.trim().is_empty();
+        let has_workspace = self.workspace.root.is_some();
 
-        let entries = match self.workspace.tree_items() {
+        let tree_items = if is_filtering {
+            self.workspace.tree_items_matching(&file_filter)
+        } else {
+            self.workspace.tree_items()
+        };
+        let entries = match tree_items {
             Ok(items) => flatten_tree_items(&items, 0),
             Err(_) => Vec::new(),
         };
         let entries = Rc::new(entries);
+        let filter_bar = div().w_full().child(Input::new(&filter_input));
+
+        if entries.is_empty() {
+            let empty_label = if !has_workspace {
+                "No folder open"
+            } else if is_filtering {
+                "No matches"
+            } else {
+                "No Markdown files"
+            };
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(filter_bar)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(empty_label),
+                )
+                .into_any_element();
+        }
 
         div()
             .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(filter_bar)
             .child(
-                uniform_list("file-tree", entries.len(), {
-                    let entries = entries.clone();
-                    move |visible_range, _window, _cx| {
-                        let mut items = Vec::with_capacity(visible_range.len());
-                        for ix in visible_range {
-                            let entry = &entries[ix];
-                            let path = entry.path.clone();
-                            let is_selected_file = selected_path.as_ref() == Some(&path);
-                            let is_folder = entry.is_folder;
-                            let is_renaming = renaming_path.as_ref() == Some(&path);
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(
+                        uniform_list("file-tree", entries.len(), {
+                            let entries = entries.clone();
+                            move |visible_range, _window, _cx| {
+                                let mut items = Vec::with_capacity(visible_range.len());
+                                for ix in visible_range {
+                                    let entry = &entries[ix];
+                                    let path = entry.path.clone();
+                                    let is_selected_file = selected_path.as_ref() == Some(&path);
+                                    let is_folder = entry.is_folder;
+                                    let is_renaming = renaming_path.as_ref() == Some(&path);
 
-                            let label = if is_folder {
-                                if entry.is_expanded {
-                                    format!("v {}", entry.label)
-                                } else {
-                                    format!("> {}", entry.label)
-                                }
-                            } else {
-                                entry.label.clone()
-                            };
+                                    let label = if is_folder {
+                                        if entry.is_expanded {
+                                            format!("v {}", entry.label)
+                                        } else {
+                                            format!("> {}", entry.label)
+                                        }
+                                    } else {
+                                        entry.label.clone()
+                                    };
 
-                            let content = if is_renaming {
-                                if let Some(input) = rename_input.as_ref() {
-                                    div()
+                                    let content = if is_renaming {
+                                        if let Some(input) = rename_input.as_ref() {
+                                            div()
+                                                .w_full()
+                                                .on_key_down({
+                                                    let view = view.clone();
+                                                    move |event: &gpui::KeyDownEvent, _, cx| {
+                                                        if event.keystroke.key.as_str() == "escape" {
+                                                            if let Some(entity) = view.upgrade() {
+                                                                let _ = entity.update(cx, |this, cx| {
+                                                                    this.cancel_rename(cx);
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                })
+                                                .child(Input::new(input).w_full().text_sm())
+                                                .into_any_element()
+                                        } else {
+                                            div()
+                                                .w_full()
+                                                .min_w(px(0.))
+                                                .overflow_hidden()
+                                                .text_color(foreground)
+                                                .truncate()
+                                                .child(label)
+                                                .into_any_element()
+                                        }
+                                    } else {
+                                        div()
+                                            .w_full()
+                                            .min_w(px(0.))
+                                            .overflow_hidden()
+                                            .text_color(foreground)
+                                            .truncate()
+                                            .child(label)
+                                            .into_any_element()
+                                    };
+
+                                    let item = ListItem::new(ix)
+                                        .selected(is_selected_file)
+                                        .rounded(px(6.))
+                                        .text_sm()
                                         .w_full()
-                                        .on_key_down({
-                                            let view = view.clone();
-                                            move |event: &gpui::KeyDownEvent, _, cx| {
-                                                if event.keystroke.key.as_str() == "escape" {
-                                                    if let Some(entity) = view.upgrade() {
-                                                        let _ = entity.update(cx, |this, cx| {
-                                                            this.cancel_rename(cx);
-                                                        });
+                                        .pr_2()
+                                        .pl(px(8. + entry.depth as f32 * 14.))
+                                        .child(content)
+                                        .when(!is_renaming, |this| {
+                                            this.on_click({
+                                                let view = view.clone();
+                                                let path = path.clone();
+                                                move |_, window, cx| {
+                                                    if path.is_file() {
+                                                        if let Some(entity) = view.upgrade() {
+                                                            let _ = entity.update(cx, |this, cx| {
+                                                                this.open_file_in_current_tab(
+                                                                    path.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
                                                     }
                                                 }
-                                            }
-                                        })
-                                        .child(Input::new(input).w_full().text_sm())
-                                        .into_any_element()
-                                } else {
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .text_color(foreground)
-                                        .truncate()
-                                        .child(label)
-                                        .into_any_element()
-                                }
-                            } else {
-                                div()
-                                    .w_full()
-                                    .min_w(px(0.))
-                                    .overflow_hidden()
-                                    .text_color(foreground)
-                                    .truncate()
-                                    .child(label)
-                                    .into_any_element()
-                            };
+                                            })
+                                        });
 
-                            let item = ListItem::new(ix)
-                                .selected(is_selected_file)
-                                .rounded(px(6.))
-                                .text_sm()
-                                .w_full()
-                                .pr_2()
-                                .pl(px(8. + entry.depth as f32 * 14.))
-                                .child(content)
-                                .when(!is_renaming, |this| {
-                                    this.on_click({
+                                    let menu_item = item.context_menu({
                                         let view = view.clone();
                                         let path = path.clone();
-                                        move |_, window, cx| {
-                                            if path.is_file() {
-                                                if let Some(entity) = view.upgrade() {
-                                                    let _ = entity.update(cx, |this, cx| {
-                                                        this.open_file_in_current_tab(
-                                                            path.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            }
+                                        move |menu, _, _| {
+                                            build_file_tree_context_menu(
+                                                menu,
+                                                view.clone(),
+                                                path.clone(),
+                                                is_folder,
+                                            )
                                         }
-                                    })
-                                });
+                                    });
 
-                            let menu_item = item.context_menu({
-                                let view = view.clone();
-                                let path = path.clone();
-                                move |menu, _, _| {
-                                    build_file_tree_context_menu(
-                                        menu,
-                                        view.clone(),
-                                        path.clone(),
-                                        is_folder,
-                                    )
+                                    items.push(menu_item.into_any_element());
                                 }
-                            });
-
-                            items.push(menu_item.into_any_element());
-                        }
-                        items
-                    }
-                })
-                .size_full(),
+                                items
+                            }
+                        })
+                        .size_full(),
+                    ),
             )
             .into_any_element()
     }

@@ -22,6 +22,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the Mermaid pie chart title, slices, and values remain visible in preview.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
+- Use the file tree filter to find a nested Markdown file, open it, then clear the filter.
 - Open a Markdown file from a nested workspace folder and confirm the sidebar remains rooted at the original workspace folder.
 
 ## Assets

@@ -128,9 +128,11 @@ struct VellumApp {
     find_regex: bool,
     replace_visible: bool,
     replace_query: String,
+    file_filter: String,
     outline_filter: String,
     find_query_input: Entity<InputState>,
     replace_query_input: Entity<InputState>,
+    file_filter_input: Entity<InputState>,
     outline_filter_input: Entity<InputState>,
     goto_line_visible: bool,
     goto_line_query: String,
@@ -441,6 +443,7 @@ impl VellumApp {
         let editor_snapshot = editor.read(cx).snapshot();
         let find_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
         let replace_query_input = cx.new(|cx| InputState::new(window, cx).placeholder("Replace"));
+        let file_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files"));
         let outline_filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter outline"));
         let goto_line_input = cx.new(|cx| InputState::new(window, cx).placeholder("Go to line"));
@@ -504,6 +507,17 @@ impl VellumApp {
             },
         );
 
+        let file_input_subscription = cx.subscribe(
+            &file_filter_input,
+            |this: &mut Self, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let value = this.file_filter_input.read(cx).value();
+                    this.set_file_filter(value);
+                    cx.notify();
+                }
+            },
+        );
+
         let goto_line_input_subscription = cx.subscribe(
             &goto_line_input,
             |this: &mut Self, _, event: &InputEvent, cx| {
@@ -556,9 +570,11 @@ impl VellumApp {
             find_regex: false,
             replace_visible: false,
             replace_query: String::new(),
+            file_filter: String::new(),
             outline_filter: String::new(),
             find_query_input,
             replace_query_input,
+            file_filter_input,
             outline_filter_input,
             goto_line_visible: false,
             goto_line_query: String::new(),
@@ -570,6 +586,7 @@ impl VellumApp {
                 find_input_subscription,
                 replace_input_subscription,
                 outline_input_subscription,
+                file_input_subscription,
                 goto_line_input_subscription,
                 preferences_asset_dir_subscription,
                 cx.subscribe(
@@ -848,6 +865,10 @@ impl VellumApp {
 
     fn set_outline_filter(&mut self, filter: impl Into<String>) {
         self.outline_filter = filter.into();
+    }
+
+    fn set_file_filter(&mut self, filter: impl Into<String>) {
+        self.file_filter = filter.into();
     }
 
     fn open_find_panel(&mut self) {
