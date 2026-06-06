@@ -692,6 +692,7 @@ fn html_asset_tag_len(rest: &str) -> Option<usize> {
         || html_named_tag_matches(rest, "embed")
         || html_named_tag_matches(rest, "iframe")
         || html_named_tag_matches(rest, "object")
+        || html_named_tag_matches(rest, "script")
         || html_named_tag_matches(rest, "source")
         || html_named_tag_matches(rest, "track")
     {
@@ -707,6 +708,7 @@ fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
         || html_named_tag_matches(rest, "video")
         || html_named_tag_matches(rest, "embed")
         || html_named_tag_matches(rest, "iframe")
+        || html_named_tag_matches(rest, "script")
         || html_named_tag_matches(rest, "source")
         || html_named_tag_matches(rest, "track")
     {
@@ -5276,6 +5278,34 @@ mod tests {
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/report.pdf")).unwrap(),
             b"report"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_script_assets() {
+        let root = temp_export_dir("html-raw-script-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/app.js"), b"console.log('ok')").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            "<script defer src=\"assets/app.js?cache=1#boot\"></script>",
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("src=\"article_assets/app.js?cache=1#boot\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/app.js")).unwrap(),
+            b"console.log('ok')"
         );
 
         std::fs::remove_dir_all(root).unwrap();
