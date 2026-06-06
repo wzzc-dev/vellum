@@ -130,6 +130,17 @@ sequenceDiagram
   Browser-->>Writer: Save PDF
 ```
 
+```mermaid
+stateDiagram-v2
+  [*] --> Draft
+  state "Review queue" as Review
+  Draft --> Review: Save changes
+  Review --> Exported: Export HTML
+  Review --> Draft: Revise
+  note right of Review: External file changes remain visible
+  Exported --> [*]
+```
+
 ## Footnote
 
 The acceptance pass should verify that footnotes survive export and remain linked.[^acceptance]

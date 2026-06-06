@@ -163,6 +163,9 @@ struct MermaidPreview {
     direction: Option<String>,
     edges: Vec<MermaidEdge>,
     subgraphs: Vec<MermaidSubgraph>,
+    states: Vec<MermaidState>,
+    state_transitions: Vec<MermaidStateTransition>,
+    state_notes: Vec<MermaidStateNote>,
     participants: Vec<MermaidParticipant>,
     messages: Vec<MermaidSequenceMessage>,
     notes: Vec<MermaidSequenceNote>,
@@ -195,6 +198,32 @@ struct MermaidNode {
 struct MermaidSubgraph {
     id: String,
     label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidState {
+    id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidStateTransition {
+    from: String,
+    to: String,
+    label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidStateNote {
+    placement: MermaidStateNotePlacement,
+    state: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MermaidStateNotePlacement {
+    LeftOf,
+    RightOf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2448,6 +2477,19 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     preview.lifecycles.len()
                 )),
         );
+    } else if has_mermaid_state_preview(&preview) {
+        header = header.child(render_mermaid_chip("state".to_string(), palette));
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!(
+                    "{} states, {} transitions, {} notes",
+                    preview.states.len(),
+                    preview.state_transitions.len(),
+                    preview.state_notes.len()
+                )),
+        );
     } else if let Some(direction) = &preview.direction {
         header = header.child(render_mermaid_chip(direction.clone(), palette));
     }
@@ -2478,6 +2520,27 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     .child(format!(
                         "+{} more sequence items",
                         preview.sequence_items.len() - 8
+                    )),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
+    } else if has_mermaid_state_preview(&preview) {
+        body = body.child(render_mermaid_state_preview(&preview, palette));
+        if preview.state_transitions.len() + preview.state_notes.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!(
+                        "+{} more state items",
+                        preview.state_transitions.len() + preview.state_notes.len() - 8
                     )),
             );
         }
@@ -2534,6 +2597,12 @@ fn has_mermaid_sequence_preview(preview: &MermaidPreview) -> bool {
         || !preview.lifecycles.is_empty()
 }
 
+fn has_mermaid_state_preview(preview: &MermaidPreview) -> bool {
+    !preview.states.is_empty()
+        || !preview.state_transitions.is_empty()
+        || !preview.state_notes.is_empty()
+}
+
 fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
     let direction = mermaid_graph_direction(preview);
     let mut graph = div().w_full().flex().flex_col().gap_2();
@@ -2557,6 +2626,32 @@ fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette
         graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
     }
     graph.into_any_element()
+}
+
+fn render_mermaid_state_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
+    let mut states = div().w_full().flex().flex_wrap().gap_1();
+    for state in preview.states.iter().take(8) {
+        states = states.child(render_mermaid_chip(mermaid_state_display_text(state), palette));
+    }
+    if preview.states.len() > 8 {
+        states = states.child(render_mermaid_chip(
+            format!("+{} states", preview.states.len() - 8),
+            palette,
+        ));
+    }
+
+    let mut diagram = div().w_full().flex().flex_col().gap_2().child(states);
+    let mut shown_items = 0usize;
+    for transition in preview.state_transitions.iter().take(8) {
+        diagram =
+            diagram.child(render_mermaid_state_transition_card(preview, transition, palette));
+        shown_items += 1;
+    }
+    for note in preview.state_notes.iter().take(8usize.saturating_sub(shown_items)) {
+        diagram = diagram.child(render_mermaid_state_note_card(preview, note, palette));
+    }
+
+    diagram.into_any_element()
 }
 
 fn render_mermaid_sequence_preview(
@@ -2637,6 +2732,86 @@ fn render_mermaid_sequence_message_card(
     }
 
     card.into_any_element()
+}
+
+fn render_mermaid_state_transition_card(
+    preview: &MermaidPreview,
+    transition: &MermaidStateTransition,
+    palette: RenderPalette,
+) -> AnyElement {
+    div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(render_mermaid_state_card(
+            &mermaid_state_endpoint_label(preview, &transition.from, true),
+            palette,
+        ))
+        .child(render_mermaid_connector(
+            transition.label.as_deref(),
+            true,
+            palette,
+        ))
+        .child(render_mermaid_state_card(
+            &mermaid_state_endpoint_label(preview, &transition.to, false),
+            palette,
+        ))
+        .into_any_element()
+}
+
+fn render_mermaid_state_note_card(
+    preview: &MermaidPreview,
+    note: &MermaidStateNote,
+    palette: RenderPalette,
+) -> AnyElement {
+    let placement = match note.placement {
+        MermaidStateNotePlacement::LeftOf => "note left of",
+        MermaidStateNotePlacement::RightOf => "note right of",
+    };
+    let state = mermaid_state_endpoint_label(preview, &note.state, false);
+
+    div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.highlight_background.opacity(0.16))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color)
+                .child(format!("{placement} {state}")),
+        )
+        .child(render_mermaid_chip(note.text.clone(), palette))
+        .into_any_element()
+}
+
+fn render_mermaid_state_card(label: &str, palette: RenderPalette) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w(px(0.))
+        .max_w(px(220.))
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.06))
+        .px_3()
+        .py_2()
+        .text_size(px(body_font_size()))
+        .line_height(px(body_line_height()))
+        .text_color(palette.text_color)
+        .child(label.to_string())
+        .into_any_element()
 }
 
 fn render_mermaid_sequence_note_card(
@@ -2764,6 +2939,27 @@ fn mermaid_sequence_lifecycle_label(kind: MermaidSequenceLifecycleKind) -> &'sta
         MermaidSequenceLifecycleKind::Deactivate => "deactivate",
         MermaidSequenceLifecycleKind::Destroy => "destroy",
     }
+}
+
+fn mermaid_state_display_text(state: &MermaidState) -> String {
+    if state.id == state.label {
+        state.label.clone()
+    } else {
+        format!("{} ({})", state.label, state.id)
+    }
+}
+
+fn mermaid_state_endpoint_label(preview: &MermaidPreview, id: &str, is_from: bool) -> String {
+    if mermaid_state_is_terminal(id) {
+        return if is_from { "start" } else { "end" }.to_string();
+    }
+
+    preview
+        .states
+        .iter()
+        .find(|state| state.id == id)
+        .map(mermaid_state_display_text)
+        .unwrap_or_else(|| id.to_string())
 }
 
 fn mermaid_sequence_participant_label(preview: &MermaidPreview, id: &str) -> String {
@@ -2903,6 +3099,9 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
     if mermaid_is_sequence_diagram(source) {
         return parse_mermaid_sequence_preview(source);
     }
+    if mermaid_is_state_diagram(source) {
+        return parse_mermaid_state_preview(source);
+    }
 
     let mut preview = MermaidPreview::default();
 
@@ -2946,6 +3145,281 @@ fn mermaid_is_sequence_diagram(source: &str) -> bool {
         return line.eq_ignore_ascii_case("sequencediagram");
     }
     false
+}
+
+fn mermaid_is_state_diagram(source: &str) -> bool {
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+        return line.eq_ignore_ascii_case("statediagram")
+            || line.eq_ignore_ascii_case("statediagram-v2");
+    }
+    false
+}
+
+fn parse_mermaid_state_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+    let mut state_indices = HashMap::new();
+    let mut pending_note: Option<(MermaidStateNotePlacement, String, Vec<String>)> = None;
+    let mut saw_state = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_state {
+            if line.eq_ignore_ascii_case("statediagram")
+                || line.eq_ignore_ascii_case("statediagram-v2")
+            {
+                saw_state = true;
+                continue;
+            }
+            continue;
+        }
+
+        let mut completed_note = None;
+        let mut clear_pending_note = false;
+        if let Some((placement, state, lines)) = pending_note.as_mut() {
+            if mermaid_state_note_end(line) {
+                clear_pending_note = true;
+                let text = lines
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !state.is_empty() && !text.is_empty() {
+                    completed_note = Some(MermaidStateNote {
+                        placement: *placement,
+                        state: state.clone(),
+                        text,
+                    });
+                }
+            } else {
+                let text = clean_mermaid_note_text(line);
+                if !text.is_empty() {
+                    lines.push(text);
+                }
+            }
+        }
+        if let Some(note) = completed_note {
+            upsert_mermaid_state(
+                &mut preview.states,
+                &mut state_indices,
+                MermaidState {
+                    id: note.state.clone(),
+                    label: note.state.clone(),
+                },
+            );
+            preview.state_notes.push(note);
+        }
+        if clear_pending_note {
+            pending_note = None;
+        }
+        if clear_pending_note || pending_note.is_some() {
+            continue;
+        }
+
+        if let Some((placement, state, text)) = parse_mermaid_state_note_start(line) {
+            upsert_mermaid_state(
+                &mut preview.states,
+                &mut state_indices,
+                MermaidState {
+                    id: state.clone(),
+                    label: state.clone(),
+                },
+            );
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                preview.state_notes.push(MermaidStateNote {
+                    placement,
+                    state,
+                    text,
+                });
+            } else {
+                pending_note = Some((placement, state, Vec::new()));
+            }
+            continue;
+        }
+
+        if let Some(transition) = parse_mermaid_state_transition(line) {
+            if !mermaid_state_is_terminal(&transition.from) {
+                upsert_mermaid_state(
+                    &mut preview.states,
+                    &mut state_indices,
+                    MermaidState {
+                        id: transition.from.clone(),
+                        label: transition.from.clone(),
+                    },
+                );
+            }
+            if !mermaid_state_is_terminal(&transition.to) {
+                upsert_mermaid_state(
+                    &mut preview.states,
+                    &mut state_indices,
+                    MermaidState {
+                        id: transition.to.clone(),
+                        label: transition.to.clone(),
+                    },
+                );
+            }
+            preview.state_transitions.push(transition);
+            continue;
+        }
+
+        if let Some(state) = parse_mermaid_state_declaration(line) {
+            upsert_mermaid_state(&mut preview.states, &mut state_indices, state);
+            continue;
+        }
+
+        if is_mermaid_state_non_transition_directive(line) {
+            continue;
+        }
+
+        preview.unsupported_lines += 1;
+    }
+
+    preview
+}
+
+fn parse_mermaid_state_transition(line: &str) -> Option<MermaidStateTransition> {
+    let operator_start = line.find("-->")?;
+    let from = clean_mermaid_state_id(&line[..operator_start]);
+    let rest = line[operator_start + 3..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = clean_mermaid_state_id(to_source);
+    let label = clean_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(MermaidStateTransition {
+        from,
+        to,
+        label: (!label.is_empty()).then_some(label),
+    })
+}
+
+fn parse_mermaid_state_declaration(line: &str) -> Option<MermaidState> {
+    let rest = if let Some(rest) = strip_mermaid_sequence_keyword(line, "state") {
+        rest.trim()
+    } else if line.contains("-->") || line.starts_with("note ") {
+        return None;
+    } else {
+        line
+    };
+    let rest = rest.trim_end_matches('{').trim();
+    if rest.is_empty() || rest == "}" || mermaid_state_is_terminal(rest) {
+        return None;
+    }
+
+    if let Some((left, right)) = split_mermaid_sequence_alias(rest) {
+        let left = left.trim();
+        let right = right.trim();
+        let (id, label) = if left.starts_with('"') || left.starts_with('\'') {
+            (clean_mermaid_state_id(right), clean_mermaid_label(left))
+        } else {
+            (clean_mermaid_state_id(left), clean_mermaid_label(right))
+        };
+        return (!id.is_empty()).then_some(MermaidState {
+            label: if label.is_empty() { id.clone() } else { label },
+            id,
+        });
+    }
+
+    if let Some((id_source, label_source)) = rest.split_once(':') {
+        let id = clean_mermaid_state_id(id_source);
+        let label = clean_mermaid_note_text(label_source);
+        return (!id.is_empty()).then_some(MermaidState {
+            label: if label.is_empty() { id.clone() } else { label },
+            id,
+        });
+    }
+
+    let id = clean_mermaid_state_id(rest);
+    (!id.is_empty()).then_some(MermaidState {
+        label: id.clone(),
+        id,
+    })
+}
+
+fn parse_mermaid_state_note_start(
+    line: &str,
+) -> Option<(MermaidStateNotePlacement, String, Option<String>)> {
+    let rest = strip_ascii_prefix(line, "note ")?;
+    let (placement, rest) = if let Some(rest) = strip_ascii_prefix(rest.trim(), "left of ") {
+        (MermaidStateNotePlacement::LeftOf, rest)
+    } else if let Some(rest) = strip_ascii_prefix(rest.trim(), "right of ") {
+        (MermaidStateNotePlacement::RightOf, rest)
+    } else {
+        return None;
+    };
+    let (state_source, text) = rest.split_once(':').unwrap_or((rest, ""));
+    let state = clean_mermaid_state_id(state_source);
+    let text = clean_mermaid_note_text(text);
+
+    (!state.is_empty()).then_some((
+        placement,
+        state,
+        (!text.is_empty()).then_some(text),
+    ))
+}
+
+fn mermaid_state_note_end(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "end note" || lower == "endnote"
+}
+
+fn is_mermaid_state_non_transition_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "}"
+        || lower == "end"
+        || lower.starts_with("direction ")
+        || lower.starts_with("classdef ")
+        || lower.starts_with("class ")
+        || lower.starts_with("style ")
+        || lower.starts_with("hide empty description")
+        || lower.starts_with("accdescr")
+        || lower.starts_with("acctitle")
+}
+
+fn upsert_mermaid_state(
+    states: &mut Vec<MermaidState>,
+    state_indices: &mut HashMap<String, usize>,
+    state: MermaidState,
+) {
+    if let Some(index) = state_indices.get(&state.id).copied() {
+        if states[index].label == states[index].id && state.label != state.id {
+            states[index].label = state.label;
+        }
+        return;
+    }
+
+    state_indices.insert(state.id.clone(), states.len());
+    states.push(state);
+}
+
+fn mermaid_state_is_terminal(id: &str) -> bool {
+    id.trim() == "[*]"
+}
+
+fn clean_mermaid_state_id(source: &str) -> String {
+    let trimmed = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+    if trimmed == "[*]" {
+        return "[*]".to_string();
+    }
+
+    clean_mermaid_label(source)
+        .split("<<")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('{')
+        .trim_matches('}')
+        .trim()
+        .to_string()
 }
 
 fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
@@ -5210,8 +5684,8 @@ mod tests {
         FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
         MermaidParticipant, MermaidSequenceFragment, MermaidSequenceFragmentKind,
         MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
-        MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement,
-        MermaidSubgraph,
+        MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState,
+        MermaidStateNote, MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph,
         MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
@@ -5789,6 +6263,56 @@ mod tests {
                     label: "Save".to_string(),
                 },
                 label: None,
+            }]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_state_diagram_transitions_and_notes() {
+        let preview = parse_mermaid_preview(
+            "stateDiagram-v2\n  [*] --> Draft\n  state \"Review queue\" as Review\n  Draft --> Review: save <draft>\n  note right of Review: External change check\n  Review --> [*]\n",
+        );
+
+        assert_eq!(
+            preview.states,
+            vec![
+                MermaidState {
+                    id: "Draft".to_string(),
+                    label: "Draft".to_string(),
+                },
+                MermaidState {
+                    id: "Review".to_string(),
+                    label: "Review queue".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.state_transitions,
+            vec![
+                MermaidStateTransition {
+                    from: "[*]".to_string(),
+                    to: "Draft".to_string(),
+                    label: None,
+                },
+                MermaidStateTransition {
+                    from: "Draft".to_string(),
+                    to: "Review".to_string(),
+                    label: Some("save <draft>".to_string()),
+                },
+                MermaidStateTransition {
+                    from: "Review".to_string(),
+                    to: "[*]".to_string(),
+                    label: None,
+                },
+            ]
+        );
+        assert_eq!(
+            preview.state_notes,
+            vec![MermaidStateNote {
+                placement: MermaidStateNotePlacement::RightOf,
+                state: "Review".to_string(),
+                text: "External change check".to_string(),
             }]
         );
         assert_eq!(preview.unsupported_lines, 0);

@@ -1185,6 +1185,10 @@ fn render_static_mermaid_fallback(source: &str) -> String {
         return render_static_sequence_mermaid_svg(sequence, static_mermaid_marker_id(source));
     }
 
+    if let Some(state) = parse_static_mermaid_state_diagram(source) {
+        return render_static_state_mermaid_svg(state, static_mermaid_marker_id(source));
+    }
+
     if let Some(diagram) = parse_static_mermaid_diagram(source) {
         return render_static_mermaid_svg(diagram, static_mermaid_marker_id(source));
     }
@@ -1471,6 +1475,296 @@ fn render_static_mermaid_node(
     out
 }
 
+fn parse_static_mermaid_state_diagram(source: &str) -> Option<StaticMermaidStateDiagram> {
+    let mut saw_state = false;
+    let mut states = Vec::new();
+    let mut state_indices = HashMap::new();
+    let mut transitions = Vec::new();
+    let mut notes = Vec::new();
+    let mut pending_note: Option<(StaticMermaidStateNotePlacement, String, Vec<String>)> = None;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_state {
+            if static_mermaid_is_state_diagram_header(line) {
+                saw_state = true;
+                continue;
+            }
+            continue;
+        }
+
+        let mut completed_note = None;
+        let mut clear_pending_note = false;
+        if let Some((placement, state, lines)) = pending_note.as_mut() {
+            if static_state_note_end(line) {
+                clear_pending_note = true;
+                let text = lines
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !state.is_empty() && !text.is_empty() {
+                    completed_note = Some(StaticMermaidStateNote {
+                        placement: *placement,
+                        state: state.clone(),
+                        text,
+                    });
+                }
+            } else {
+                let text = clean_static_mermaid_note_text(line);
+                if !text.is_empty() {
+                    lines.push(text);
+                }
+            }
+        }
+        if let Some(note) = completed_note {
+            upsert_static_state(
+                &mut states,
+                &mut state_indices,
+                StaticMermaidState {
+                    id: note.state.clone(),
+                    label: note.state.clone(),
+                },
+            );
+            notes.push(note);
+        }
+        if clear_pending_note {
+            pending_note = None;
+        }
+        if clear_pending_note || pending_note.is_some() {
+            continue;
+        }
+
+        if let Some((placement, state, text)) = parse_static_state_note_start(line) {
+            upsert_static_state(
+                &mut states,
+                &mut state_indices,
+                StaticMermaidState {
+                    id: state.clone(),
+                    label: state.clone(),
+                },
+            );
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                notes.push(StaticMermaidStateNote {
+                    placement,
+                    state,
+                    text,
+                });
+            } else {
+                pending_note = Some((placement, state, Vec::new()));
+            }
+            continue;
+        }
+
+        if let Some(transition) = parse_static_state_transition(line) {
+            upsert_static_state_endpoint(
+                &mut states,
+                &mut state_indices,
+                &transition.from,
+                true,
+            );
+            upsert_static_state_endpoint(
+                &mut states,
+                &mut state_indices,
+                &transition.to,
+                false,
+            );
+            transitions.push(transition);
+            continue;
+        }
+
+        if let Some(state) = parse_static_state_declaration(line) {
+            upsert_static_state(&mut states, &mut state_indices, state);
+            continue;
+        }
+
+        if static_state_non_transition_directive(line) {
+            continue;
+        }
+    }
+
+    (!states.is_empty() && !transitions.is_empty()).then_some(StaticMermaidStateDiagram {
+        states,
+        state_indices,
+        transitions,
+        notes,
+    })
+}
+
+fn render_static_state_mermaid_svg(
+    diagram: StaticMermaidStateDiagram,
+    marker_id: String,
+) -> String {
+    let state_width = 170usize;
+    let state_height = 48usize;
+    let gap = 54usize;
+    let margin = 28usize;
+    let count = diagram.states.len().max(1);
+    let width = margin * 2 + state_width * count + gap * count.saturating_sub(1);
+    let note_top = margin + state_height + 42;
+    let note_height = 34usize;
+    let height = note_top + diagram.notes.len() * (note_height + 10) + margin;
+
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid state diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">\
+<defs><marker id=\"{marker_id}\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"var(--muted)\"/></marker></defs>"
+    );
+
+    for transition in &diagram.transitions {
+        render_static_state_transition(
+            &mut out,
+            &diagram,
+            transition,
+            &marker_id,
+            state_width,
+            state_height,
+            gap,
+            margin,
+        );
+    }
+
+    for (index, state) in diagram.states.iter().enumerate() {
+        let x = margin + index * (state_width + gap);
+        let y = margin;
+        render_static_state_node(&mut out, state, x, y, state_width, state_height);
+    }
+
+    for (index, note) in diagram.notes.iter().enumerate() {
+        render_static_state_note(
+            &mut out,
+            &diagram,
+            note,
+            margin,
+            note_top + index * (note_height + 10),
+            width.saturating_sub(margin * 2),
+            note_height,
+        );
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn render_static_state_transition(
+    out: &mut String,
+    diagram: &StaticMermaidStateDiagram,
+    transition: &StaticMermaidStateTransition,
+    marker_id: &str,
+    state_width: usize,
+    state_height: usize,
+    gap: usize,
+    margin: usize,
+) {
+    let Some(from_index) = diagram.state_indices.get(&transition.from).copied() else {
+        return;
+    };
+    let Some(to_index) = diagram.state_indices.get(&transition.to).copied() else {
+        return;
+    };
+
+    let y = margin + state_height / 2;
+    if from_index == to_index {
+        let x = margin + from_index * (state_width + gap);
+        let right = x + state_width;
+        let loop_top = margin.saturating_sub(14);
+        out.push_str(&format!(
+            "<path d=\"M {right} {y} C {} {loop_top}, {} {loop_top}, {right} {y}\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#{marker_id})\"/>",
+            right + 34,
+            right + 34
+        ));
+        if let Some(label) = &transition.label {
+            out.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"12\" fill=\"var(--muted)\">{}</text>",
+                right + 36,
+                loop_top.saturating_sub(4),
+                escape_html(label)
+            ));
+        }
+        return;
+    }
+
+    let from_x = margin + from_index * (state_width + gap);
+    let to_x = margin + to_index * (state_width + gap);
+    let (x1, x2) = if from_index < to_index {
+        (from_x + state_width, to_x)
+    } else {
+        (from_x, to_x + state_width)
+    };
+    out.push_str(&format!(
+        "<line x1=\"{x1}\" y1=\"{y}\" x2=\"{x2}\" y2=\"{y}\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#{marker_id})\"/>"
+    ));
+    if let Some(label) = &transition.label {
+        let label_x = (x1 + x2) / 2;
+        let label_y = y.saturating_sub(10);
+        out.push_str(&format!(
+            "<text x=\"{label_x}\" y=\"{label_y}\" text-anchor=\"middle\" font-size=\"12\" fill=\"var(--muted)\">{}</text>",
+            escape_html(label)
+        ));
+    }
+}
+
+fn render_static_state_node(
+    out: &mut String,
+    state: &StaticMermaidState,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) {
+    let label = static_state_display_text(state);
+    out.push_str(&format!(
+        "<g class=\"mermaid-state\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/>"
+    ));
+    out.push_str(&render_static_sequence_label(
+        &label,
+        x + width / 2,
+        y + height / 2,
+        24,
+        2,
+        "var(--fg)",
+    ));
+    out.push_str("</g>");
+}
+
+fn render_static_state_note(
+    out: &mut String,
+    diagram: &StaticMermaidStateDiagram,
+    note: &StaticMermaidStateNote,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) {
+    let placement = match note.placement {
+        StaticMermaidStateNotePlacement::LeftOf => "note left of",
+        StaticMermaidStateNotePlacement::RightOf => "note right of",
+    };
+    let state = diagram
+        .state_indices
+        .get(&note.state)
+        .and_then(|index| diagram.states.get(*index))
+        .map(static_state_display_text)
+        .unwrap_or_else(|| note.state.clone());
+    let label = format!("{placement} {state}: {}", note.text);
+
+    out.push_str(&format!(
+        "<g class=\"mermaid-state-note\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\" stroke-dasharray=\"4 5\"/>"
+    ));
+    out.push_str(&render_static_sequence_label(
+        &label,
+        x + width / 2,
+        y + height / 2,
+        56,
+        1,
+        "var(--muted)",
+    ));
+    out.push_str("</g>");
+}
+
 fn svg_label_lines(label: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
@@ -1507,6 +1801,197 @@ fn svg_label_lines(label: &str, max_chars: usize, max_lines: usize) -> Vec<Strin
         }
     }
     lines
+}
+
+fn static_mermaid_is_state_diagram_header(line: &str) -> bool {
+    line.eq_ignore_ascii_case("statediagram") || line.eq_ignore_ascii_case("statediagram-v2")
+}
+
+fn parse_static_state_transition(line: &str) -> Option<StaticMermaidStateTransition> {
+    let operator_start = line.find("-->")?;
+    let from = static_state_transition_endpoint(&clean_static_state_id(&line[..operator_start]), true);
+    let rest = line[operator_start + 3..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = static_state_transition_endpoint(&clean_static_state_id(to_source), false);
+    let label = clean_static_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(StaticMermaidStateTransition {
+        from,
+        to,
+        label: (!label.is_empty()).then_some(label),
+    })
+}
+
+fn static_state_transition_endpoint(id: &str, is_from: bool) -> String {
+    if id == "[*]" {
+        static_state_terminal_id(is_from).to_string()
+    } else {
+        id.to_string()
+    }
+}
+
+fn parse_static_state_declaration(line: &str) -> Option<StaticMermaidState> {
+    let rest = if let Some(rest) = strip_static_sequence_keyword(line, "state") {
+        rest.trim()
+    } else if line.contains("-->") || line.starts_with("note ") {
+        return None;
+    } else {
+        line
+    };
+    let rest = rest.trim_end_matches('{').trim();
+    if rest.is_empty() || rest == "}" || static_state_is_terminal(rest) {
+        return None;
+    }
+
+    if let Some((left, right)) = split_static_sequence_alias(rest) {
+        let left = left.trim();
+        let right = right.trim();
+        let (id, label) = if left.starts_with('"') || left.starts_with('\'') {
+            (clean_static_state_id(right), clean_static_mermaid_label(left))
+        } else {
+            (clean_static_state_id(left), clean_static_mermaid_label(right))
+        };
+        return (!id.is_empty()).then_some(StaticMermaidState {
+            label: if label.is_empty() { id.clone() } else { label },
+            id,
+        });
+    }
+
+    if let Some((id_source, label_source)) = rest.split_once(':') {
+        let id = clean_static_state_id(id_source);
+        let label = clean_static_mermaid_note_text(label_source);
+        return (!id.is_empty()).then_some(StaticMermaidState {
+            label: if label.is_empty() { id.clone() } else { label },
+            id,
+        });
+    }
+
+    let id = clean_static_state_id(rest);
+    (!id.is_empty()).then_some(StaticMermaidState {
+        label: id.clone(),
+        id,
+    })
+}
+
+fn parse_static_state_note_start(
+    line: &str,
+) -> Option<(StaticMermaidStateNotePlacement, String, Option<String>)> {
+    let rest = strip_static_ascii_prefix(line, "note ")?;
+    let (placement, rest) = if let Some(rest) = strip_static_ascii_prefix(rest.trim(), "left of ") {
+        (StaticMermaidStateNotePlacement::LeftOf, rest)
+    } else if let Some(rest) = strip_static_ascii_prefix(rest.trim(), "right of ") {
+        (StaticMermaidStateNotePlacement::RightOf, rest)
+    } else {
+        return None;
+    };
+    let (state_source, text) = rest.split_once(':').unwrap_or((rest, ""));
+    let state = clean_static_state_id(state_source);
+    let text = clean_static_mermaid_note_text(text);
+
+    (!state.is_empty()).then_some((
+        placement,
+        state,
+        (!text.is_empty()).then_some(text),
+    ))
+}
+
+fn static_state_note_end(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "end note" || lower == "endnote"
+}
+
+fn static_state_non_transition_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower == "}"
+        || lower == "end"
+        || lower.starts_with("direction ")
+        || lower.starts_with("classdef ")
+        || lower.starts_with("class ")
+        || lower.starts_with("style ")
+        || lower.starts_with("hide empty description")
+        || lower.starts_with("accdescr")
+        || lower.starts_with("acctitle")
+}
+
+fn upsert_static_state_endpoint(
+    states: &mut Vec<StaticMermaidState>,
+    state_indices: &mut HashMap<String, usize>,
+    endpoint: &str,
+    is_from: bool,
+) {
+    let state = if static_state_is_terminal(endpoint) {
+        StaticMermaidState {
+            id: static_state_terminal_id(is_from).to_string(),
+            label: if is_from { "start" } else { "end" }.to_string(),
+        }
+    } else {
+        StaticMermaidState {
+            id: endpoint.to_string(),
+            label: endpoint.to_string(),
+        }
+    };
+    upsert_static_state(states, state_indices, state);
+}
+
+fn upsert_static_state(
+    states: &mut Vec<StaticMermaidState>,
+    state_indices: &mut HashMap<String, usize>,
+    state: StaticMermaidState,
+) {
+    if let Some(index) = state_indices.get(&state.id).copied() {
+        if states[index].label == states[index].id && state.label != state.id {
+            states[index].label = state.label;
+        }
+        return;
+    }
+
+    state_indices.insert(state.id.clone(), states.len());
+    states.push(state);
+}
+
+fn static_state_display_text(state: &StaticMermaidState) -> String {
+    if state.id == state.label
+        || state.id == static_state_terminal_id(true)
+        || state.id == static_state_terminal_id(false)
+    {
+        state.label.clone()
+    } else {
+        format!("{} ({})", state.label, state.id)
+    }
+}
+
+fn static_state_is_terminal(id: &str) -> bool {
+    id.trim() == "[*]"
+        || id == static_state_terminal_id(true)
+        || id == static_state_terminal_id(false)
+}
+
+fn static_state_terminal_id(is_from: bool) -> &'static str {
+    if is_from {
+        "__state_start"
+    } else {
+        "__state_end"
+    }
+}
+
+fn clean_static_state_id(source: &str) -> String {
+    let trimmed = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+    if trimmed == "[*]" {
+        return "[*]".to_string();
+    }
+
+    clean_static_mermaid_label(source)
+        .split("<<")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('{')
+        .trim_matches('}')
+        .trim()
+        .to_string()
 }
 
 fn static_mermaid_direction(line: &str) -> Option<StaticMermaidDirection> {
@@ -2410,6 +2895,36 @@ struct StaticMermaidEdge {
     from: StaticMermaidNode,
     to: StaticMermaidNode,
     label: Option<String>,
+}
+
+struct StaticMermaidStateDiagram {
+    states: Vec<StaticMermaidState>,
+    state_indices: HashMap<String, usize>,
+    transitions: Vec<StaticMermaidStateTransition>,
+    notes: Vec<StaticMermaidStateNote>,
+}
+
+struct StaticMermaidState {
+    id: String,
+    label: String,
+}
+
+struct StaticMermaidStateTransition {
+    from: String,
+    to: String,
+    label: Option<String>,
+}
+
+struct StaticMermaidStateNote {
+    placement: StaticMermaidStateNotePlacement,
+    state: String,
+    text: String,
+}
+
+#[derive(Clone, Copy)]
+enum StaticMermaidStateNotePlacement {
+    LeftOf,
+    RightOf,
 }
 
 struct StaticMermaidSequence {
@@ -3525,6 +4040,10 @@ mod tests {
         assert!(html.contains(">destroy Browser</tspan>"));
         assert!(html.contains(">1. Export print HTML</tspan>"));
         assert!(html.contains(">3. Save PDF</tspan>"));
+        assert!(html.contains("Mermaid state diagram preview"));
+        assert!(html.contains(">Review queue (Review)</tspan>"));
+        assert!(html.contains(">Save changes</text>"));
+        assert!(html.contains(">note right of Review queue"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
@@ -4407,6 +4926,26 @@ mod tests {
         assert!(html.contains(">deactivate Vellum</tspan>"));
         assert!(html.contains(">destroy Vellum</tspan>"));
         assert!(html.contains(">Ready</tspan>"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_state_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nstateDiagram-v2\n  [*] --> Draft\n  state \"Review queue\" as Review\n  Draft --> Review: save <draft>\n  note right of Review: External change check\n  Review --> [*]\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("Mermaid state diagram preview"));
+        assert!(html.contains("class=\"mermaid-state\""));
+        assert!(html.contains("class=\"mermaid-state-note\""));
+        assert!(html.contains(">Review queue (Review)</tspan>"));
+        assert!(html.contains(">save &lt;draft&gt;</text>"));
+        assert!(html.contains(">note right of Review queue"));
+        assert!(!html.contains(
+            "<pre class=\"mermaid-static mermaid-static-source\">stateDiagram-v2"
+        ));
     }
 
     #[test]
