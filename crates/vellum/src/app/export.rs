@@ -1740,6 +1740,7 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
     let mut participants = Vec::new();
     let mut participant_indices = HashMap::new();
     let mut fragment_depth = 0usize;
+    let mut autonumber: Option<(usize, usize)> = None;
     let mut items = Vec::new();
 
     for raw_line in source.lines() {
@@ -1754,6 +1755,11 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
                 continue;
             }
             return None;
+        }
+
+        if let Some(numbering) = parse_static_sequence_autonumber(line) {
+            autonumber = Some(numbering);
+            continue;
         }
 
         if let Some(participant) = parse_static_sequence_participant(line) {
@@ -1807,6 +1813,11 @@ fn parse_static_mermaid_sequence(source: &str) -> Option<StaticMermaidSequence> 
         let Some(message) = parse_static_sequence_message(line) else {
             continue;
         };
+        let mut message = message;
+        if let Some((next, step)) = autonumber.as_mut() {
+            message.number = Some(*next);
+            *next = next.saturating_add(*step);
+        }
 
         upsert_static_sequence_participant(
             &mut participants,
@@ -1907,6 +1918,16 @@ fn parse_static_sequence_fragment(line: &str) -> Option<StaticMermaidFragment> {
     None
 }
 
+fn parse_static_sequence_autonumber(line: &str) -> Option<(usize, usize)> {
+    let rest = strip_static_sequence_keyword(line, "autonumber")?;
+    let mut numbers = rest
+        .split_whitespace()
+        .filter_map(|part| part.parse::<usize>().ok());
+    let start = numbers.next().unwrap_or(1);
+    let step = numbers.next().unwrap_or(1).max(1);
+    Some((start, step))
+}
+
 fn parse_static_sequence_lifecycle(line: &str) -> Option<StaticMermaidLifecycle> {
     for (keyword, kind) in [
         ("activate", StaticMermaidLifecycleKind::Activate),
@@ -1993,6 +2014,7 @@ fn parse_static_sequence_message(line: &str) -> Option<StaticMermaidMessage> {
         to,
         label,
         dashed: operator.starts_with("--"),
+        number: None,
     })
 }
 
@@ -2164,12 +2186,12 @@ fn render_static_sequence_message(
             "<path d=\"M {from_x} {y} H {x2} V {} H {from_x}\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>",
             y + loop_height
         ));
-        render_static_sequence_message_label(out, &message.label, from_x + 28, y - 10);
+        render_static_sequence_message_label(out, message, from_x + 28, y - 10);
     } else {
         out.push_str(&format!(
             "<line x1=\"{from_x}\" y1=\"{y}\" x2=\"{to_x}\" y2=\"{y}\" stroke=\"var(--muted)\" stroke-width=\"2\"{dash} marker-end=\"url(#{marker_id})\"/>"
         ));
-        render_static_sequence_message_label(out, &message.label, (from_x + to_x) / 2, y - 10);
+        render_static_sequence_message_label(out, message, (from_x + to_x) / 2, y - 10);
     }
 }
 
@@ -2337,13 +2359,19 @@ fn render_static_sequence_label(
     out
 }
 
-fn render_static_sequence_message_label(out: &mut String, label: &str, x: usize, y: usize) {
+fn render_static_sequence_message_label(
+    out: &mut String,
+    message: &StaticMermaidMessage,
+    x: usize,
+    y: usize,
+) {
+    let label = static_sequence_message_display_text(message);
     if label.is_empty() {
         return;
     }
 
     out.push_str(&render_static_sequence_label(
-        label,
+        &label,
         x,
         y,
         34,
@@ -2410,6 +2438,7 @@ struct StaticMermaidMessage {
     to: String,
     label: String,
     dashed: bool,
+    number: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -2511,6 +2540,14 @@ fn static_sequence_lifecycle_label(kind: StaticMermaidLifecycleKind) -> &'static
         StaticMermaidLifecycleKind::Activate => "activate",
         StaticMermaidLifecycleKind::Deactivate => "deactivate",
         StaticMermaidLifecycleKind::Destroy => "destroy",
+    }
+}
+
+fn static_sequence_message_display_text(message: &StaticMermaidMessage) -> String {
+    match (message.number, message.label.trim()) {
+        (Some(number), "") => format!("{number}."),
+        (Some(number), label) => format!("{number}. {label}"),
+        (None, label) => label.to_string(),
     }
 }
 
@@ -3486,7 +3523,8 @@ mod tests {
         assert!(html.contains("class=\"mermaid-lifecycle\""));
         assert!(html.contains(">activate Vellum</tspan>"));
         assert!(html.contains(">destroy Browser</tspan>"));
-        assert!(html.contains(">Save PDF</tspan>"));
+        assert!(html.contains(">1. Export print HTML</tspan>"));
+        assert!(html.contains(">3. Save PDF</tspan>"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
@@ -4306,6 +4344,19 @@ mod tests {
         assert!(!html.contains(
             "<pre class=\"mermaid-static mermaid-static-source\">sequenceDiagram"
         ));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_sequence_autonumber_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nsequenceDiagram\n  autonumber 10 5\n  Writer->>App: Start\n  App-->>Writer: Ready\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains(">10. Start</tspan>"));
+        assert!(html.contains(">15. Ready</tspan>"));
     }
 
     #[test]

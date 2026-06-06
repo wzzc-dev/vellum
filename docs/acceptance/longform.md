@@ -115,6 +115,7 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
+  autonumber
   participant Writer
   participant App as Vellum
   participant Browser

@@ -218,6 +218,7 @@ struct MermaidSequenceMessage {
     to: String,
     label: String,
     dashed: bool,
+    number: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2627,6 +2628,10 @@ fn render_mermaid_sequence_message_card(
         .child(render_mermaid_participant_card(&to, palette));
     card = card.child(route);
 
+    if let Some(number) = message.number {
+        card = card.child(render_mermaid_chip(format!("#{number}"), palette));
+    }
+
     if !message.label.trim().is_empty() {
         card = card.child(render_mermaid_chip(message.label.clone(), palette));
     }
@@ -2947,6 +2952,7 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
     let mut preview = MermaidPreview::default();
     let mut participant_indices = HashMap::new();
     let mut fragment_depth = 0usize;
+    let mut autonumber: Option<(usize, usize)> = None;
     let mut saw_sequence = false;
 
     for raw_line in source.lines() {
@@ -2960,6 +2966,11 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
                 saw_sequence = true;
                 continue;
             }
+            continue;
+        }
+
+        if let Some(numbering) = parse_mermaid_sequence_autonumber(line) {
+            autonumber = Some(numbering);
             continue;
         }
 
@@ -3024,6 +3035,12 @@ fn parse_mermaid_sequence_preview(source: &str) -> MermaidPreview {
             preview.unsupported_lines += 1;
             continue;
         };
+
+        let mut message = message;
+        if let Some((next, step)) = autonumber.as_mut() {
+            message.number = Some(*next);
+            *next = next.saturating_add(*step);
+        }
 
         upsert_mermaid_participant(
             &mut preview.participants,
@@ -3121,6 +3138,16 @@ fn parse_mermaid_sequence_fragment(line: &str) -> Option<MermaidSequenceFragment
     None
 }
 
+fn parse_mermaid_sequence_autonumber(line: &str) -> Option<(usize, usize)> {
+    let rest = strip_mermaid_sequence_keyword(line, "autonumber")?;
+    let mut numbers = rest
+        .split_whitespace()
+        .filter_map(|part| part.parse::<usize>().ok());
+    let start = numbers.next().unwrap_or(1);
+    let step = numbers.next().unwrap_or(1).max(1);
+    Some((start, step))
+}
+
 fn parse_mermaid_sequence_lifecycle(line: &str) -> Option<MermaidSequenceLifecycle> {
     for (keyword, kind) in [
         ("activate", MermaidSequenceLifecycleKind::Activate),
@@ -3207,6 +3234,7 @@ fn parse_mermaid_sequence_message(line: &str) -> Option<MermaidSequenceMessage> 
         to,
         label,
         dashed: operator.starts_with("--"),
+        number: None,
     })
 }
 
@@ -5795,12 +5823,42 @@ mod tests {
                     to: "Bob".to_string(),
                     label: "Hi <draft>".to_string(),
                     dashed: false,
+                    number: None,
                 },
                 MermaidSequenceMessage {
                     from: "Bob".to_string(),
                     to: "Alice".to_string(),
                     label: "Looks good".to_string(),
                     dashed: true,
+                    number: None,
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_sequence_autonumbered_messages() {
+        let preview = parse_mermaid_preview(
+            "sequenceDiagram\n  autonumber 10 5\n  Writer->>App: Start\n  App-->>Writer: Ready\n",
+        );
+
+        assert_eq!(
+            preview.messages,
+            vec![
+                MermaidSequenceMessage {
+                    from: "Writer".to_string(),
+                    to: "App".to_string(),
+                    label: "Start".to_string(),
+                    dashed: false,
+                    number: Some(10),
+                },
+                MermaidSequenceMessage {
+                    from: "App".to_string(),
+                    to: "Writer".to_string(),
+                    label: "Ready".to_string(),
+                    dashed: true,
+                    number: Some(15),
                 },
             ]
         );
@@ -5849,6 +5907,7 @@ mod tests {
                     to: "Bob".to_string(),
                     label: "Start".to_string(),
                     dashed: false,
+                    number: None,
                 }),
                 MermaidSequenceItem::Note(MermaidSequenceNote {
                     placement: MermaidSequenceNotePlacement::Over,
@@ -5865,6 +5924,7 @@ mod tests {
                     to: "Alice".to_string(),
                     label: "Done".to_string(),
                     dashed: true,
+                    number: None,
                 }),
             ]
         );
@@ -5910,6 +5970,7 @@ mod tests {
                     to: "App".to_string(),
                     label: "Start".to_string(),
                     dashed: false,
+                    number: None,
                 }),
                 MermaidSequenceItem::Fragment(MermaidSequenceFragment {
                     kind: MermaidSequenceFragmentKind::Loop,
@@ -5920,6 +5981,7 @@ mod tests {
                     to: "Alice".to_string(),
                     label: "Reminder".to_string(),
                     dashed: true,
+                    number: None,
                 }),
                 MermaidSequenceItem::Fragment(MermaidSequenceFragment {
                     kind: MermaidSequenceFragmentKind::Alt,
@@ -5930,6 +5992,7 @@ mod tests {
                     to: "App".to_string(),
                     label: "Publish".to_string(),
                     dashed: false,
+                    number: None,
                 }),
                 MermaidSequenceItem::Fragment(MermaidSequenceFragment {
                     kind: MermaidSequenceFragmentKind::Else,
@@ -5940,6 +6003,7 @@ mod tests {
                     to: "App".to_string(),
                     label: "Revise".to_string(),
                     dashed: false,
+                    number: None,
                 }),
                 MermaidSequenceItem::Fragment(MermaidSequenceFragment {
                     kind: MermaidSequenceFragmentKind::End,
@@ -5985,6 +6049,7 @@ mod tests {
                     to: "App".to_string(),
                     label: "Start".to_string(),
                     dashed: false,
+                    number: None,
                 }),
                 MermaidSequenceItem::Lifecycle(MermaidSequenceLifecycle {
                     kind: MermaidSequenceLifecycleKind::Activate,
@@ -5995,6 +6060,7 @@ mod tests {
                     to: "Writer".to_string(),
                     label: "Ready".to_string(),
                     dashed: true,
+                    number: None,
                 }),
                 MermaidSequenceItem::Lifecycle(MermaidSequenceLifecycle {
                     kind: MermaidSequenceLifecycleKind::Deactivate,
