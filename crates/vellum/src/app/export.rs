@@ -138,6 +138,7 @@ fn rewrite_local_assets(markdown: &str, source_dir: &Path, output_path: &Path) -
     let reference_labels = collect_asset_reference_labels(markdown);
     let mut out = String::with_capacity(markdown.len());
     let mut fence_marker: Option<FenceMarker> = None;
+    let mut in_style_block = false;
 
     for segment in markdown.split_inclusive('\n') {
         let line = segment.trim_end_matches(['\r', '\n']);
@@ -151,13 +152,20 @@ fn rewrite_local_assets(markdown: &str, source_dir: &Path, output_path: &Path) -
             continue;
         }
 
-        if let Some(marker) = FenceMarker::opening(line.trim_start()) {
+        if !in_style_block
+            && let Some(marker) = FenceMarker::opening(line.trim_start())
+        {
             fence_marker = Some(marker);
             out.push_str(segment);
             continue;
         }
 
-        out.push_str(&rewrite_line_assets(line, &mut assets, &reference_labels)?);
+        out.push_str(&rewrite_line_with_style_assets(
+            line,
+            &mut assets,
+            &reference_labels,
+            &mut in_style_block,
+        )?);
         out.push_str(newline);
     }
 
@@ -233,6 +241,67 @@ fn rewrite_line_assets(
             index += ch.len_utf8();
         } else {
             break;
+        }
+    }
+
+    Ok(out)
+}
+
+fn rewrite_line_with_style_assets(
+    line: &str,
+    assets: &mut ExportAssetContext<'_>,
+    reference_labels: &AssetReferenceLabels,
+    in_style_block: &mut bool,
+) -> Result<String> {
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0usize;
+
+    while index < line.len() {
+        let rest = &line[index..];
+        if *in_style_block {
+            if let Some(close_start) = find_html_end_tag(rest, "style") {
+                let style = &rest[..close_start];
+                if let Some(rewritten) = rewrite_css_urls(style, assets)? {
+                    out.push_str(&rewritten);
+                } else {
+                    out.push_str(style);
+                }
+
+                let close = &rest[close_start..];
+                let close_len = html_tag_close(close)
+                    .map(|close| close + 1)
+                    .unwrap_or(close.len());
+                out.push_str(&close[..close_len]);
+                index += close_start + close_len;
+                *in_style_block = false;
+            } else {
+                if let Some(rewritten) = rewrite_css_urls(rest, assets)? {
+                    out.push_str(&rewritten);
+                } else {
+                    out.push_str(rest);
+                }
+                index = line.len();
+            }
+            continue;
+        }
+
+        if let Some(open_start) = find_html_start_tag_outside_code_spans(rest, "style") {
+            out.push_str(&rewrite_line_assets(
+                &rest[..open_start],
+                assets,
+                reference_labels,
+            )?);
+
+            let open = &rest[open_start..];
+            let open_len = html_tag_close(open)
+                .map(|close| close + 1)
+                .unwrap_or(open.len());
+            out.push_str(&open[..open_len]);
+            index += open_start + open_len;
+            *in_style_block = true;
+        } else {
+            out.push_str(&rewrite_line_assets(rest, assets, reference_labels)?);
+            index = line.len();
         }
     }
 
@@ -427,6 +496,7 @@ struct HtmlAssetTag<'a> {
     data_range: Option<Range<usize>>,
     srcset_range: Option<Range<usize>>,
     poster_range: Option<Range<usize>>,
+    style_range: Option<Range<usize>>,
 }
 
 fn parse_markdown_image(rest: &str) -> Option<MarkdownImage<'_>> {
@@ -469,13 +539,15 @@ fn parse_markdown_link(rest: &str) -> Option<MarkdownLink<'_>> {
 }
 
 fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
-    let allows_src = html_asset_tag_allows_src(rest)?;
-    let raw_len = html_asset_tag_len(rest)?;
+    let raw_len = html_asset_tag_len(rest).or_else(|| html_tag_with_style_len(rest))?;
     let raw = &rest[..raw_len];
+    let allows_src = html_asset_tag_allows_src(raw);
     let href_range = (html_named_tag_matches(raw, "a") || html_named_tag_matches(raw, "link"))
         .then(|| html_attr_value_range(raw, "href"))
         .flatten();
-    let src_range = allows_src.then(|| html_attr_value_range(raw, "src")).flatten();
+    let src_range = (allows_src == Some(true))
+        .then(|| html_attr_value_range(raw, "src"))
+        .flatten();
     let data_range = html_named_tag_matches(raw, "object")
         .then(|| html_attr_value_range(raw, "data"))
         .flatten();
@@ -483,11 +555,13 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
     let poster_range = html_named_tag_matches(raw, "video")
         .then(|| html_attr_value_range(raw, "poster"))
         .flatten();
+    let style_range = html_attr_value_range(raw, "style");
     if href_range.is_none()
         && src_range.is_none()
         && data_range.is_none()
         && srcset_range.is_none()
         && poster_range.is_none()
+        && style_range.is_none()
     {
         return None;
     }
@@ -499,6 +573,7 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
         data_range,
         srcset_range,
         poster_range,
+        style_range,
     })
 }
 
@@ -558,6 +633,16 @@ fn rewrite_html_asset_tag(
             replacements.push(HtmlAttributeReplacement {
                 range,
                 value: escape_attr_value(&destination),
+            });
+        }
+    }
+
+    if let Some(range) = tag.style_range.clone() {
+        let value = decode_html_entities(&tag.raw[range.clone()]);
+        if let Some(style) = rewrite_css_urls(&value, assets)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: escape_attr_value(&style),
             });
         }
     }
@@ -627,6 +712,147 @@ fn rewrite_html_srcset_candidate(
         out.push_str(candidate);
         Ok(false)
     }
+}
+
+struct CssUrlFunction {
+    raw_len: usize,
+    value_range: Range<usize>,
+    quote: Option<char>,
+}
+
+fn rewrite_css_urls(value: &str, assets: &mut ExportAssetContext<'_>) -> Result<Option<String>> {
+    let mut out = String::with_capacity(value.len());
+    let mut changed = false;
+    let mut index = 0usize;
+
+    while index < value.len() {
+        let rest = &value[index..];
+        let Some(relative_start) = find_css_url_start(rest) else {
+            break;
+        };
+        let start = index + relative_start;
+        out.push_str(&value[index..start]);
+
+        let Some(function) = parse_css_url_function(&value[start..]) else {
+            out.push_str(&value[start..start + 1]);
+            index = start + 1;
+            continue;
+        };
+
+        let raw = &value[start..start + function.raw_len];
+        let destination = decode_html_entities(&raw[function.value_range.clone()]);
+        if let Some(destination) = assets.exported_destination(&destination)? {
+            out.push_str(&raw[..function.value_range.start]);
+            out.push_str(&css_url_replacement(&destination, function.quote));
+            out.push_str(&raw[function.value_range.end..]);
+            changed = true;
+        } else {
+            out.push_str(raw);
+        }
+        index = start + function.raw_len;
+    }
+
+    out.push_str(&value[index..]);
+    Ok(changed.then_some(out))
+}
+
+fn find_css_url_start(value: &str) -> Option<usize> {
+    let mut index = 0usize;
+    while index < value.len() {
+        let rest = &value[index..];
+        if ascii_starts_with_ignore_case(rest, "url")
+            && !value[..index]
+                .chars()
+                .next_back()
+                .is_some_and(is_css_identifier_char)
+            && rest
+                .get(3..)
+                .is_some_and(|after| skip_ascii_space(after, 0) < after.len())
+        {
+            return Some(index);
+        }
+
+        let ch = rest.chars().next()?;
+        index += ch.len_utf8();
+    }
+
+    None
+}
+
+fn parse_css_url_function(rest: &str) -> Option<CssUrlFunction> {
+    if !ascii_starts_with_ignore_case(rest, "url") {
+        return None;
+    }
+
+    let mut index = 3usize;
+    index = skip_ascii_space(rest, index);
+    if rest.as_bytes().get(index) != Some(&b'(') {
+        return None;
+    }
+    index += 1;
+    index = skip_ascii_space(rest, index);
+
+    let quote = match rest.as_bytes().get(index).copied() {
+        Some(b'"') => Some('"'),
+        Some(b'\'') => Some('\''),
+        _ => None,
+    };
+
+    let value_start;
+    let value_end;
+    if let Some(quote) = quote {
+        index += quote.len_utf8();
+        value_start = index;
+        let close = find_unescaped_char(&rest[value_start..], quote)?;
+        value_end = value_start + close;
+        index = value_end + quote.len_utf8();
+    } else {
+        value_start = index;
+        let close = rest[value_start..].find(')')?;
+        let raw_value_end = value_start + close;
+        value_end = value_start + rest[value_start..raw_value_end].trim_end().len();
+        index = raw_value_end;
+    }
+
+    index = skip_ascii_space(rest, index);
+    if rest.as_bytes().get(index) != Some(&b')') {
+        return None;
+    }
+
+    Some(CssUrlFunction {
+        raw_len: index + 1,
+        value_range: value_start..value_end,
+        quote,
+    })
+}
+
+fn css_url_replacement(destination: &str, quote: Option<char>) -> String {
+    match quote {
+        Some(quote) => escape_css_string(destination, quote),
+        None if destination.chars().any(css_url_needs_quotes) => {
+            format!("\"{}\"", escape_css_string(destination, '"'))
+        }
+        None => destination.to_string(),
+    }
+}
+
+fn escape_css_string(value: &str, quote: char) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch == quote || ch == '\\' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn css_url_needs_quotes(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '"' | '\'' | '(' | ')' | '\\')
+}
+
+fn is_css_identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
 }
 
 fn split_image_destination(inner: &str) -> Option<(String, &str)> {
@@ -724,6 +950,57 @@ fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
     }
 }
 
+fn html_tag_with_style_len(rest: &str) -> Option<usize> {
+    if !html_start_tag_candidate(rest) {
+        return None;
+    }
+
+    let len = html_tag_close(rest).map(|close| close + 1)?;
+    html_attr_value_range(&rest[..len], "style")
+        .is_some()
+        .then_some(len)
+}
+
+fn html_start_tag_candidate(rest: &str) -> bool {
+    if rest.as_bytes().first() != Some(&b'<') {
+        return false;
+    }
+
+    let Some(next) = rest.as_bytes().get(1).copied() else {
+        return false;
+    };
+    !matches!(next, b'/' | b'!' | b'?') && next.is_ascii_alphabetic()
+}
+
+fn find_html_start_tag_outside_code_spans(source: &str, tag_name: &str) -> Option<usize> {
+    let mut index = 0usize;
+    while index < source.len() {
+        let rest = &source[index..];
+        if rest.starts_with('`') {
+            index += code_span_len(rest).unwrap_or(1);
+        } else if html_named_tag_matches(rest, tag_name) {
+            return Some(index);
+        } else if let Some(ch) = rest.chars().next() {
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+fn find_html_end_tag(source: &str, tag_name: &str) -> Option<usize> {
+    let mut index = 0usize;
+    while let Some(relative_start) = source[index..].find("</") {
+        let start = index + relative_start;
+        if html_named_end_tag_matches(&source[start..], tag_name) {
+            return Some(start);
+        }
+        index = start + 2;
+    }
+    None
+}
+
 fn html_named_tag_matches(rest: &str, tag_name: &str) -> bool {
     let name_end = 1 + tag_name.len();
     if rest.as_bytes().first() != Some(&b'<') {
@@ -739,6 +1016,25 @@ fn html_named_tag_matches(rest: &str, tag_name: &str) -> bool {
     matches!(
         rest.as_bytes().get(name_end).copied(),
         Some(b'>') | Some(b'/') | Some(b' ' | b'\t' | b'\r' | b'\n')
+    )
+}
+
+fn html_named_end_tag_matches(rest: &str, tag_name: &str) -> bool {
+    let name_start = 2;
+    let name_end = name_start + tag_name.len();
+    if !rest.starts_with("</") {
+        return false;
+    }
+    if !rest
+        .get(name_start..name_end)
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag_name))
+    {
+        return false;
+    }
+
+    matches!(
+        rest.as_bytes().get(name_end).copied(),
+        Some(b'>') | Some(b' ' | b'\t' | b'\r' | b'\n')
     )
 }
 
@@ -822,6 +1118,19 @@ fn skip_html_attr_space(tag: &str, mut index: usize) -> usize {
         index += 1;
     }
     index
+}
+
+fn skip_ascii_space(value: &str, mut index: usize) -> usize {
+    while index < value.len() && value.as_bytes()[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    index
+}
+
+fn ascii_starts_with_ignore_case(value: &str, prefix: &str) -> bool {
+    value
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
 }
 
 fn unescape_markdown_destination(destination: &str) -> String {
@@ -5307,6 +5616,94 @@ mod tests {
             std::fs::read(export_dir.join("article_assets/app.js")).unwrap(),
             b"console.log('ok')"
         );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_style_attribute_assets() {
+        let root = temp_export_dir("html-raw-style-attribute-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/bg image.png"), b"background").unwrap();
+        std::fs::write(source.join("assets/mask.svg"), b"mask").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "<section class=\"hero\" style=\"",
+                "background: url('assets/bg image.png?cache=1&amp;theme=print#hero'); ",
+                "mask-image: url(assets/mask.svg);",
+                "\">Hero</section>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains(
+            "background: url('article_assets/bg image.png?cache=1&amp;theme=print#hero')"
+        ));
+        assert!(html.contains("mask-image: url(article_assets/mask.svg)"));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/bg image.png")).unwrap(),
+            b"background"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/mask.svg")).unwrap(),
+            b"mask"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_style_block_assets() {
+        let root = temp_export_dir("html-raw-style-block-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/hero.png"), b"hero").unwrap();
+        std::fs::write(source.join("assets/font.woff2"), b"font").unwrap();
+        std::fs::write(source.join("assets/hidden.png"), b"hidden").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "`<style>.hidden { background: url(assets/hidden.png); }</style>`\n",
+                "<style>\n",
+                ".hero { background-image: url(\"assets/hero.png#top\"); }\n",
+                "@font-face { src: url(assets/font.woff2) format(\"woff2\"); }\n",
+                ".remote { background: url(https://example.com/remote.png); }\n",
+                "</style>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("url(\"article_assets/hero.png#top\")"));
+        assert!(html.contains("url(article_assets/font.woff2) format(\"woff2\")"));
+        assert!(html.contains("url(https://example.com/remote.png)"));
+        assert!(html.contains(
+            "<code>&lt;style&gt;.hidden { background: url(assets/hidden.png); }&lt;/style&gt;</code>"
+        ));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/hero.png")).unwrap(),
+            b"hero"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/font.woff2")).unwrap(),
+            b"font"
+        );
+        assert!(!export_dir.join("article_assets/hidden.png").exists());
 
         std::fs::remove_dir_all(root).unwrap();
     }
