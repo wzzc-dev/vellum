@@ -5727,6 +5727,18 @@ mod tests {
     }
 
     #[test]
+    fn math_export_supports_fraction_style_aliases() {
+        let html =
+            export_markdown_to_html("Inline $\\dfrac{x^2}{y}$ and $\\tfrac{1}{n+1}$", "Math")
+                .unwrap();
+
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">x²/y</span>"));
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">1/n+1</span>"));
+        assert!(html.contains("\\(\\dfrac{x^2}{y}\\)"));
+        assert!(html.contains("\\(\\tfrac{1}{n+1}\\)"));
+    }
+
+    #[test]
     fn math_export_skips_environment_preambles_in_fallback() {
         let html = export_markdown_to_html(
             "$$\n\\begin{array}{cc}a & b \\\\ c & d\\end{array}\n$$\n\n$$\n\\begin{alignat}{2}x &= y + 1 & z &= x - 1\\end{alignat}\n$$",

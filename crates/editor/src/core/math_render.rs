@@ -299,7 +299,7 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
     }
 
     match cmd.as_str() {
-        "frac" => {
+        "frac" | "dfrac" | "tfrac" => {
             let (num, end1) = parse_single_arg(chars, i);
             let (den, end2) = parse_single_arg(chars, end1);
             (
@@ -1186,6 +1186,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_fraction_style_aliases() {
+        for source in ["\\dfrac{a}{b}", "\\tfrac{a}{b}"] {
+            let tree = parse_math(source);
+            assert_eq!(tree.nodes.len(), 1);
+            match &tree.nodes[0] {
+                MathNode::Fraction { numerator, denominator } => {
+                    assert_eq!(**numerator, MathNode::Text("a".to_string()));
+                    assert_eq!(**denominator, MathNode::Text("b".to_string()));
+                }
+                _ => panic!("expected fraction"),
+            }
+        }
+    }
+
+    #[test]
     fn parses_binomial_command() {
         let tree = parse_math("\\binom{n}{k}");
         assert_eq!(tree.nodes.len(), 1);
@@ -1335,6 +1350,12 @@ mod tests {
     fn display_text_for_fraction() {
         let tree = parse_math("\\frac{a}{b}");
         assert_eq!(math_tree_to_display_text(&tree), "a/b");
+    }
+
+    #[test]
+    fn display_text_for_fraction_style_aliases() {
+        assert_eq!(math_source_to_display_text("\\dfrac{x^2}{y}"), "x²/y");
+        assert_eq!(math_source_to_display_text("\\tfrac{1}{n+1}"), "1/n+1");
     }
 
     #[test]
