@@ -165,6 +165,20 @@ fn longform_acceptance_sample_covers_live_preview_surfaces() {
             .any(|block| matches!(block.embedded, Some(EmbeddedNodeKind::MathBlock))),
         "longform sample should include a display math block"
     );
+    for math_source in [
+        "\\begin{aligned}",
+        "\\begin{cases}",
+        "\\binom",
+        "\\choose",
+        "\\underbrace",
+        "\\begin{array}{cc}",
+        "\\begin{alignat}{2}",
+    ] {
+        assert!(
+            LONGFORM_ACCEPTANCE_SAMPLE.contains(math_source),
+            "longform sample should cover math source {math_source}"
+        );
+    }
     assert!(
         map.blocks.iter().any(|block| matches!(
             block.embedded,
