@@ -170,6 +170,19 @@ classDiagram
 ```
 
 ```mermaid
+erDiagram
+  DOCUMENT ||--o{ ASSET : owns
+  DOCUMENT }o..|| WORKSPACE : belongs_to
+  DOCUMENT {
+    string title PK
+    datetime updated_at
+  }
+  ASSET {
+    string path
+  }
+```
+
+```mermaid
 pie showData
   title Export coverage
   "HTML export" : 45

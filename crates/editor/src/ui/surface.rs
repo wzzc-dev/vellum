@@ -167,6 +167,8 @@ struct MermaidPreview {
     pie_slices: Vec<MermaidPieSlice>,
     classes: Vec<MermaidClass>,
     class_relationships: Vec<MermaidClassRelationship>,
+    er_entities: Vec<MermaidErEntity>,
+    er_relationships: Vec<MermaidErRelationship>,
     states: Vec<MermaidState>,
     state_transitions: Vec<MermaidStateTransition>,
     state_notes: Vec<MermaidStateNote>,
@@ -222,6 +224,20 @@ struct MermaidClassRelationship {
     from: String,
     to: String,
     operator: String,
+    label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidErEntity {
+    id: String,
+    attributes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidErRelationship {
+    from: String,
+    to: String,
+    cardinality: String,
     label: Option<String>,
 }
 
@@ -2526,6 +2542,18 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     preview.class_relationships.len()
                 )),
         );
+    } else if has_mermaid_er_preview(&preview) {
+        header = header.child(render_mermaid_chip("ER".to_string(), palette));
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!(
+                    "{} entities, {} relationships",
+                    preview.er_entities.len(),
+                    preview.er_relationships.len()
+                )),
+        );
     } else if has_mermaid_state_preview(&preview) {
         header = header.child(render_mermaid_chip("state".to_string(), palette));
         header = header.child(
@@ -2619,6 +2647,27 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     .child(format!("{} other statements", preview.unsupported_lines)),
             );
         }
+    } else if has_mermaid_er_preview(&preview) {
+        body = body.child(render_mermaid_er_preview(&preview, palette));
+        if preview.er_entities.len() + preview.er_relationships.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!(
+                        "+{} more ER items",
+                        preview.er_entities.len() + preview.er_relationships.len() - 8
+                    )),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
     } else if has_mermaid_state_preview(&preview) {
         body = body.child(render_mermaid_state_preview(&preview, palette));
         if preview.state_transitions.len() + preview.state_notes.len() > 8 {
@@ -2691,6 +2740,10 @@ fn has_mermaid_pie_preview(preview: &MermaidPreview) -> bool {
 
 fn has_mermaid_class_preview(preview: &MermaidPreview) -> bool {
     !preview.classes.is_empty() || !preview.class_relationships.is_empty()
+}
+
+fn has_mermaid_er_preview(preview: &MermaidPreview) -> bool {
+    !preview.er_entities.is_empty() || !preview.er_relationships.is_empty()
 }
 
 fn has_mermaid_state_preview(preview: &MermaidPreview) -> bool {
@@ -2813,6 +2866,92 @@ fn render_mermaid_class_relationship_card(
                     &mermaid_class_label(preview, &relationship.to),
                     palette,
                 )),
+        );
+
+    if let Some(label) = relationship.label.as_ref().filter(|label| !label.is_empty()) {
+        card = card.child(render_mermaid_chip(label.clone(), palette));
+    }
+
+    card.into_any_element()
+}
+
+fn render_mermaid_er_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
+    let mut diagram = div().w_full().flex().flex_col().gap_2();
+    let mut shown_items = 0usize;
+
+    for entity in preview.er_entities.iter().take(5) {
+        diagram = diagram.child(render_mermaid_er_entity_card(entity, palette));
+        shown_items += 1;
+    }
+    for relationship in preview
+        .er_relationships
+        .iter()
+        .take(8usize.saturating_sub(shown_items))
+    {
+        diagram = diagram.child(render_mermaid_er_relationship_card(relationship, palette));
+    }
+
+    diagram.into_any_element()
+}
+
+fn render_mermaid_er_entity_card(entity: &MermaidErEntity, palette: RenderPalette) -> AnyElement {
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.text_color)
+                .child(entity.id.clone()),
+        );
+
+    if entity.attributes.is_empty() {
+        card = card.child(render_mermaid_chip("entity".to_string(), palette));
+    } else {
+        for attribute in entity.attributes.iter().take(5) {
+            card = card.child(render_mermaid_chip(attribute.clone(), palette));
+        }
+        if entity.attributes.len() > 5 {
+            card = card.child(render_mermaid_chip(
+                format!("+{} attributes", entity.attributes.len() - 5),
+                palette,
+            ));
+        }
+    }
+
+    card.into_any_element()
+}
+
+fn render_mermaid_er_relationship_card(
+    relationship: &MermaidErRelationship,
+    palette: RenderPalette,
+) -> AnyElement {
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(render_mermaid_participant_card(&relationship.from, palette))
+                .child(render_mermaid_chip(relationship.cardinality.clone(), palette))
+                .child(render_mermaid_participant_card(&relationship.to, palette)),
         );
 
     if let Some(label) = relationship.label.as_ref().filter(|label| !label.is_empty()) {
@@ -3367,6 +3506,9 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
     if mermaid_is_class_diagram(source) {
         return parse_mermaid_class_preview(source);
     }
+    if mermaid_is_er_diagram(source) {
+        return parse_mermaid_er_preview(source);
+    }
     if mermaid_is_state_diagram(source) {
         return parse_mermaid_state_preview(source);
     }
@@ -3433,6 +3575,17 @@ fn mermaid_is_class_diagram(source: &str) -> bool {
             continue;
         }
         return mermaid_class_header(line);
+    }
+    false
+}
+
+fn mermaid_is_er_diagram(source: &str) -> bool {
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+        return mermaid_er_header(line);
     }
     false
 }
@@ -3791,6 +3944,181 @@ fn is_mermaid_class_non_member_directive(line: &str) -> bool {
         || lower.starts_with("href ")
         || lower.starts_with("note ")
         || lower.starts_with("<<")
+}
+
+fn parse_mermaid_er_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+    let mut entity_indices = HashMap::new();
+    let mut current_entity: Option<String> = None;
+    let mut saw_er = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_er {
+            if mermaid_er_header(line) {
+                saw_er = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(entity_id) = current_entity.clone() {
+            if line == "}" {
+                current_entity = None;
+                continue;
+            }
+
+            let attribute = clean_mermaid_note_text(line);
+            if !attribute.is_empty() {
+                push_mermaid_er_attribute(
+                    &mut preview.er_entities,
+                    &mut entity_indices,
+                    &entity_id,
+                    attribute,
+                );
+            }
+            continue;
+        }
+
+        if line == "}" {
+            continue;
+        }
+
+        if let Some(entity_id) = parse_mermaid_er_entity_block_start(line) {
+            upsert_mermaid_er_entity(
+                &mut preview.er_entities,
+                &mut entity_indices,
+                MermaidErEntity {
+                    id: entity_id.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            current_entity = Some(entity_id);
+            continue;
+        }
+
+        if let Some(relationship) = parse_mermaid_er_relationship(line) {
+            upsert_mermaid_er_entity(
+                &mut preview.er_entities,
+                &mut entity_indices,
+                MermaidErEntity {
+                    id: relationship.from.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            upsert_mermaid_er_entity(
+                &mut preview.er_entities,
+                &mut entity_indices,
+                MermaidErEntity {
+                    id: relationship.to.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            preview.er_relationships.push(relationship);
+            continue;
+        }
+
+        if is_mermaid_er_non_relationship_directive(line) {
+            continue;
+        }
+
+        preview.unsupported_lines += 1;
+    }
+
+    preview
+}
+
+fn mermaid_er_header(line: &str) -> bool {
+    line.eq_ignore_ascii_case("erdiagram")
+}
+
+fn parse_mermaid_er_entity_block_start(line: &str) -> Option<String> {
+    if !line.ends_with('{') {
+        return None;
+    }
+    let entity = clean_mermaid_er_entity_id(line.trim_end_matches('{'));
+    (!entity.is_empty()).then_some(entity)
+}
+
+fn parse_mermaid_er_relationship(line: &str) -> Option<MermaidErRelationship> {
+    let (relationship_source, label_source) = line.split_once(':').unwrap_or((line, ""));
+    let parts = relationship_source.split_whitespace().collect::<Vec<_>>();
+    let operator_index = parts
+        .iter()
+        .position(|part| mermaid_er_relationship_operator(part))?;
+    if operator_index == 0 || operator_index + 1 >= parts.len() {
+        return None;
+    }
+
+    let from = clean_mermaid_er_entity_id(&parts[..operator_index].join(" "));
+    let to = clean_mermaid_er_entity_id(&parts[operator_index + 1..].join(" "));
+    let cardinality = parts[operator_index].trim().to_string();
+    let label = clean_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty() && !cardinality.is_empty()).then_some(
+        MermaidErRelationship {
+            from,
+            to,
+            cardinality,
+            label: (!label.is_empty()).then_some(label),
+        },
+    )
+}
+
+fn mermaid_er_relationship_operator(part: &str) -> bool {
+    (part.contains("--") || part.contains(".."))
+        && part.chars()
+            .all(|ch| matches!(ch, '|' | 'o' | 'O' | '{' | '}' | '-' | '.'))
+}
+
+fn clean_mermaid_er_entity_id(source: &str) -> String {
+    clean_mermaid_label(source)
+}
+
+fn upsert_mermaid_er_entity(
+    entities: &mut Vec<MermaidErEntity>,
+    entity_indices: &mut HashMap<String, usize>,
+    entity: MermaidErEntity,
+) {
+    if let Some(index) = entity_indices.get(&entity.id).copied() {
+        for attribute in entity.attributes {
+            if !entities[index].attributes.contains(&attribute) {
+                entities[index].attributes.push(attribute);
+            }
+        }
+        return;
+    }
+
+    entity_indices.insert(entity.id.clone(), entities.len());
+    entities.push(entity);
+}
+
+fn push_mermaid_er_attribute(
+    entities: &mut Vec<MermaidErEntity>,
+    entity_indices: &mut HashMap<String, usize>,
+    entity_id: &str,
+    attribute: String,
+) {
+    upsert_mermaid_er_entity(
+        entities,
+        entity_indices,
+        MermaidErEntity {
+            id: entity_id.to_string(),
+            attributes: vec![attribute],
+        },
+    );
+}
+
+fn is_mermaid_er_non_relationship_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("title ")
+        || lower.starts_with("direction ")
+        || lower.starts_with("acctitle")
+        || lower.starts_with("accdescr")
 }
 
 fn parse_mermaid_state_preview(source: &str) -> MermaidPreview {
@@ -6316,12 +6644,12 @@ fn build_editor_context_menu(
 mod tests {
     use super::{
         FootnotePreview, HtmlImagePreview, MermaidClass, MermaidClassRelationship, MermaidEdge,
-        MermaidGraphDirection, MermaidNode, MermaidParticipant, MermaidPieSlice,
-        MermaidSequenceFragment, MermaidSequenceFragmentKind, MermaidSequenceItem,
-        MermaidSequenceLifecycle, MermaidSequenceLifecycleKind, MermaidSequenceMessage,
-        MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState, MermaidStateNote,
-        MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph, MetadataPreviewEntry,
-        ResolvedImageSource, TocPreviewEntry,
+        MermaidErEntity, MermaidErRelationship, MermaidGraphDirection, MermaidNode,
+        MermaidParticipant, MermaidPieSlice, MermaidSequenceFragment, MermaidSequenceFragmentKind,
+        MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
+        MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState,
+        MermaidStateNote, MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph,
+        MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
         image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
@@ -6970,6 +7298,52 @@ mod tests {
                     to: "AssetStore".to_string(),
                     operator: "-->".to_string(),
                     label: Some("writes".to_string()),
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_er_diagram_entities_and_relationships() {
+        let preview = parse_mermaid_preview(
+            "erDiagram\n  DOCUMENT ||--o{ ASSET : owns <local>\n  DOCUMENT }o..|| WORKSPACE : belongs_to\n  DOCUMENT {\n    string title PK\n    datetime updated_at\n  }\n  ASSET {\n    string path\n  }\n",
+        );
+
+        assert_eq!(
+            preview.er_entities,
+            vec![
+                MermaidErEntity {
+                    id: "DOCUMENT".to_string(),
+                    attributes: vec![
+                        "string title PK".to_string(),
+                        "datetime updated_at".to_string(),
+                    ],
+                },
+                MermaidErEntity {
+                    id: "ASSET".to_string(),
+                    attributes: vec!["string path".to_string()],
+                },
+                MermaidErEntity {
+                    id: "WORKSPACE".to_string(),
+                    attributes: Vec::new(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.er_relationships,
+            vec![
+                MermaidErRelationship {
+                    from: "DOCUMENT".to_string(),
+                    to: "ASSET".to_string(),
+                    cardinality: "||--o{".to_string(),
+                    label: Some("owns <local>".to_string()),
+                },
+                MermaidErRelationship {
+                    from: "DOCUMENT".to_string(),
+                    to: "WORKSPACE".to_string(),
+                    cardinality: "}o..||".to_string(),
+                    label: Some("belongs_to".to_string()),
                 },
             ]
         );

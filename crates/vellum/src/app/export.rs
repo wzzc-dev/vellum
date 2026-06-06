@@ -1193,6 +1193,10 @@ fn render_static_mermaid_fallback(source: &str) -> String {
         return render_static_class_mermaid_svg(class_diagram);
     }
 
+    if let Some(er_diagram) = parse_static_mermaid_er_diagram(source) {
+        return render_static_er_mermaid_svg(er_diagram);
+    }
+
     if let Some(state) = parse_static_mermaid_state_diagram(source) {
         return render_static_state_mermaid_svg(state, static_mermaid_marker_id(source));
     }
@@ -2046,6 +2050,322 @@ fn push_static_mermaid_class_member(
             id: class_id.to_string(),
             label: class_id.to_string(),
             members: vec![member],
+        },
+    );
+}
+
+fn parse_static_mermaid_er_diagram(source: &str) -> Option<StaticMermaidErDiagram> {
+    let mut saw_er = false;
+    let mut entities = Vec::new();
+    let mut entity_indices = HashMap::new();
+    let mut relationships = Vec::new();
+    let mut current_entity: Option<String> = None;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_er {
+            if static_mermaid_er_header(line) {
+                saw_er = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(entity_id) = current_entity.clone() {
+            if line == "}" {
+                current_entity = None;
+                continue;
+            }
+
+            let attribute = clean_static_mermaid_note_text(line);
+            if !attribute.is_empty() {
+                push_static_mermaid_er_attribute(
+                    &mut entities,
+                    &mut entity_indices,
+                    &entity_id,
+                    attribute,
+                );
+            }
+            continue;
+        }
+
+        if line == "}" {
+            continue;
+        }
+
+        if let Some(entity_id) = parse_static_mermaid_er_entity_block_start(line) {
+            upsert_static_mermaid_er_entity(
+                &mut entities,
+                &mut entity_indices,
+                StaticMermaidErEntity {
+                    id: entity_id.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            current_entity = Some(entity_id);
+            continue;
+        }
+
+        if let Some(relationship) = parse_static_mermaid_er_relationship(line) {
+            upsert_static_mermaid_er_entity(
+                &mut entities,
+                &mut entity_indices,
+                StaticMermaidErEntity {
+                    id: relationship.from.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            upsert_static_mermaid_er_entity(
+                &mut entities,
+                &mut entity_indices,
+                StaticMermaidErEntity {
+                    id: relationship.to.clone(),
+                    attributes: Vec::new(),
+                },
+            );
+            relationships.push(relationship);
+        }
+    }
+
+    (!entities.is_empty() || !relationships.is_empty()).then_some(StaticMermaidErDiagram {
+        entities,
+        entity_indices,
+        relationships,
+    })
+}
+
+fn render_static_er_mermaid_svg(diagram: StaticMermaidErDiagram) -> String {
+    let width = 680usize;
+    let margin = 28usize;
+    let gap = 16usize;
+    let card_width = (width - margin * 2 - gap) / 2;
+    let relationship_row_height = 38usize;
+    let relationship_area_height = if diagram.relationships.is_empty() {
+        0
+    } else {
+        30 + diagram.relationships.len() * relationship_row_height + 12
+    };
+
+    let entity_heights = diagram
+        .entities
+        .iter()
+        .map(static_mermaid_er_entity_card_height)
+        .collect::<Vec<_>>();
+    let mut column_heights = [0usize, 0usize];
+    for (index, height) in entity_heights.iter().enumerate() {
+        let column = index % 2;
+        column_heights[column] += height + gap;
+    }
+    let entity_area_height = column_heights
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(gap);
+    let height = margin * 2 + relationship_area_height + entity_area_height.max(1);
+
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid ER diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">"
+    );
+
+    let mut y = margin;
+    if !diagram.relationships.is_empty() {
+        out.push_str(&format!(
+            "<text x=\"{margin}\" y=\"{y}\" text-anchor=\"start\" font-size=\"14\" font-weight=\"600\" fill=\"var(--fg)\">Relationships</text>"
+        ));
+        y += 20;
+        for relationship in &diagram.relationships {
+            out.push_str(&render_static_er_relationship(
+                &diagram,
+                relationship,
+                margin,
+                y,
+                width - margin * 2,
+                relationship_row_height - 6,
+            ));
+            y += relationship_row_height;
+        }
+        y += 12;
+    }
+
+    let mut column_y = [y, y];
+    for (index, entity) in diagram.entities.iter().enumerate() {
+        let column = index % 2;
+        let x = margin + column * (card_width + gap);
+        out.push_str(&render_static_er_entity_card(
+            entity,
+            x,
+            column_y[column],
+            card_width,
+            entity_heights[index],
+        ));
+        column_y[column] += entity_heights[index] + gap;
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn render_static_er_relationship(
+    diagram: &StaticMermaidErDiagram,
+    relationship: &StaticMermaidErRelationship,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let from = static_mermaid_er_entity_label(diagram, &relationship.from);
+    let to = static_mermaid_er_entity_label(diagram, &relationship.to);
+    let mut label = format!("{} {} {}", from, relationship.cardinality, to);
+    if let Some(text) = relationship.label.as_ref().filter(|text| !text.is_empty()) {
+        label.push_str(": ");
+        label.push_str(text);
+    }
+
+    let text_x = x + 12;
+    let center_y = y + height / 2;
+    format!(
+        "<g class=\"mermaid-er-relationship\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/><text x=\"{text_x}\" y=\"{center_y}\" text-anchor=\"start\" dominant-baseline=\"middle\" font-size=\"13\" fill=\"var(--fg)\">{}</text></g>",
+        escape_html(&label)
+    )
+}
+
+fn render_static_er_entity_card(
+    entity: &StaticMermaidErEntity,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let header_height = 34usize;
+    let text_x = x + width / 2;
+    let mut out = format!(
+        "<g class=\"mermaid-er-entity\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{header_height}\" rx=\"8\" fill=\"var(--fg)\" opacity=\"0.06\"/><text x=\"{text_x}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"13\" font-weight=\"600\" fill=\"var(--fg)\">{}</text>",
+        y + header_height / 2,
+        escape_html(&entity.id)
+    );
+    out.push_str(&format!(
+        "<line x1=\"{x}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"var(--rule)\"/>",
+        y + header_height,
+        x + width,
+        y + header_height
+    ));
+
+    let mut attribute_y = y + header_height + 20;
+    if entity.attributes.is_empty() {
+        out.push_str(&format!(
+            "<text x=\"{}\" y=\"{attribute_y}\" text-anchor=\"start\" font-size=\"12\" fill=\"var(--muted)\">entity</text>",
+            x + 12
+        ));
+    } else {
+        for attribute in &entity.attributes {
+            out.push_str(&format!(
+                "<text x=\"{}\" y=\"{attribute_y}\" text-anchor=\"start\" font-size=\"12\" fill=\"var(--fg)\">{}</text>",
+                x + 12,
+                escape_html(attribute)
+            ));
+            attribute_y += 20;
+        }
+    }
+
+    out.push_str("</g>");
+    out
+}
+
+fn static_mermaid_er_entity_card_height(entity: &StaticMermaidErEntity) -> usize {
+    34 + entity.attributes.len().max(1) * 20 + 14
+}
+
+fn static_mermaid_er_entity_label(diagram: &StaticMermaidErDiagram, id: &str) -> String {
+    diagram
+        .entity_indices
+        .get(id)
+        .and_then(|index| diagram.entities.get(*index))
+        .map(|entity| entity.id.clone())
+        .unwrap_or_else(|| id.to_string())
+}
+
+fn static_mermaid_er_header(line: &str) -> bool {
+    line.eq_ignore_ascii_case("erdiagram")
+}
+
+fn parse_static_mermaid_er_entity_block_start(line: &str) -> Option<String> {
+    if !line.ends_with('{') {
+        return None;
+    }
+    let entity = clean_static_mermaid_er_entity_id(line.trim_end_matches('{'));
+    (!entity.is_empty()).then_some(entity)
+}
+
+fn parse_static_mermaid_er_relationship(line: &str) -> Option<StaticMermaidErRelationship> {
+    let (relationship_source, label_source) = line.split_once(':').unwrap_or((line, ""));
+    let parts = relationship_source.split_whitespace().collect::<Vec<_>>();
+    let operator_index = parts
+        .iter()
+        .position(|part| static_mermaid_er_relationship_operator(part))?;
+    if operator_index == 0 || operator_index + 1 >= parts.len() {
+        return None;
+    }
+
+    let from = clean_static_mermaid_er_entity_id(&parts[..operator_index].join(" "));
+    let to = clean_static_mermaid_er_entity_id(&parts[operator_index + 1..].join(" "));
+    let cardinality = parts[operator_index].trim().to_string();
+    let label = clean_static_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty() && !cardinality.is_empty()).then_some(
+        StaticMermaidErRelationship {
+            from,
+            to,
+            cardinality,
+            label: (!label.is_empty()).then_some(label),
+        },
+    )
+}
+
+fn static_mermaid_er_relationship_operator(part: &str) -> bool {
+    (part.contains("--") || part.contains(".."))
+        && part
+            .chars()
+            .all(|ch| matches!(ch, '|' | 'o' | 'O' | '{' | '}' | '-' | '.'))
+}
+
+fn clean_static_mermaid_er_entity_id(source: &str) -> String {
+    clean_static_mermaid_label(source)
+}
+
+fn upsert_static_mermaid_er_entity(
+    entities: &mut Vec<StaticMermaidErEntity>,
+    entity_indices: &mut HashMap<String, usize>,
+    entity: StaticMermaidErEntity,
+) {
+    if let Some(index) = entity_indices.get(&entity.id).copied() {
+        for attribute in entity.attributes {
+            if !entities[index].attributes.contains(&attribute) {
+                entities[index].attributes.push(attribute);
+            }
+        }
+        return;
+    }
+
+    entity_indices.insert(entity.id.clone(), entities.len());
+    entities.push(entity);
+}
+
+fn push_static_mermaid_er_attribute(
+    entities: &mut Vec<StaticMermaidErEntity>,
+    entity_indices: &mut HashMap<String, usize>,
+    entity_id: &str,
+    attribute: String,
+) {
+    upsert_static_mermaid_er_entity(
+        entities,
+        entity_indices,
+        StaticMermaidErEntity {
+            id: entity_id.to_string(),
+            attributes: vec![attribute],
         },
     );
 }
@@ -3499,6 +3819,25 @@ struct StaticMermaidClassRelationship {
     from: String,
     to: String,
     operator: String,
+    label: Option<String>,
+}
+
+struct StaticMermaidErDiagram {
+    entities: Vec<StaticMermaidErEntity>,
+    entity_indices: HashMap<String, usize>,
+    relationships: Vec<StaticMermaidErRelationship>,
+}
+
+#[derive(Clone)]
+struct StaticMermaidErEntity {
+    id: String,
+    attributes: Vec<String>,
+}
+
+struct StaticMermaidErRelationship {
+    from: String,
+    to: String,
+    cardinality: String,
     label: Option<String>,
 }
 
@@ -5616,6 +5955,28 @@ mod tests {
         assert!(html.contains("LongformNote --&gt; AssetStore: writes"));
         assert!(!html.contains(
             "<pre class=\"mermaid-static mermaid-static-source\">classDiagram"
+        ));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_er_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nerDiagram\n  DOCUMENT ||--o{ ASSET : owns <local>\n  DOCUMENT }o..|| WORKSPACE : belongs_to\n  DOCUMENT {\n    string title PK\n    datetime updated_at\n  }\n  ASSET {\n    string path\n  }\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("Mermaid ER diagram preview"));
+        assert!(html.contains("class=\"mermaid-er-entity\""));
+        assert!(html.contains("class=\"mermaid-er-relationship\""));
+        assert!(html.contains(">DOCUMENT</text>"));
+        assert!(html.contains(">string title PK</text>"));
+        assert!(html.contains(">datetime updated_at</text>"));
+        assert!(html.contains("DOCUMENT ||--o{ ASSET: owns &lt;local&gt;"));
+        assert!(html.contains("DOCUMENT }o..|| WORKSPACE: belongs_to"));
+        assert!(!html.contains(
+            "<pre class=\"mermaid-static mermaid-static-source\">erDiagram"
         ));
     }
 
