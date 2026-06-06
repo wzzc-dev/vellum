@@ -369,7 +369,11 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
         "underline" => parse_accent_command(chars, i, MathAccent::Underline),
         "overbrace" => parse_accent_command(chars, i, MathAccent::Overbrace),
         "underbrace" => parse_accent_command(chars, i, MathAccent::Underbrace),
-        "text" | "mathrm" | "textup" => {
+        "text" | "mathrm" | "textup" | "mathbf" | "mathit" | "mathsf" | "mathtt"
+        | "mathcal" | "mathbb" | "mathfrak" | "operatorname" => {
+            if cmd == "operatorname" && i < len && chars[i] == '*' {
+                i += 1;
+            }
             let (content, end) = parse_single_arg(chars, i);
             let text = node_to_text(&content);
             (vec![MathNode::Text(text)], end)
@@ -1356,6 +1360,21 @@ mod tests {
     fn display_text_for_fraction_style_aliases() {
         assert_eq!(math_source_to_display_text("\\dfrac{x^2}{y}"), "x²/y");
         assert_eq!(math_source_to_display_text("\\tfrac{1}{n+1}"), "1/n+1");
+    }
+
+    #[test]
+    fn display_text_for_text_style_commands_keeps_content() {
+        assert_eq!(
+            math_source_to_display_text("\\mathbf{x} + \\mathcal{F}"),
+            "x + F"
+        );
+        assert_eq!(math_source_to_display_text("\\mathbb{R}^n"), "Rⁿ");
+    }
+
+    #[test]
+    fn display_text_for_operatorname_keeps_operator_text() {
+        assert_eq!(math_source_to_display_text("\\operatorname{rank}(A)"), "rank(A)");
+        assert_eq!(math_source_to_display_text("\\operatorname*{argmax}_x f(x)"), "argmaxₓ f(x)");
     }
 
     #[test]

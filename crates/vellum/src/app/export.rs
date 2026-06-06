@@ -5739,6 +5739,22 @@ mod tests {
     }
 
     #[test]
+    fn math_export_supports_text_style_and_operator_commands() {
+        let html = export_markdown_to_html(
+            "Inline $\\mathbf{x} + \\mathcal{F}$ and $\\operatorname*{argmax}_x f(x)$",
+            "Math",
+        )
+        .unwrap();
+
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">x + F</span>"));
+        assert!(html.contains(
+            "<span class=\"math-fallback math-inline-fallback\">argmaxₓ f(x)</span>"
+        ));
+        assert!(html.contains("\\(\\mathbf{x} + \\mathcal{F}\\)"));
+        assert!(html.contains("\\(\\operatorname*{argmax}_x f(x)\\)"));
+    }
+
+    #[test]
     fn math_export_skips_environment_preambles_in_fallback() {
         let html = export_markdown_to_html(
             "$$\n\\begin{array}{cc}a & b \\\\ c & d\\end{array}\n$$\n\n$$\n\\begin{alignat}{2}x &= y + 1 & z &= x - 1\\end{alignat}\n$$",
