@@ -424,6 +424,7 @@ struct HtmlAssetTag<'a> {
     raw: &'a str,
     href_range: Option<Range<usize>>,
     src_range: Option<Range<usize>>,
+    data_range: Option<Range<usize>>,
     srcset_range: Option<Range<usize>>,
     poster_range: Option<Range<usize>>,
 }
@@ -471,16 +472,20 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
     let allows_src = html_asset_tag_allows_src(rest)?;
     let raw_len = html_asset_tag_len(rest)?;
     let raw = &rest[..raw_len];
-    let href_range = html_named_tag_matches(raw, "a")
+    let href_range = (html_named_tag_matches(raw, "a") || html_named_tag_matches(raw, "link"))
         .then(|| html_attr_value_range(raw, "href"))
         .flatten();
     let src_range = allows_src.then(|| html_attr_value_range(raw, "src")).flatten();
+    let data_range = html_named_tag_matches(raw, "object")
+        .then(|| html_attr_value_range(raw, "data"))
+        .flatten();
     let srcset_range = html_attr_value_range(raw, "srcset");
     let poster_range = html_named_tag_matches(raw, "video")
         .then(|| html_attr_value_range(raw, "poster"))
         .flatten();
     if href_range.is_none()
         && src_range.is_none()
+        && data_range.is_none()
         && srcset_range.is_none()
         && poster_range.is_none()
     {
@@ -491,6 +496,7 @@ fn parse_html_asset_tag(rest: &str) -> Option<HtmlAssetTag<'_>> {
         raw,
         href_range,
         src_range,
+        data_range,
         srcset_range,
         poster_range,
     })
@@ -518,6 +524,16 @@ fn rewrite_html_asset_tag(
     }
 
     if let Some(range) = tag.src_range.clone() {
+        let destination = decode_html_entities(&tag.raw[range.clone()]);
+        if let Some(destination) = assets.exported_destination(&destination)? {
+            replacements.push(HtmlAttributeReplacement {
+                range,
+                value: escape_attr_value(&destination),
+            });
+        }
+    }
+
+    if let Some(range) = tag.data_range.clone() {
         let destination = decode_html_entities(&tag.raw[range.clone()]);
         if let Some(destination) = assets.exported_destination(&destination)? {
             replacements.push(HtmlAttributeReplacement {
@@ -672,6 +688,10 @@ fn html_asset_tag_len(rest: &str) -> Option<usize> {
         || html_named_tag_matches(rest, "img")
         || html_named_tag_matches(rest, "audio")
         || html_named_tag_matches(rest, "video")
+        || html_named_tag_matches(rest, "link")
+        || html_named_tag_matches(rest, "embed")
+        || html_named_tag_matches(rest, "iframe")
+        || html_named_tag_matches(rest, "object")
         || html_named_tag_matches(rest, "source")
         || html_named_tag_matches(rest, "track")
     {
@@ -685,11 +705,17 @@ fn html_asset_tag_allows_src(rest: &str) -> Option<bool> {
     if html_named_tag_matches(rest, "img")
         || html_named_tag_matches(rest, "audio")
         || html_named_tag_matches(rest, "video")
+        || html_named_tag_matches(rest, "embed")
+        || html_named_tag_matches(rest, "iframe")
         || html_named_tag_matches(rest, "source")
         || html_named_tag_matches(rest, "track")
     {
         Some(true)
     } else if html_named_tag_matches(rest, "a") {
+        Some(false)
+    } else if html_named_tag_matches(rest, "link") {
+        Some(false)
+    } else if html_named_tag_matches(rest, "object") {
         Some(false)
     } else {
         None
@@ -5199,6 +5225,57 @@ mod tests {
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/audio.mp3")).unwrap(),
             b"audio"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_file_export_copies_raw_html_embedded_document_assets() {
+        let root = temp_export_dir("html-raw-embedded-assets");
+        let source = root.join("source");
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/article.css"), b"css").unwrap();
+        std::fs::write(source.join("assets/frame.html"), b"frame").unwrap();
+        std::fs::write(source.join("assets/widget.svg"), b"widget").unwrap();
+        std::fs::write(source.join("assets/report.pdf"), b"report").unwrap();
+
+        let output = export_dir.join("article.html");
+        export_markdown_to_html_file(
+            concat!(
+                "<link rel=\"stylesheet\" href=\"assets/article.css\">\n",
+                "<iframe src=\"assets/frame.html#draft\"></iframe>\n",
+                "<embed src='assets/widget.svg' type=\"image/svg+xml\">\n",
+                "<object data=\"assets/report.pdf?download=1#page-2\"></object>",
+            ),
+            "Article",
+            Some(&source),
+            &output,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("href=\"article_assets/article.css\""));
+        assert!(html.contains("src=\"article_assets/frame.html#draft\""));
+        assert!(html.contains("src='article_assets/widget.svg'"));
+        assert!(html.contains("data=\"article_assets/report.pdf?download=1#page-2\""));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/article.css")).unwrap(),
+            b"css"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/frame.html")).unwrap(),
+            b"frame"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/widget.svg")).unwrap(),
+            b"widget"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/report.pdf")).unwrap(),
+            b"report"
         );
 
         std::fs::remove_dir_all(root).unwrap();
