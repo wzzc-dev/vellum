@@ -1234,7 +1234,13 @@ fn join_dropped_markdown(snippets: &[String]) -> Option<String> {
     if snippets.is_empty() {
         return None;
     }
-    Some(snippets.join("\n"))
+    let mut markdown = snippets
+        .iter()
+        .map(|snippet| snippet.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    markdown.push_str("\n\n");
+    Some(markdown)
 }
 
 fn selection_is_within_table(snapshot: &EditorSnapshot) -> bool {
@@ -1584,7 +1590,12 @@ mod tests {
     }
 
     #[test]
-    fn dropped_markdown_snippets_are_joined_on_separate_lines() {
+    fn dropped_markdown_snippets_are_joined_as_paragraphs() {
+        assert_eq!(
+            join_dropped_markdown(&["![one](./one.png)".to_string()]),
+            Some("![one](./one.png)\n\n".to_string())
+        );
+
         let snippets = vec![
             "![one](./one.png)".to_string(),
             "[doc](./doc.md)".to_string(),
@@ -1592,7 +1603,7 @@ mod tests {
 
         assert_eq!(
             join_dropped_markdown(&snippets),
-            Some("![one](./one.png)\n[doc](./doc.md)".to_string())
+            Some("![one](./one.png)\n\n[doc](./doc.md)\n\n".to_string())
         );
         assert_eq!(join_dropped_markdown(&[]), None);
     }
