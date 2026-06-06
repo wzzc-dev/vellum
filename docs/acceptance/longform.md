@@ -158,6 +158,14 @@ stateDiagram-v2
   Exported --> [*]
 ```
 
+```mermaid
+pie showData
+  title Export coverage
+  "HTML export" : 45
+  "Print review" : 30
+  "PDF save" : 25
+```
+
 ## Footnote
 
 The acceptance pass should verify that footnotes survive export and remain linked.[^acceptance]

@@ -1185,6 +1185,10 @@ fn render_static_mermaid_fallback(source: &str) -> String {
         return render_static_sequence_mermaid_svg(sequence, static_mermaid_marker_id(source));
     }
 
+    if let Some(pie) = parse_static_mermaid_pie_chart(source) {
+        return render_static_pie_mermaid_svg(pie);
+    }
+
     if let Some(state) = parse_static_mermaid_state_diagram(source) {
         return render_static_state_mermaid_svg(state, static_mermaid_marker_id(source));
     }
@@ -1473,6 +1477,158 @@ fn render_static_mermaid_node(
     }
     out.push_str("</text></g>");
     out
+}
+
+fn parse_static_mermaid_pie_chart(source: &str) -> Option<StaticMermaidPieChart> {
+    let mut saw_pie = false;
+    let mut title = None;
+    let mut slices = Vec::new();
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_pie {
+            if static_mermaid_pie_header(line) {
+                saw_pie = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(parsed_title) = parse_static_pie_title(line) {
+            title = Some(parsed_title);
+            continue;
+        }
+
+        if let Some(slice) = parse_static_pie_slice(line) {
+            slices.push(slice);
+        }
+    }
+
+    (!slices.is_empty()).then_some(StaticMermaidPieChart { title, slices })
+}
+
+fn render_static_pie_mermaid_svg(chart: StaticMermaidPieChart) -> String {
+    let width = 560usize;
+    let height = 260usize;
+    let center_x = 132f64;
+    let center_y = 142f64;
+    let radius = 82f64;
+    let total = static_pie_total(&chart.slices);
+    let title = chart
+        .title
+        .as_deref()
+        .filter(|title| !title.is_empty())
+        .unwrap_or("Mermaid pie chart");
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid pie chart preview\" xmlns=\"http://www.w3.org/2000/svg\">\
+<text x=\"28\" y=\"30\" text-anchor=\"start\" font-size=\"14\" font-weight=\"600\" fill=\"var(--fg)\">{}</text>",
+        escape_html(title)
+    );
+
+    if total > 0. {
+        let mut angle = -std::f64::consts::FRAC_PI_2;
+        for (index, slice) in chart.slices.iter().enumerate() {
+            let sweep = slice.value / total * std::f64::consts::TAU;
+            let color = static_pie_slice_color(index);
+            if sweep >= std::f64::consts::TAU - 0.0001 {
+                out.push_str(&format!(
+                    "<circle class=\"mermaid-pie-slice\" cx=\"{center_x:.1}\" cy=\"{center_y:.1}\" r=\"{radius:.1}\" fill=\"{color}\"/>"
+                ));
+            } else if sweep > 0. {
+                let end_angle = angle + sweep;
+                let start_x = center_x + radius * angle.cos();
+                let start_y = center_y + radius * angle.sin();
+                let end_x = center_x + radius * end_angle.cos();
+                let end_y = center_y + radius * end_angle.sin();
+                let large_arc = usize::from(sweep > std::f64::consts::PI);
+                out.push_str(&format!(
+                    "<path class=\"mermaid-pie-slice\" d=\"M {center_x:.1} {center_y:.1} L {start_x:.1} {start_y:.1} A {radius:.1} {radius:.1} 0 {large_arc} 1 {end_x:.1} {end_y:.1} Z\" fill=\"{color}\"/>"
+                ));
+                angle = end_angle;
+            }
+        }
+    }
+
+    out.push_str(&format!(
+        "<circle cx=\"{center_x:.1}\" cy=\"{center_y:.1}\" r=\"{radius:.1}\" fill=\"none\" stroke=\"var(--rule)\" stroke-width=\"1.5\"/>"
+    ));
+
+    for (index, slice) in chart.slices.iter().enumerate() {
+        let y = 64 + index * 26;
+        let color = static_pie_slice_color(index);
+        let percent = if total > 0. {
+            slice.value / total * 100.
+        } else {
+            0.
+        };
+        out.push_str(&format!(
+            "<g class=\"mermaid-pie-legend\"><rect x=\"280\" y=\"{}\" width=\"14\" height=\"14\" rx=\"3\" fill=\"{color}\"/><text x=\"302\" y=\"{}\" text-anchor=\"start\" font-size=\"13\" fill=\"var(--fg)\">{}</text><text x=\"520\" y=\"{}\" text-anchor=\"end\" font-size=\"12\" fill=\"var(--muted)\">{} ({percent:.1}%)</text></g>",
+            y.saturating_sub(11),
+            y,
+            escape_html(&slice.label),
+            y,
+            static_pie_value_text(slice.value)
+        ));
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn static_mermaid_pie_header(line: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let Some(head) = parts.next() else {
+        return false;
+    };
+    head.eq_ignore_ascii_case("pie")
+}
+
+fn parse_static_pie_title(line: &str) -> Option<String> {
+    let title = strip_static_ascii_prefix(line, "title ")?;
+    let title = clean_static_mermaid_note_text(title);
+    (!title.is_empty()).then_some(title)
+}
+
+fn parse_static_pie_slice(line: &str) -> Option<StaticMermaidPieSlice> {
+    let (label_source, value_source) = line.split_once(':')?;
+    let label = clean_static_mermaid_note_text(label_source);
+    let value = value_source.trim().parse::<f64>().ok()?;
+
+    (!label.is_empty() && value.is_finite() && value >= 0.).then_some(StaticMermaidPieSlice {
+        label,
+        value,
+    })
+}
+
+fn static_pie_total(slices: &[StaticMermaidPieSlice]) -> f64 {
+    slices.iter().map(|slice| slice.value).sum()
+}
+
+fn static_pie_value_text(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
+fn static_pie_slice_color(index: usize) -> &'static str {
+    const COLORS: &[&str] = &[
+        "hsl(214 70% 54%)",
+        "hsl(151 55% 41%)",
+        "hsl(35 88% 55%)",
+        "hsl(344 70% 58%)",
+        "hsl(268 55% 62%)",
+        "hsl(188 70% 43%)",
+    ];
+    COLORS[index % COLORS.len()]
 }
 
 fn parse_static_mermaid_state_diagram(source: &str) -> Option<StaticMermaidStateDiagram> {
@@ -2897,6 +3053,16 @@ struct StaticMermaidEdge {
     label: Option<String>,
 }
 
+struct StaticMermaidPieChart {
+    title: Option<String>,
+    slices: Vec<StaticMermaidPieSlice>,
+}
+
+struct StaticMermaidPieSlice {
+    label: String,
+    value: f64,
+}
+
 struct StaticMermaidStateDiagram {
     states: Vec<StaticMermaidState>,
     state_indices: HashMap<String, usize>,
@@ -4048,6 +4214,10 @@ mod tests {
         assert!(html.contains(">Review queue (Review)</tspan>"));
         assert!(html.contains(">Save changes</text>"));
         assert!(html.contains(">note right of Review queue"));
+        assert!(html.contains("Mermaid pie chart preview"));
+        assert!(html.contains(">Export coverage</text>"));
+        assert!(html.contains("class=\"mermaid-pie-legend\""));
+        assert!(html.contains(">HTML export</text>"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
         assert!(root.join("longform_assets/cover.svg").is_file());
@@ -4969,15 +5139,33 @@ mod tests {
     }
 
     #[test]
+    fn mermaid_export_has_static_pie_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\npie showData\n  title Export coverage\n  \"HTML <export>\" : 65\n  \"Print PDF\" : 35\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("Mermaid pie chart preview"));
+        assert!(html.contains("class=\"mermaid-pie-slice\""));
+        assert!(html.contains("class=\"mermaid-pie-legend\""));
+        assert!(html.contains(">Export coverage</text>"));
+        assert!(html.contains(">HTML &lt;export&gt;</text>"));
+        assert!(html.contains(">65 (65.0%)</text>"));
+        assert!(!html.contains("<pre class=\"mermaid-static mermaid-static-source\">pie"));
+    }
+
+    #[test]
     fn unsupported_mermaid_export_falls_back_to_source() {
         let html = export_markdown_to_html(
-            "```mermaid\npie\n  \"Draft\" : 2\n```",
+            "```mermaid\njourney\n  title Drafting\n  section Write\n    Draft: 5: Writer\n```",
             "Mermaid",
         )
         .unwrap();
 
         assert!(html.contains(
-            "<pre class=\"mermaid-static mermaid-static-source\">pie\n  &quot;Draft&quot; : 2</pre>"
+            "<pre class=\"mermaid-static mermaid-static-source\">journey\n  title Drafting\n  section Write\n    Draft: 5: Writer</pre>"
         ));
     }
 

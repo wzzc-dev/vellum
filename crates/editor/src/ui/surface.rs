@@ -158,11 +158,13 @@ struct HtmlImagePreview {
     alt: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct MermaidPreview {
     direction: Option<String>,
     edges: Vec<MermaidEdge>,
     subgraphs: Vec<MermaidSubgraph>,
+    pie_title: Option<String>,
+    pie_slices: Vec<MermaidPieSlice>,
     states: Vec<MermaidState>,
     state_transitions: Vec<MermaidStateTransition>,
     state_notes: Vec<MermaidStateNote>,
@@ -198,6 +200,12 @@ struct MermaidNode {
 struct MermaidSubgraph {
     id: String,
     label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct MermaidPieSlice {
+    label: String,
+    value: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2477,6 +2485,18 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     preview.lifecycles.len()
                 )),
         );
+    } else if has_mermaid_pie_preview(&preview) {
+        header = header.child(render_mermaid_chip("pie".to_string(), palette));
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!(
+                    "{} slices, total {}",
+                    preview.pie_slices.len(),
+                    mermaid_pie_value_text(mermaid_pie_total(&preview.pie_slices))
+                )),
+        );
     } else if has_mermaid_state_preview(&preview) {
         header = header.child(render_mermaid_chip("state".to_string(), palette));
         header = header.child(
@@ -2521,6 +2541,24 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                         "+{} more sequence items",
                         preview.sequence_items.len() - 8
                     )),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
+    } else if has_mermaid_pie_preview(&preview) {
+        body = body.child(render_mermaid_pie_preview(&preview, palette));
+        if preview.pie_slices.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!("+{} more slices", preview.pie_slices.len() - 8)),
             );
         }
         if preview.unsupported_lines > 0 {
@@ -2597,6 +2635,10 @@ fn has_mermaid_sequence_preview(preview: &MermaidPreview) -> bool {
         || !preview.lifecycles.is_empty()
 }
 
+fn has_mermaid_pie_preview(preview: &MermaidPreview) -> bool {
+    !preview.pie_slices.is_empty()
+}
+
 fn has_mermaid_state_preview(preview: &MermaidPreview) -> bool {
     !preview.states.is_empty()
         || !preview.state_transitions.is_empty()
@@ -2626,6 +2668,27 @@ fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette
         graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
     }
     graph.into_any_element()
+}
+
+fn render_mermaid_pie_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
+    let total = mermaid_pie_total(&preview.pie_slices);
+    let mut chart = div().w_full().flex().flex_col().gap_2();
+
+    if let Some(title) = preview.pie_title.as_ref().filter(|title| !title.is_empty()) {
+        chart = chart.child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.text_color)
+                .child(title.clone()),
+        );
+    }
+
+    for slice in preview.pie_slices.iter().take(8) {
+        chart = chart.child(render_mermaid_pie_slice_card(slice, total, palette));
+    }
+
+    chart.into_any_element()
 }
 
 fn render_mermaid_state_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
@@ -2732,6 +2795,36 @@ fn render_mermaid_sequence_message_card(
     }
 
     card.into_any_element()
+}
+
+fn render_mermaid_pie_slice_card(
+    slice: &MermaidPieSlice,
+    total: f64,
+    palette: RenderPalette,
+) -> AnyElement {
+    let percent = if total > 0. {
+        slice.value / total * 100.
+    } else {
+        0.
+    };
+
+    div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(render_mermaid_chip(slice.label.clone(), palette))
+        .child(render_mermaid_chip(
+            mermaid_pie_value_text(slice.value),
+            palette,
+        ))
+        .child(render_mermaid_chip(format!("{percent:.1}%"), palette))
+        .into_any_element()
 }
 
 fn render_mermaid_state_transition_card(
@@ -3099,6 +3192,9 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
     if mermaid_is_sequence_diagram(source) {
         return parse_mermaid_sequence_preview(source);
     }
+    if mermaid_is_pie_diagram(source) {
+        return parse_mermaid_pie_preview(source);
+    }
     if mermaid_is_state_diagram(source) {
         return parse_mermaid_state_preview(source);
     }
@@ -3147,6 +3243,17 @@ fn mermaid_is_sequence_diagram(source: &str) -> bool {
     false
 }
 
+fn mermaid_is_pie_diagram(source: &str) -> bool {
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+        return mermaid_pie_header(line);
+    }
+    false
+}
+
 fn mermaid_is_state_diagram(source: &str) -> bool {
     for raw_line in source.lines() {
         let line = raw_line.trim().trim_end_matches(';').trim();
@@ -3157,6 +3264,80 @@ fn mermaid_is_state_diagram(source: &str) -> bool {
             || line.eq_ignore_ascii_case("statediagram-v2");
     }
     false
+}
+
+fn parse_mermaid_pie_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+    let mut saw_pie = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_pie {
+            if mermaid_pie_header(line) {
+                saw_pie = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(title) = parse_mermaid_pie_title(line) {
+            preview.pie_title = Some(title);
+            continue;
+        }
+
+        if let Some(slice) = parse_mermaid_pie_slice(line) {
+            preview.pie_slices.push(slice);
+            continue;
+        }
+
+        preview.unsupported_lines += 1;
+    }
+
+    preview
+}
+
+fn mermaid_pie_header(line: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let Some(head) = parts.next() else {
+        return false;
+    };
+    head.eq_ignore_ascii_case("pie")
+}
+
+fn parse_mermaid_pie_title(line: &str) -> Option<String> {
+    let title = strip_ascii_prefix(line, "title ")?;
+    let title = clean_mermaid_note_text(title);
+    (!title.is_empty()).then_some(title)
+}
+
+fn parse_mermaid_pie_slice(line: &str) -> Option<MermaidPieSlice> {
+    let (label_source, value_source) = line.split_once(':')?;
+    let label = clean_mermaid_note_text(label_source);
+    let value = value_source.trim().parse::<f64>().ok()?;
+
+    (!label.is_empty() && value.is_finite() && value >= 0.).then_some(MermaidPieSlice {
+        label,
+        value,
+    })
+}
+
+fn mermaid_pie_total(slices: &[MermaidPieSlice]) -> f64 {
+    slices.iter().map(|slice| slice.value).sum()
+}
+
+fn mermaid_pie_value_text(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
 }
 
 fn parse_mermaid_state_preview(source: &str) -> MermaidPreview {
@@ -5682,7 +5863,7 @@ fn build_editor_context_menu(
 mod tests {
     use super::{
         FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
-        MermaidParticipant, MermaidSequenceFragment, MermaidSequenceFragmentKind,
+        MermaidParticipant, MermaidPieSlice, MermaidSequenceFragment, MermaidSequenceFragmentKind,
         MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
         MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState,
         MermaidStateNote, MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph,
@@ -6264,6 +6445,29 @@ mod tests {
                 },
                 label: None,
             }]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_pie_chart_slices() {
+        let preview = parse_mermaid_preview(
+            "pie showData\n  title Export coverage\n  \"HTML <export>\" : 65\n  \"Print PDF\" : 35.5\n",
+        );
+
+        assert_eq!(preview.pie_title.as_deref(), Some("Export coverage"));
+        assert_eq!(
+            preview.pie_slices,
+            vec![
+                MermaidPieSlice {
+                    label: "HTML <export>".to_string(),
+                    value: 65.,
+                },
+                MermaidPieSlice {
+                    label: "Print PDF".to_string(),
+                    value: 35.5,
+                },
+            ]
         );
         assert_eq!(preview.unsupported_lines, 0);
     }
