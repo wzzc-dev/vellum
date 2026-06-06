@@ -1189,7 +1189,13 @@ fn markdown_link_destination(destination: &str) -> String {
         .chars()
         .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
     if needs_angle_destination {
-        format!("<{}>", destination.replace('\\', r"\\").replace('>', r"\>"))
+        format!(
+            "<{}>",
+            destination
+                .replace('\\', r"\\")
+                .replace('<', r"\<")
+                .replace('>', r"\>")
+        )
     } else {
         destination.to_string()
     }
@@ -1546,6 +1552,10 @@ mod tests {
         assert_eq!(
             markdown_link_destination(r".\assets\a>b.png"),
             r"<.\\assets\\a\>b.png>"
+        );
+        assert_eq!(
+            markdown_link_destination("./assets/a<b>.png"),
+            r"<./assets/a\<b\>.png>"
         );
     }
 

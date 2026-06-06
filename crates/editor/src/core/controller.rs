@@ -1781,7 +1781,19 @@ impl EditorController {
     }
 
     fn escape_link_destination(text: &str) -> String {
-        text.replace('\\', r"\\").replace(')', r"\)")
+        let needs_angle_destination = text
+            .chars()
+            .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
+        if needs_angle_destination {
+            format!(
+                "<{}>",
+                text.replace('\\', r"\\")
+                    .replace('<', r"\<")
+                    .replace('>', r"\>")
+            )
+        } else {
+            text.to_string()
+        }
     }
 
     fn adjust_current_block(&mut self, deepen: bool) -> EditorEffects {
@@ -6774,7 +6786,10 @@ mod tests {
         controller.dispatch(EditCommand::InsertLink);
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.document_text, r"Read [text](https://example.com/a\)b)");
+        assert_eq!(
+            snapshot.document_text,
+            r"Read [text](<https://example.com/a)b>)"
+        );
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "text");
     }
 
@@ -7048,7 +7063,7 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(
             snapshot.document_text,
-            r"See ![alt](https://example.com/image\).png)"
+            r"See ![alt](<https://example.com/image).png>)"
         );
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
     }
@@ -7107,9 +7122,17 @@ mod tests {
         let snapshot = controller.snapshot();
         assert_eq!(
             snapshot.document_text,
-            r"See ![alt](./assets/my diagram(1\).PNG)"
+            r"See ![alt](<./assets/my diagram(1).PNG>)"
         );
         assert_eq!(&snapshot.document_text[snapshot.selection.range()], "alt");
+    }
+
+    #[test]
+    fn insert_image_destination_escapes_angle_brackets_inside_wrapped_path() {
+        assert_eq!(
+            EditorController::escape_link_destination("./assets/a<b>.png"),
+            r"<./assets/a\<b\>.png>"
+        );
     }
 
     #[test]

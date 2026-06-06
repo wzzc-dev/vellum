@@ -482,7 +482,12 @@ fn escape_link_destination(text: &str) -> String {
         .chars()
         .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
     if needs_angle_destination {
-        format!("<{}>", text.replace('\\', r"\\").replace('>', r"\>"))
+        format!(
+            "<{}>",
+            text.replace('\\', r"\\")
+                .replace('<', r"\<")
+                .replace('>', r"\>")
+        )
     } else {
         text.to_string()
     }
@@ -3061,6 +3066,10 @@ mod tests {
         assert_eq!(
             escape_link_destination("./assets/my pic(1).png"),
             r"<./assets/my pic(1).png>"
+        );
+        assert_eq!(
+            escape_link_destination("./assets/a<b>.png"),
+            r"<./assets/a\<b\>.png>"
         );
         assert_eq!(
             markdown_link("a]b", "https://example.com/a)b"),

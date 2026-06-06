@@ -1455,7 +1455,13 @@ fn markdown_link_destination(destination: &str) -> String {
         .chars()
         .any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\'));
     if needs_angle_destination {
-        format!("<{}>", destination.replace('\\', r"\\").replace('>', r"\>"))
+        format!(
+            "<{}>",
+            destination
+                .replace('\\', r"\\")
+                .replace('<', r"\<")
+                .replace('>', r"\>")
+        )
     } else {
         destination.to_string()
     }
@@ -5501,6 +5507,14 @@ mod tests {
 
         assert!(html.contains("<table class=\"raw\"><tr><td>Raw</td></tr></table>"));
         assert!(!html.contains("</table></div>"));
+    }
+
+    #[test]
+    fn exported_markdown_destinations_escape_angle_brackets_when_wrapped() {
+        assert_eq!(
+            markdown_link_destination("./assets/a<b>.png"),
+            r"<./assets/a\<b\>.png>"
+        );
     }
 
     #[test]
