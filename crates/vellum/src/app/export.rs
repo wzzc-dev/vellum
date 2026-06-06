@@ -4025,6 +4025,10 @@ mod tests {
         assert!(
             html.contains("x\u{0302} + v\u{20D7} + y\u{0307} + ⏟(a + b)_group")
         );
+        assert!(html.contains("<div class=\"math-fallback math-block-fallback\">a b; c d</div>"));
+        assert!(html.contains("x = y + 1 z = x - 1"));
+        assert!(!html.contains("<div class=\"math-fallback math-block-fallback\">cc"));
+        assert!(!html.contains("<div class=\"math-fallback math-block-fallback\">2 x"));
         assert!(html.contains("\\begin{aligned}"));
         assert!(html.contains("E &amp;= mc^2"));
         assert!(html.contains("mathjax@3"));
@@ -4772,6 +4776,22 @@ mod tests {
         ));
         assert!(html.contains("\\begin{cases}"));
         assert!(html.contains("mathjax@3"));
+    }
+
+    #[test]
+    fn math_export_skips_environment_preambles_in_fallback() {
+        let html = export_markdown_to_html(
+            "$$\n\\begin{array}{cc}a & b \\\\ c & d\\end{array}\n$$\n\n$$\n\\begin{alignat}{2}x &= y + 1 & z &= x - 1\\end{alignat}\n$$",
+            "Math",
+        )
+        .unwrap();
+
+        assert!(html.contains("<div class=\"math-fallback math-block-fallback\">a b; c d</div>"));
+        assert!(html.contains("<div class=\"math-fallback math-block-fallback\">x = y + 1 z = x - 1</div>"));
+        assert!(!html.contains("<div class=\"math-fallback math-block-fallback\">cc"));
+        assert!(!html.contains("<div class=\"math-fallback math-block-fallback\">2 x"));
+        assert!(html.contains("\\begin{array}{cc}"));
+        assert!(html.contains("\\begin{alignat}{2}"));
     }
 
     #[test]

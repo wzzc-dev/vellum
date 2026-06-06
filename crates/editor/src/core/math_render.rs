@@ -376,6 +376,7 @@ fn parse_command(chars: &[char], start: usize) -> (Vec<MathNode>, usize) {
         }
         "begin" => {
             let (env_name, body_start) = parse_env_name(chars, i);
+            let body_start = math_environment_body_start(chars, body_start, &env_name);
             let (env_end, rows) = parse_env_body(chars, body_start, &env_name);
             if is_cases_environment(&env_name) {
                 (vec![MathNode::Cases { rows }], env_end)
@@ -525,6 +526,46 @@ fn parse_env_name(chars: &[char], start: usize) -> (String, usize) {
     } else {
         (String::new(), start)
     }
+}
+
+fn math_environment_body_start(chars: &[char], start: usize, env_name: &str) -> usize {
+    if math_environment_has_preamble(env_name) {
+        skip_optional_math_environment_preamble(chars, start)
+    } else {
+        start
+    }
+}
+
+fn math_environment_has_preamble(env_name: &str) -> bool {
+    matches!(env_name, "array" | "array*" | "alignat" | "alignat*" | "alignedat")
+}
+
+fn skip_optional_math_environment_preamble(chars: &[char], start: usize) -> usize {
+    let mut i = start;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] != '{' {
+        return start;
+    }
+
+    let mut depth = 0usize;
+    let mut end = i;
+    while end < chars.len() {
+        match chars[end] {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return end + 1;
+                }
+            }
+            _ => {}
+        }
+        end += 1;
+    }
+
+    start
 }
 
 fn parse_env_body(chars: &[char], start: usize, env_name: &str) -> (usize, Vec<Vec<MathNode>>) {
@@ -1259,6 +1300,35 @@ mod tests {
             _ => panic!("expected delimited matrix"),
         }
         assert_eq!(math_tree_to_display_text(&tree), "[a b; c d]");
+    }
+
+    #[test]
+    fn display_text_for_array_skips_column_preamble() {
+        let tree = parse_math("\\begin{array}{cc}a & b \\\\ c & d\\end{array}");
+
+        match &tree.nodes[0] {
+            MathNode::Matrix { rows } => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            }
+            _ => panic!("expected array matrix"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "a b; c d");
+    }
+
+    #[test]
+    fn display_text_for_alignat_skips_pair_count() {
+        let tree = parse_math("\\begin{alignat}{2}a &= b & c &= d\\end{alignat}");
+
+        match &tree.nodes[0] {
+            MathNode::Matrix { rows } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 4);
+            }
+            _ => panic!("expected alignat matrix"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "a = b c = d");
     }
 
     #[test]

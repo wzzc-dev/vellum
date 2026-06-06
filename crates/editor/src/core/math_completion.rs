@@ -93,6 +93,18 @@ const MATH_COMPLETIONS: &[MathCompletionItem] = &[
         category: Construct,
     },
     MathCompletionItem {
+        command: "array",
+        snippet: "\\begin{array}{cc}\n & \\\\\n & \n\\end{array}",
+        description: "Array environment",
+        category: Construct,
+    },
+    MathCompletionItem {
+        command: "alignat",
+        snippet: "\\begin{alignat}{2}\n &=  &  &= \n\\end{alignat}",
+        description: "Aligned pairs environment",
+        category: Construct,
+    },
+    MathCompletionItem {
         command: "displaystyle",
         snippet: "\\displaystyle",
         description: "Display style",
@@ -412,5 +424,29 @@ mod tests {
         assert!(filter_math_completions("bin")
             .iter()
             .any(|index| math_completion_items()[*index].command == "binom"));
+    }
+
+    #[test]
+    fn environment_completions_include_array_and_alignat_templates() {
+        let array = math_completion_items()
+            .iter()
+            .find(|item| item.command == "array")
+            .expect("array completion");
+        let alignat = math_completion_items()
+            .iter()
+            .find(|item| item.command == "alignat")
+            .expect("alignat completion");
+
+        assert_eq!(array.snippet, "\\begin{array}{cc}\n & \\\\\n & \n\\end{array}");
+        assert_eq!(
+            alignat.snippet,
+            "\\begin{alignat}{2}\n &=  &  &= \n\\end{alignat}"
+        );
+        assert!(filter_math_completions("arr")
+            .iter()
+            .any(|index| math_completion_items()[*index].command == "array"));
+        assert!(filter_math_completions("alig")
+            .iter()
+            .any(|index| math_completion_items()[*index].command == "alignat"));
     }
 }

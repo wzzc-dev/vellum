@@ -102,6 +102,23 @@ $$
 \hat{x} + \vec{v} + \dot{y} + \underbrace{a + b}_{group}
 $$
 
+Array math should skip layout preambles and keep cells readable in preview and export:
+
+$$
+\begin{array}{cc}
+a & b \\
+c & d
+\end{array}
+$$
+
+Alignat math should skip the pair-count preamble and keep alignment cells readable:
+
+$$
+\begin{alignat}{2}
+x &= y + 1 & z &= x - 1
+\end{alignat}
+$$
+
 ## Mermaid Diagrams
 
 ```mermaid
