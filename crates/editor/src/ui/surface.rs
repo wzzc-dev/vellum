@@ -785,6 +785,10 @@ pub(super) fn rendered_text_for_block(block: &RenderBlock) -> String {
         .collect()
 }
 
+fn rendered_line_count_for_block(block: &RenderBlock) -> usize {
+    rendered_text_for_block(block).lines().count().max(1)
+}
+
 const VIRTUAL_RENDER_MIN_BLOCKS: usize = 20;
 const VIRTUAL_RENDER_OVERDRAW_PX: f32 = 400.;
 
@@ -1265,7 +1269,7 @@ fn render_display_block(
             .into_any_element(),
         BlockKind::List => text_area,
         BlockKind::SourceCode => {
-            let line_count = block.visible_text.lines().count().max(1);
+            let line_count = rendered_line_count_for_block(block);
             let line_number_width = format!("{}", line_count).len().max(2);
             let gutter_width = line_number_width as f32 * 8.0 + 16.0;
 
@@ -1300,7 +1304,7 @@ fn render_display_block(
                 .into_any_element()
         }
         BlockKind::CodeFence { language } => {
-            let line_count = block.visible_text.lines().count().max(1);
+            let line_count = rendered_line_count_for_block(block);
             let line_number_width = format!("{}", line_count).len().max(2);
             let gutter_width = line_number_width as f32 * 8.0 + 16.0;
 
@@ -6656,15 +6660,15 @@ mod tests {
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
         image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
         mermaid_graph_direction, parse_html_image_preview, parse_mermaid_preview,
-        parse_metadata_preview_entry, resolve_image_source, selection_touches_render_block,
-        should_render_footnote_preview,
+        parse_metadata_preview_entry, rendered_line_count_for_block, rendered_text_for_block,
+        resolve_image_source, selection_touches_render_block, should_render_footnote_preview,
         should_render_front_matter_preview, should_render_html_image_preview,
         should_render_image_preview, should_render_mermaid_preview, should_render_toc_preview,
         toc_edit_cursor_offset, word_range_at_visible_offset,
     };
     use crate::{
-        BlockKind, EmbeddedNodeKind, RenderBlock, RenderInlineStyle, RenderSpan, RenderSpanKind,
-        RenderSpanMeta,
+        BlockKind, DisplayMap, DocumentBuffer, EmbeddedNodeKind, HiddenSyntaxPolicy, RenderBlock,
+        RenderInlineStyle, RenderSpan, RenderSpanKind, RenderSpanMeta,
     };
     use std::path::{Path, PathBuf};
 
@@ -6749,6 +6753,22 @@ mod tests {
             }),
             source_hash: 0,
         }
+    }
+
+    #[test]
+    fn code_fence_line_count_ignores_trailing_block_separator() {
+        let code = "fn open_note(path: &str) {\n    println!(\"Opening {path}\");\n}\n";
+        let doc = DocumentBuffer::from_text(format!("```rust\n{code}```\n\n## Search Targets"));
+        let map = DisplayMap::from_document(&doc, None, HiddenSyntaxPolicy::SelectionAware);
+        let block = map
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::CodeFence { .. }))
+            .expect("code fence block");
+
+        assert_eq!(block.visible_text.lines().count(), 5);
+        assert_eq!(rendered_text_for_block(block), code);
+        assert_eq!(rendered_line_count_for_block(block), 3);
     }
 
     fn toc_block() -> RenderBlock {
