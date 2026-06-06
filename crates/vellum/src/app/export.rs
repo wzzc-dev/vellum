@@ -781,7 +781,7 @@ struct CssUrlFunction {
 
 fn rewrite_css_urls(value: &str, assets: &mut ExportAssetContext<'_>) -> Result<Option<String>> {
     let base_dir = assets.source_dir.to_path_buf();
-    rewrite_css_urls_with_base(value, &base_dir, false, assets)
+    rewrite_css_references_with_base(value, &base_dir, false, assets)
 }
 
 fn rewrite_css_asset_urls(
@@ -789,7 +789,131 @@ fn rewrite_css_asset_urls(
     base_dir: &Path,
     assets: &mut ExportAssetContext<'_>,
 ) -> Result<Option<String>> {
-    rewrite_css_urls_with_base(value, base_dir, true, assets)
+    rewrite_css_references_with_base(value, base_dir, true, assets)
+}
+
+fn rewrite_css_references_with_base(
+    value: &str,
+    base_dir: &Path,
+    asset_relative: bool,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
+    let mut changed = false;
+    let mut rewritten = value.to_string();
+
+    if let Some(imports) =
+        rewrite_css_imports_with_base(&rewritten, base_dir, asset_relative, assets)?
+    {
+        rewritten = imports;
+        changed = true;
+    }
+
+    if let Some(urls) = rewrite_css_urls_with_base(&rewritten, base_dir, asset_relative, assets)? {
+        rewritten = urls;
+        changed = true;
+    }
+
+    Ok(changed.then_some(rewritten))
+}
+
+struct CssImportString {
+    raw_len: usize,
+    value_range: Range<usize>,
+    quote: char,
+}
+
+fn rewrite_css_imports_with_base(
+    value: &str,
+    base_dir: &Path,
+    asset_relative: bool,
+    assets: &mut ExportAssetContext<'_>,
+) -> Result<Option<String>> {
+    let mut out = String::with_capacity(value.len());
+    let mut changed = false;
+    let mut index = 0usize;
+
+    while index < value.len() {
+        let rest = &value[index..];
+        let Some(relative_start) = find_css_import_start(rest) else {
+            break;
+        };
+        let start = index + relative_start;
+        out.push_str(&value[index..start]);
+
+        let Some(import) = parse_css_import_string(&value[start..]) else {
+            out.push_str(&value[start..start + 1]);
+            index = start + 1;
+            continue;
+        };
+
+        let raw = &value[start..start + import.raw_len];
+        let destination = decode_html_entities(&raw[import.value_range.clone()]);
+        let destination = if asset_relative {
+            assets.exported_css_destination_from(base_dir, &destination)?
+        } else {
+            assets.exported_destination_from(base_dir, &destination)?
+        };
+        if let Some(destination) = destination {
+            out.push_str(&raw[..import.value_range.start]);
+            out.push_str(&escape_css_string(&destination, import.quote));
+            out.push_str(&raw[import.value_range.end..]);
+            changed = true;
+        } else {
+            out.push_str(raw);
+        }
+        index = start + import.raw_len;
+    }
+
+    out.push_str(&value[index..]);
+    Ok(changed.then_some(out))
+}
+
+fn find_css_import_start(value: &str) -> Option<usize> {
+    let mut index = 0usize;
+    while index < value.len() {
+        let rest = &value[index..];
+        if ascii_starts_with_ignore_case(rest, "@import")
+            && !value[..index]
+                .chars()
+                .next_back()
+                .is_some_and(is_css_identifier_char)
+            && !rest
+                .get(7..)
+                .and_then(|after| after.chars().next())
+                .is_some_and(is_css_identifier_char)
+        {
+            return Some(index);
+        }
+
+        let ch = rest.chars().next()?;
+        index += ch.len_utf8();
+    }
+
+    None
+}
+
+fn parse_css_import_string(rest: &str) -> Option<CssImportString> {
+    if !ascii_starts_with_ignore_case(rest, "@import") {
+        return None;
+    }
+
+    let mut index = 7usize;
+    index = skip_ascii_space(rest, index);
+    let quote = match rest.as_bytes().get(index).copied() {
+        Some(b'"') => '"',
+        Some(b'\'') => '\'',
+        _ => return None,
+    };
+
+    index += quote.len_utf8();
+    let value_start = index;
+    let close = find_unescaped_char(&rest[value_start..], quote)?;
+    let value_end = value_start + close;
+    Some(CssImportString {
+        raw_len: value_end + quote.len_utf8(),
+        value_range: value_start..value_end,
+        quote,
+    })
 }
 
 fn rewrite_css_urls_with_base(
@@ -5637,10 +5761,12 @@ mod tests {
         std::fs::create_dir_all(source.join("assets")).unwrap();
         std::fs::create_dir_all(source.join("assets/fonts")).unwrap();
         std::fs::create_dir_all(source.join("assets/images")).unwrap();
+        std::fs::create_dir_all(source.join("assets/theme")).unwrap();
         std::fs::create_dir_all(&export_dir).unwrap();
         std::fs::write(
             source.join("assets/article.css"),
             concat!(
+                "@import \"theme/base.css?theme=print#screen\";\n",
                 ".hero { background: url(\"images/bg.png#hero\"); }\n",
                 "@font-face { src: url(fonts/body.woff2?cache=1) format(\"woff2\"); }\n",
                 ".remote { background: url(https://example.com/remote.png); }\n",
@@ -5648,7 +5774,13 @@ mod tests {
             .as_bytes(),
         )
         .unwrap();
+        std::fs::write(
+            source.join("assets/theme/base.css"),
+            ".paper { background: url(../images/paper.png); }",
+        )
+        .unwrap();
         std::fs::write(source.join("assets/images/bg.png"), b"bg").unwrap();
+        std::fs::write(source.join("assets/images/paper.png"), b"paper").unwrap();
         std::fs::write(source.join("assets/fonts/body.woff2"), b"font").unwrap();
         std::fs::write(source.join("assets/frame.html"), b"frame").unwrap();
         std::fs::write(source.join("assets/widget.svg"), b"widget").unwrap();
@@ -5674,13 +5806,20 @@ mod tests {
         assert!(html.contains("src='article_assets/widget.svg'"));
         assert!(html.contains("data=\"article_assets/report.pdf?download=1#page-2\""));
         let css = std::fs::read_to_string(export_dir.join("article_assets/article.css")).unwrap();
+        assert!(css.contains("@import \"base.css?theme=print#screen\""));
         assert!(css.contains("url(\"bg.png#hero\")"));
         assert!(css.contains("url(body.woff2?cache=1) format(\"woff2\")"));
         assert!(css.contains("url(https://example.com/remote.png)"));
         assert!(!css.contains("article_assets/bg.png"));
+        let base_css = std::fs::read_to_string(export_dir.join("article_assets/base.css")).unwrap();
+        assert!(base_css.contains("url(paper.png)"));
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/bg.png")).unwrap(),
             b"bg"
+        );
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/paper.png")).unwrap(),
+            b"paper"
         );
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/body.woff2")).unwrap(),
@@ -5778,6 +5917,7 @@ mod tests {
         let export_dir = root.join("export");
         std::fs::create_dir_all(source.join("assets")).unwrap();
         std::fs::create_dir_all(&export_dir).unwrap();
+        std::fs::write(source.join("assets/print.css"), b"print").unwrap();
         std::fs::write(source.join("assets/hero.png"), b"hero").unwrap();
         std::fs::write(source.join("assets/font.woff2"), b"font").unwrap();
         std::fs::write(source.join("assets/hidden.png"), b"hidden").unwrap();
@@ -5787,6 +5927,7 @@ mod tests {
             concat!(
                 "`<style>.hidden { background: url(assets/hidden.png); }</style>`\n",
                 "<style>\n",
+                "@import \"assets/print.css?mode=screen\";\n",
                 ".hero { background-image: url(\"assets/hero.png#top\"); }\n",
                 "@font-face { src: url(assets/font.woff2) format(\"woff2\"); }\n",
                 ".remote { background: url(https://example.com/remote.png); }\n",
@@ -5799,12 +5940,17 @@ mod tests {
         .unwrap();
 
         let html = std::fs::read_to_string(&output).unwrap();
+        assert!(html.contains("@import \"article_assets/print.css?mode=screen\""));
         assert!(html.contains("url(\"article_assets/hero.png#top\")"));
         assert!(html.contains("url(article_assets/font.woff2) format(\"woff2\")"));
         assert!(html.contains("url(https://example.com/remote.png)"));
         assert!(html.contains(
             "<code>&lt;style&gt;.hidden { background: url(assets/hidden.png); }&lt;/style&gt;</code>"
         ));
+        assert_eq!(
+            std::fs::read(export_dir.join("article_assets/print.css")).unwrap(),
+            b"print"
+        );
         assert_eq!(
             std::fs::read(export_dir.join("article_assets/hero.png")).unwrap(),
             b"hero"
