@@ -5739,6 +5739,14 @@ mod tests {
     }
 
     #[test]
+    fn math_export_supports_over_fraction_fallback() {
+        let html = export_markdown_to_html("Inline ${x^2 \\over y}$", "Math").unwrap();
+
+        assert!(html.contains("<span class=\"math-fallback math-inline-fallback\">x²/y</span>"));
+        assert!(html.contains("\\({x^2 \\over y}\\)"));
+    }
+
+    #[test]
     fn math_export_supports_text_style_and_operator_commands() {
         let html = export_markdown_to_html(
             "Inline $\\mathbf{x} + \\mathcal{F}$ and $\\operatorname*{argmax}_x f(x)$",

@@ -160,18 +160,25 @@ fn parse_nodes(input: &str, start: usize) -> ParseResult {
 
         if ch == '\\' {
             if let Some((cmd, mut command_end)) = peek_command_name(&chars, i) {
-                if is_binomial_infix_command(&cmd) {
+                if is_fraction_infix_command(&cmd) || is_binomial_infix_command(&cmd) {
                     while command_end < len && chars[command_end] == ' ' {
                         command_end += 1;
                     }
 
-                    let numerator = nodes_to_single_node(std::mem::take(&mut nodes));
-                    let (denominator_nodes, end) = parse_nodes(input, command_end);
-                    let denominator = nodes_to_single_node(denominator_nodes);
-                    nodes.push(MathNode::Binomial {
-                        top: Box::new(numerator),
-                        bottom: Box::new(denominator),
-                    });
+                    let top = nodes_to_single_node(std::mem::take(&mut nodes));
+                    let (bottom_nodes, end) = parse_nodes(input, command_end);
+                    let bottom = nodes_to_single_node(bottom_nodes);
+                    if is_fraction_infix_command(&cmd) {
+                        nodes.push(MathNode::Fraction {
+                            numerator: Box::new(top),
+                            denominator: Box::new(bottom),
+                        });
+                    } else {
+                        nodes.push(MathNode::Binomial {
+                            top: Box::new(top),
+                            bottom: Box::new(bottom),
+                        });
+                    }
                     i = end;
                     continue;
                 }
@@ -453,6 +460,10 @@ fn peek_command_name(chars: &[char], start: usize) -> Option<(String, usize)> {
 
 fn is_binomial_infix_command(cmd: &str) -> bool {
     matches!(cmd, "choose")
+}
+
+fn is_fraction_infix_command(cmd: &str) -> bool {
+    matches!(cmd, "over")
 }
 
 fn nodes_to_single_node(mut nodes: Vec<MathNode>) -> MathNode {
@@ -1205,6 +1216,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_braced_over_as_fraction() {
+        let tree = parse_math("{a \\over b}");
+        assert_eq!(tree.nodes.len(), 1);
+        match &tree.nodes[0] {
+            MathNode::Fraction { numerator, denominator } => {
+                assert_eq!(**numerator, MathNode::Text("a".to_string()));
+                assert_eq!(**denominator, MathNode::Text("b".to_string()));
+            }
+            _ => panic!("expected fraction"),
+        }
+        assert_eq!(math_tree_to_display_text(&tree), "a/b");
+    }
+
+    #[test]
     fn parses_binomial_command() {
         let tree = parse_math("\\binom{n}{k}");
         assert_eq!(tree.nodes.len(), 1);
@@ -1360,6 +1385,11 @@ mod tests {
     fn display_text_for_fraction_style_aliases() {
         assert_eq!(math_source_to_display_text("\\dfrac{x^2}{y}"), "x²/y");
         assert_eq!(math_source_to_display_text("\\tfrac{1}{n+1}"), "1/n+1");
+    }
+
+    #[test]
+    fn display_text_for_over_fraction() {
+        assert_eq!(math_source_to_display_text("{x^2 \\over y}"), "x²/y");
     }
 
     #[test]
