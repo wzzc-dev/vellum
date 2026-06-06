@@ -1189,6 +1189,10 @@ fn render_static_mermaid_fallback(source: &str) -> String {
         return render_static_pie_mermaid_svg(pie);
     }
 
+    if let Some(class_diagram) = parse_static_mermaid_class_diagram(source) {
+        return render_static_class_mermaid_svg(class_diagram);
+    }
+
     if let Some(state) = parse_static_mermaid_state_diagram(source) {
         return render_static_state_mermaid_svg(state, static_mermaid_marker_id(source));
     }
@@ -1629,6 +1633,421 @@ fn static_pie_slice_color(index: usize) -> &'static str {
         "hsl(188 70% 43%)",
     ];
     COLORS[index % COLORS.len()]
+}
+
+fn parse_static_mermaid_class_diagram(source: &str) -> Option<StaticMermaidClassDiagram> {
+    let mut saw_class = false;
+    let mut classes = Vec::new();
+    let mut class_indices = HashMap::new();
+    let mut relationships = Vec::new();
+    let mut current_class: Option<String> = None;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_class {
+            if static_mermaid_class_header(line) {
+                saw_class = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(class_id) = current_class.clone() {
+            if line == "}" {
+                current_class = None;
+                continue;
+            }
+
+            let member = clean_static_mermaid_note_text(line);
+            if !member.is_empty() {
+                push_static_mermaid_class_member(
+                    &mut classes,
+                    &mut class_indices,
+                    &class_id,
+                    member,
+                );
+            }
+            continue;
+        }
+
+        if line == "}" {
+            continue;
+        }
+
+        if let Some(class) = parse_static_mermaid_class_block_start(line) {
+            let id = class.id.clone();
+            upsert_static_mermaid_class(&mut classes, &mut class_indices, class);
+            current_class = Some(id);
+            continue;
+        }
+
+        if let Some(relationship) = parse_static_mermaid_class_relationship(line) {
+            upsert_static_mermaid_class(
+                &mut classes,
+                &mut class_indices,
+                StaticMermaidClass {
+                    id: relationship.from.clone(),
+                    label: relationship.from.clone(),
+                    members: Vec::new(),
+                },
+            );
+            upsert_static_mermaid_class(
+                &mut classes,
+                &mut class_indices,
+                StaticMermaidClass {
+                    id: relationship.to.clone(),
+                    label: relationship.to.clone(),
+                    members: Vec::new(),
+                },
+            );
+            relationships.push(relationship);
+            continue;
+        }
+
+        if let Some((class_id, member)) = parse_static_mermaid_class_member_line(line) {
+            push_static_mermaid_class_member(
+                &mut classes,
+                &mut class_indices,
+                &class_id,
+                member,
+            );
+            continue;
+        }
+
+        if let Some(class) = parse_static_mermaid_class_declaration(line) {
+            upsert_static_mermaid_class(&mut classes, &mut class_indices, class);
+        }
+    }
+
+    (!classes.is_empty() || !relationships.is_empty()).then_some(StaticMermaidClassDiagram {
+        classes,
+        class_indices,
+        relationships,
+    })
+}
+
+fn render_static_class_mermaid_svg(diagram: StaticMermaidClassDiagram) -> String {
+    let width = 680usize;
+    let margin = 28usize;
+    let gap = 16usize;
+    let card_width = (width - margin * 2 - gap) / 2;
+    let relationship_row_height = 38usize;
+    let relationship_area_height = if diagram.relationships.is_empty() {
+        0
+    } else {
+        30 + diagram.relationships.len() * relationship_row_height + 12
+    };
+
+    let class_heights = diagram
+        .classes
+        .iter()
+        .map(static_mermaid_class_card_height)
+        .collect::<Vec<_>>();
+    let mut column_heights = [0usize, 0usize];
+    for (index, height) in class_heights.iter().enumerate() {
+        let column = index % 2;
+        column_heights[column] += height + gap;
+    }
+    let class_area_height = column_heights
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(gap);
+    let height = margin * 2 + relationship_area_height + class_area_height.max(1);
+
+    let mut out = format!(
+        "<svg class=\"mermaid-static\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Mermaid class diagram preview\" xmlns=\"http://www.w3.org/2000/svg\">"
+    );
+
+    let mut y = margin;
+    if !diagram.relationships.is_empty() {
+        out.push_str(&format!(
+            "<text x=\"{margin}\" y=\"{y}\" text-anchor=\"start\" font-size=\"14\" font-weight=\"600\" fill=\"var(--fg)\">Relationships</text>"
+        ));
+        y += 20;
+        for relationship in &diagram.relationships {
+            out.push_str(&render_static_class_relationship(
+                &diagram,
+                relationship,
+                margin,
+                y,
+                width - margin * 2,
+                relationship_row_height - 6,
+            ));
+            y += relationship_row_height;
+        }
+        y += 12;
+    }
+
+    let mut column_y = [y, y];
+    for (index, class) in diagram.classes.iter().enumerate() {
+        let column = index % 2;
+        let x = margin + column * (card_width + gap);
+        out.push_str(&render_static_class_card(
+            class,
+            x,
+            column_y[column],
+            card_width,
+            class_heights[index],
+        ));
+        column_y[column] += class_heights[index] + gap;
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+fn render_static_class_relationship(
+    diagram: &StaticMermaidClassDiagram,
+    relationship: &StaticMermaidClassRelationship,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let from = static_mermaid_class_label(diagram, &relationship.from);
+    let to = static_mermaid_class_label(diagram, &relationship.to);
+    let mut label = format!("{} {} {}", from, relationship.operator, to);
+    if let Some(text) = relationship.label.as_ref().filter(|text| !text.is_empty()) {
+        label.push_str(": ");
+        label.push_str(text);
+    }
+
+    let text_x = x + 12;
+    let center_y = y + height / 2;
+    format!(
+        "<g class=\"mermaid-class-relationship\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/><text x=\"{text_x}\" y=\"{center_y}\" text-anchor=\"start\" dominant-baseline=\"middle\" font-size=\"13\" fill=\"var(--fg)\">{}</text></g>",
+        escape_html(&label)
+    )
+}
+
+fn render_static_class_card(
+    class: &StaticMermaidClass,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let title = static_mermaid_class_display_text(class);
+    let header_height = 34usize;
+    let text_x = x + width / 2;
+    let mut out = format!(
+        "<g class=\"mermaid-class\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"8\" fill=\"var(--code-bg)\" stroke=\"var(--rule)\"/><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{header_height}\" rx=\"8\" fill=\"var(--fg)\" opacity=\"0.06\"/><text x=\"{text_x}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"13\" font-weight=\"600\" fill=\"var(--fg)\">{}</text>",
+        y + header_height / 2,
+        escape_html(&title)
+    );
+    out.push_str(&format!(
+        "<line x1=\"{x}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"var(--rule)\"/>",
+        y + header_height,
+        x + width,
+        y + header_height
+    ));
+
+    let mut member_y = y + header_height + 20;
+    if class.members.is_empty() {
+        out.push_str(&format!(
+            "<text x=\"{}\" y=\"{member_y}\" text-anchor=\"start\" font-size=\"12\" fill=\"var(--muted)\">class</text>",
+            x + 12
+        ));
+    } else {
+        for member in &class.members {
+            out.push_str(&format!(
+                "<text x=\"{}\" y=\"{member_y}\" text-anchor=\"start\" font-size=\"12\" fill=\"var(--fg)\">{}</text>",
+                x + 12,
+                escape_html(member)
+            ));
+            member_y += 20;
+        }
+    }
+
+    out.push_str("</g>");
+    out
+}
+
+fn static_mermaid_class_card_height(class: &StaticMermaidClass) -> usize {
+    34 + class.members.len().max(1) * 20 + 14
+}
+
+fn static_mermaid_class_display_text(class: &StaticMermaidClass) -> String {
+    if class.id == class.label {
+        class.label.clone()
+    } else {
+        format!("{} ({})", class.label, class.id)
+    }
+}
+
+fn static_mermaid_class_label(diagram: &StaticMermaidClassDiagram, id: &str) -> String {
+    diagram
+        .class_indices
+        .get(id)
+        .and_then(|index| diagram.classes.get(*index))
+        .map(static_mermaid_class_display_text)
+        .unwrap_or_else(|| id.to_string())
+}
+
+fn static_mermaid_class_header(line: &str) -> bool {
+    line.eq_ignore_ascii_case("classdiagram") || line.eq_ignore_ascii_case("classdiagram-v2")
+}
+
+fn parse_static_mermaid_class_block_start(line: &str) -> Option<StaticMermaidClass> {
+    if !line.ends_with('{') {
+        return None;
+    }
+    let rest = strip_static_sequence_keyword(line, "class")?;
+    parse_static_mermaid_class_from_source(rest.trim_end_matches('{').trim())
+}
+
+fn parse_static_mermaid_class_declaration(line: &str) -> Option<StaticMermaidClass> {
+    let rest = strip_static_sequence_keyword(line, "class")?;
+    parse_static_mermaid_class_from_source(rest.trim())
+}
+
+fn parse_static_mermaid_class_from_source(source: &str) -> Option<StaticMermaidClass> {
+    let node = parse_static_mermaid_node(source)?;
+    Some(StaticMermaidClass {
+        id: node.id,
+        label: node.label,
+        members: Vec::new(),
+    })
+}
+
+fn parse_static_mermaid_class_member_line(line: &str) -> Option<(String, String)> {
+    let (class_source, member_source) = line.split_once(':')?;
+    let class_id = clean_static_mermaid_class_id(class_source);
+    let member = clean_static_mermaid_note_text(member_source);
+    (!class_id.is_empty() && !member.is_empty()).then_some((class_id, member))
+}
+
+fn parse_static_mermaid_class_relationship(line: &str) -> Option<StaticMermaidClassRelationship> {
+    let (operator_start, operator_end, operator) =
+        find_static_mermaid_class_relationship_operator(line)?;
+    let from = clean_static_mermaid_class_id(&line[..operator_start]);
+    let rest = line[operator_end..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = clean_static_mermaid_class_id(to_source);
+    let label = clean_static_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(StaticMermaidClassRelationship {
+        from,
+        to,
+        operator: operator.to_string(),
+        label: (!label.is_empty()).then_some(label),
+    })
+}
+
+fn find_static_mermaid_class_relationship_operator(
+    line: &str,
+) -> Option<(usize, usize, &'static str)> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in line.char_indices() {
+        if let Some(quote_char) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_char {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+
+        if depth == 0 {
+            for operator in [
+                "<|--", "--|>", "<|..", "..|>", "<--", "-->", "<..", "..>", "*--", "--*",
+                "o--", "--o", "--", "..",
+            ] {
+                if line[index..].starts_with(operator) {
+                    return Some((index, index + operator.len(), operator));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn clean_static_mermaid_class_id(source: &str) -> String {
+    let mut source = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+
+    loop {
+        let stripped = strip_static_mermaid_class_cardinality(source);
+        if stripped == source {
+            break;
+        }
+        source = stripped;
+    }
+
+    clean_static_mermaid_label(source)
+}
+
+fn strip_static_mermaid_class_cardinality(source: &str) -> &str {
+    let source = source.trim();
+    if let Some(rest) = source.strip_prefix('"')
+        && let Some(close) = rest.find('"')
+    {
+        return rest[close + 1..].trim();
+    }
+    if let Some(rest) = source.strip_suffix('"')
+        && let Some(open) = rest.rfind('"')
+    {
+        return rest[..open].trim();
+    }
+    source
+}
+
+fn upsert_static_mermaid_class(
+    classes: &mut Vec<StaticMermaidClass>,
+    class_indices: &mut HashMap<String, usize>,
+    class: StaticMermaidClass,
+) {
+    if let Some(index) = class_indices.get(&class.id).copied() {
+        if classes[index].label == classes[index].id && class.label != class.id {
+            classes[index].label = class.label;
+        }
+        for member in class.members {
+            if !classes[index].members.contains(&member) {
+                classes[index].members.push(member);
+            }
+        }
+        return;
+    }
+
+    class_indices.insert(class.id.clone(), classes.len());
+    classes.push(class);
+}
+
+fn push_static_mermaid_class_member(
+    classes: &mut Vec<StaticMermaidClass>,
+    class_indices: &mut HashMap<String, usize>,
+    class_id: &str,
+    member: String,
+) {
+    upsert_static_mermaid_class(
+        classes,
+        class_indices,
+        StaticMermaidClass {
+            id: class_id.to_string(),
+            label: class_id.to_string(),
+            members: vec![member],
+        },
+    );
 }
 
 fn parse_static_mermaid_state_diagram(source: &str) -> Option<StaticMermaidStateDiagram> {
@@ -3061,6 +3480,26 @@ struct StaticMermaidPieChart {
 struct StaticMermaidPieSlice {
     label: String,
     value: f64,
+}
+
+struct StaticMermaidClassDiagram {
+    classes: Vec<StaticMermaidClass>,
+    class_indices: HashMap<String, usize>,
+    relationships: Vec<StaticMermaidClassRelationship>,
+}
+
+#[derive(Clone)]
+struct StaticMermaidClass {
+    id: String,
+    label: String,
+    members: Vec<String>,
+}
+
+struct StaticMermaidClassRelationship {
+    from: String,
+    to: String,
+    operator: String,
+    label: Option<String>,
 }
 
 struct StaticMermaidStateDiagram {
@@ -5154,6 +5593,30 @@ mod tests {
         assert!(html.contains(">HTML &lt;export&gt;</text>"));
         assert!(html.contains(">65 (65.0%)</text>"));
         assert!(!html.contains("<pre class=\"mermaid-static mermaid-static-source\">pie"));
+    }
+
+    #[test]
+    fn mermaid_export_has_static_class_fallback() {
+        let html = export_markdown_to_html(
+            "```mermaid\nclassDiagram\n  class Document[Markdown Document] {\n    +String title\n    +save()\n  }\n  Document : +render_html()\n  Document <|-- LongformNote : extends <draft>\n  LongformNote --> AssetStore : writes\n```",
+            "Mermaid",
+        )
+        .unwrap();
+
+        assert!(html.contains("<svg class=\"mermaid-static\""));
+        assert!(html.contains("Mermaid class diagram preview"));
+        assert!(html.contains("class=\"mermaid-class\""));
+        assert!(html.contains("class=\"mermaid-class-relationship\""));
+        assert!(html.contains(">Markdown Document (Document)</text>"));
+        assert!(html.contains(">+String title</text>"));
+        assert!(html.contains(">+render_html()</text>"));
+        assert!(html.contains(
+            "Markdown Document (Document) &lt;|-- LongformNote: extends &lt;draft&gt;"
+        ));
+        assert!(html.contains("LongformNote --&gt; AssetStore: writes"));
+        assert!(!html.contains(
+            "<pre class=\"mermaid-static mermaid-static-source\">classDiagram"
+        ));
     }
 
     #[test]

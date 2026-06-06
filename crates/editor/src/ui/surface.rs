@@ -165,6 +165,8 @@ struct MermaidPreview {
     subgraphs: Vec<MermaidSubgraph>,
     pie_title: Option<String>,
     pie_slices: Vec<MermaidPieSlice>,
+    classes: Vec<MermaidClass>,
+    class_relationships: Vec<MermaidClassRelationship>,
     states: Vec<MermaidState>,
     state_transitions: Vec<MermaidStateTransition>,
     state_notes: Vec<MermaidStateNote>,
@@ -206,6 +208,21 @@ struct MermaidSubgraph {
 struct MermaidPieSlice {
     label: String,
     value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidClass {
+    id: String,
+    label: String,
+    members: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidClassRelationship {
+    from: String,
+    to: String,
+    operator: String,
+    label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2497,6 +2514,18 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     mermaid_pie_value_text(mermaid_pie_total(&preview.pie_slices))
                 )),
         );
+    } else if has_mermaid_class_preview(&preview) {
+        header = header.child(render_mermaid_chip("class".to_string(), palette));
+        header = header.child(
+            div()
+                .text_sm()
+                .text_color(palette.muted_text_color.opacity(0.7))
+                .child(format!(
+                    "{} classes, {} relationships",
+                    preview.classes.len(),
+                    preview.class_relationships.len()
+                )),
+        );
     } else if has_mermaid_state_preview(&preview) {
         header = header.child(render_mermaid_chip("state".to_string(), palette));
         header = header.child(
@@ -2559,6 +2588,27 @@ fn render_mermaid_block(block: &RenderBlock, palette: RenderPalette) -> AnyEleme
                     .text_sm()
                     .text_color(palette.muted_text_color)
                     .child(format!("+{} more slices", preview.pie_slices.len() - 8)),
+            );
+        }
+        if preview.unsupported_lines > 0 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color.opacity(0.75))
+                    .child(format!("{} other statements", preview.unsupported_lines)),
+            );
+        }
+    } else if has_mermaid_class_preview(&preview) {
+        body = body.child(render_mermaid_class_preview(&preview, palette));
+        if preview.classes.len() + preview.class_relationships.len() > 8 {
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(palette.muted_text_color)
+                    .child(format!(
+                        "+{} more class items",
+                        preview.classes.len() + preview.class_relationships.len() - 8
+                    )),
             );
         }
         if preview.unsupported_lines > 0 {
@@ -2639,6 +2689,10 @@ fn has_mermaid_pie_preview(preview: &MermaidPreview) -> bool {
     !preview.pie_slices.is_empty()
 }
 
+fn has_mermaid_class_preview(preview: &MermaidPreview) -> bool {
+    !preview.classes.is_empty() || !preview.class_relationships.is_empty()
+}
+
 fn has_mermaid_state_preview(preview: &MermaidPreview) -> bool {
     !preview.states.is_empty()
         || !preview.state_transitions.is_empty()
@@ -2668,6 +2722,104 @@ fn render_mermaid_graph_preview(preview: &MermaidPreview, palette: RenderPalette
         graph = graph.child(render_mermaid_edge_card(edge, direction, palette));
     }
     graph.into_any_element()
+}
+
+fn render_mermaid_class_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
+    let mut diagram = div().w_full().flex().flex_col().gap_2();
+    let mut shown_items = 0usize;
+
+    for class in preview.classes.iter().take(5) {
+        diagram = diagram.child(render_mermaid_class_card(class, palette));
+        shown_items += 1;
+    }
+    for relationship in preview
+        .class_relationships
+        .iter()
+        .take(8usize.saturating_sub(shown_items))
+    {
+        diagram = diagram.child(render_mermaid_class_relationship_card(
+            preview,
+            relationship,
+            palette,
+        ));
+    }
+
+    diagram.into_any_element()
+}
+
+fn render_mermaid_class_card(class: &MermaidClass, palette: RenderPalette) -> AnyElement {
+    let title = mermaid_class_display_text(class);
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.text_color)
+                .child(title),
+        );
+
+    if class.members.is_empty() {
+        card = card.child(render_mermaid_chip("class".to_string(), palette));
+    } else {
+        for member in class.members.iter().take(5) {
+            card = card.child(render_mermaid_chip(member.clone(), palette));
+        }
+        if class.members.len() > 5 {
+            card = card.child(render_mermaid_chip(
+                format!("+{} members", class.members.len() - 5),
+                palette,
+            ));
+        }
+    }
+
+    card.into_any_element()
+}
+
+fn render_mermaid_class_relationship_card(
+    preview: &MermaidPreview,
+    relationship: &MermaidClassRelationship,
+    palette: RenderPalette,
+) -> AnyElement {
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .border_1()
+        .border_color(palette.border_color)
+        .bg(palette.text_color.opacity(0.025))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(render_mermaid_participant_card(
+                    &mermaid_class_label(preview, &relationship.from),
+                    palette,
+                ))
+                .child(render_mermaid_chip(relationship.operator.clone(), palette))
+                .child(render_mermaid_participant_card(
+                    &mermaid_class_label(preview, &relationship.to),
+                    palette,
+                )),
+        );
+
+    if let Some(label) = relationship.label.as_ref().filter(|label| !label.is_empty()) {
+        card = card.child(render_mermaid_chip(label.clone(), palette));
+    }
+
+    card.into_any_element()
 }
 
 fn render_mermaid_pie_preview(preview: &MermaidPreview, palette: RenderPalette) -> AnyElement {
@@ -3042,6 +3194,23 @@ fn mermaid_state_display_text(state: &MermaidState) -> String {
     }
 }
 
+fn mermaid_class_display_text(class: &MermaidClass) -> String {
+    if class.id == class.label {
+        class.label.clone()
+    } else {
+        format!("{} ({})", class.label, class.id)
+    }
+}
+
+fn mermaid_class_label(preview: &MermaidPreview, id: &str) -> String {
+    preview
+        .classes
+        .iter()
+        .find(|class| class.id == id)
+        .map(mermaid_class_display_text)
+        .unwrap_or_else(|| id.to_string())
+}
+
 fn mermaid_state_endpoint_label(preview: &MermaidPreview, id: &str, is_from: bool) -> String {
     if mermaid_state_is_terminal(id) {
         return if is_from { "start" } else { "end" }.to_string();
@@ -3195,6 +3364,9 @@ fn parse_mermaid_preview(source: &str) -> MermaidPreview {
     if mermaid_is_pie_diagram(source) {
         return parse_mermaid_pie_preview(source);
     }
+    if mermaid_is_class_diagram(source) {
+        return parse_mermaid_class_preview(source);
+    }
     if mermaid_is_state_diagram(source) {
         return parse_mermaid_state_preview(source);
     }
@@ -3250,6 +3422,17 @@ fn mermaid_is_pie_diagram(source: &str) -> bool {
             continue;
         }
         return mermaid_pie_header(line);
+    }
+    false
+}
+
+fn mermaid_is_class_diagram(source: &str) -> bool {
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+        return mermaid_class_header(line);
     }
     false
 }
@@ -3338,6 +3521,276 @@ fn mermaid_pie_value_text(value: f64) -> String {
             .trim_end_matches('.')
             .to_string()
     }
+}
+
+fn parse_mermaid_class_preview(source: &str) -> MermaidPreview {
+    let mut preview = MermaidPreview::default();
+    let mut class_indices = HashMap::new();
+    let mut current_class: Option<String> = None;
+    let mut saw_class = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim().trim_end_matches(';').trim();
+        if line.is_empty() || line.starts_with("%%") {
+            continue;
+        }
+
+        if !saw_class {
+            if mermaid_class_header(line) {
+                saw_class = true;
+                continue;
+            }
+            continue;
+        }
+
+        if let Some(class_id) = current_class.clone() {
+            if line == "}" {
+                current_class = None;
+                continue;
+            }
+
+            let member = clean_mermaid_note_text(line);
+            if !member.is_empty() {
+                push_mermaid_class_member(
+                    &mut preview.classes,
+                    &mut class_indices,
+                    &class_id,
+                    member,
+                );
+            }
+            continue;
+        }
+
+        if line == "}" {
+            continue;
+        }
+
+        if let Some(class) = parse_mermaid_class_block_start(line) {
+            let id = class.id.clone();
+            upsert_mermaid_class(&mut preview.classes, &mut class_indices, class);
+            current_class = Some(id);
+            continue;
+        }
+
+        if let Some(relationship) = parse_mermaid_class_relationship(line) {
+            upsert_mermaid_class(
+                &mut preview.classes,
+                &mut class_indices,
+                MermaidClass {
+                    id: relationship.from.clone(),
+                    label: relationship.from.clone(),
+                    members: Vec::new(),
+                },
+            );
+            upsert_mermaid_class(
+                &mut preview.classes,
+                &mut class_indices,
+                MermaidClass {
+                    id: relationship.to.clone(),
+                    label: relationship.to.clone(),
+                    members: Vec::new(),
+                },
+            );
+            preview.class_relationships.push(relationship);
+            continue;
+        }
+
+        if let Some((class_id, member)) = parse_mermaid_class_member_line(line) {
+            push_mermaid_class_member(
+                &mut preview.classes,
+                &mut class_indices,
+                &class_id,
+                member,
+            );
+            continue;
+        }
+
+        if let Some(class) = parse_mermaid_class_declaration(line) {
+            upsert_mermaid_class(&mut preview.classes, &mut class_indices, class);
+            continue;
+        }
+
+        if is_mermaid_class_non_member_directive(line) {
+            continue;
+        }
+
+        preview.unsupported_lines += 1;
+    }
+
+    preview
+}
+
+fn mermaid_class_header(line: &str) -> bool {
+    line.eq_ignore_ascii_case("classdiagram") || line.eq_ignore_ascii_case("classdiagram-v2")
+}
+
+fn parse_mermaid_class_block_start(line: &str) -> Option<MermaidClass> {
+    if !line.ends_with('{') {
+        return None;
+    }
+    let rest = strip_mermaid_sequence_keyword(line, "class")?;
+    parse_mermaid_class_from_source(rest.trim_end_matches('{').trim())
+}
+
+fn parse_mermaid_class_declaration(line: &str) -> Option<MermaidClass> {
+    let rest = strip_mermaid_sequence_keyword(line, "class")?;
+    parse_mermaid_class_from_source(rest.trim())
+}
+
+fn parse_mermaid_class_from_source(source: &str) -> Option<MermaidClass> {
+    let node = parse_mermaid_node(source)?;
+    Some(MermaidClass {
+        id: node.id,
+        label: node.label,
+        members: Vec::new(),
+    })
+}
+
+fn parse_mermaid_class_member_line(line: &str) -> Option<(String, String)> {
+    let (class_source, member_source) = line.split_once(':')?;
+    let class_id = clean_mermaid_class_id(class_source);
+    let member = clean_mermaid_note_text(member_source);
+    (!class_id.is_empty() && !member.is_empty()).then_some((class_id, member))
+}
+
+fn parse_mermaid_class_relationship(line: &str) -> Option<MermaidClassRelationship> {
+    let (operator_start, operator_end, operator) = find_mermaid_class_relationship_operator(line)?;
+    let from = clean_mermaid_class_id(&line[..operator_start]);
+    let rest = line[operator_end..].trim();
+    let (to_source, label_source) = rest.split_once(':').unwrap_or((rest, ""));
+    let to = clean_mermaid_class_id(to_source);
+    let label = clean_mermaid_note_text(label_source);
+
+    (!from.is_empty() && !to.is_empty()).then_some(MermaidClassRelationship {
+        from,
+        to,
+        operator: operator.to_string(),
+        label: (!label.is_empty()).then_some(label),
+    })
+}
+
+fn find_mermaid_class_relationship_operator(line: &str) -> Option<(usize, usize, &'static str)> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in line.char_indices() {
+        if let Some(quote_char) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_char {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+
+        if depth == 0 {
+            for operator in [
+                "<|--", "--|>", "<|..", "..|>", "<--", "-->", "<..", "..>", "*--", "--*",
+                "o--", "--o", "--", "..",
+            ] {
+                if line[index..].starts_with(operator) {
+                    return Some((index, index + operator.len(), operator));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn clean_mermaid_class_id(source: &str) -> String {
+    let mut source = source
+        .trim()
+        .trim_matches(|ch: char| ch == ';' || ch == ',')
+        .trim();
+
+    loop {
+        let stripped = strip_mermaid_class_cardinality(source);
+        if stripped == source {
+            break;
+        }
+        source = stripped;
+    }
+
+    clean_mermaid_label(source)
+}
+
+fn strip_mermaid_class_cardinality(source: &str) -> &str {
+    let source = source.trim();
+    if let Some(rest) = source.strip_prefix('"')
+        && let Some(close) = rest.find('"')
+    {
+        return rest[close + 1..].trim();
+    }
+    if let Some(rest) = source.strip_suffix('"')
+        && let Some(open) = rest.rfind('"')
+    {
+        return rest[..open].trim();
+    }
+    source
+}
+
+fn upsert_mermaid_class(
+    classes: &mut Vec<MermaidClass>,
+    class_indices: &mut HashMap<String, usize>,
+    class: MermaidClass,
+) {
+    if let Some(index) = class_indices.get(&class.id).copied() {
+        if classes[index].label == classes[index].id && class.label != class.id {
+            classes[index].label = class.label;
+        }
+        for member in class.members {
+            if !classes[index].members.contains(&member) {
+                classes[index].members.push(member);
+            }
+        }
+        return;
+    }
+
+    class_indices.insert(class.id.clone(), classes.len());
+    classes.push(class);
+}
+
+fn push_mermaid_class_member(
+    classes: &mut Vec<MermaidClass>,
+    class_indices: &mut HashMap<String, usize>,
+    class_id: &str,
+    member: String,
+) {
+    upsert_mermaid_class(
+        classes,
+        class_indices,
+        MermaidClass {
+            id: class_id.to_string(),
+            label: class_id.to_string(),
+            members: vec![member],
+        },
+    );
+}
+
+fn is_mermaid_class_non_member_directive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("direction ")
+        || lower.starts_with("namespace ")
+        || lower.starts_with("click ")
+        || lower.starts_with("link ")
+        || lower.starts_with("style ")
+        || lower.starts_with("classdef ")
+        || lower.starts_with("cssclass ")
+        || lower.starts_with("callback ")
+        || lower.starts_with("href ")
+        || lower.starts_with("note ")
+        || lower.starts_with("<<")
 }
 
 fn parse_mermaid_state_preview(source: &str) -> MermaidPreview {
@@ -5862,12 +6315,13 @@ fn build_editor_context_menu(
 #[cfg(test)]
 mod tests {
     use super::{
-        FootnotePreview, HtmlImagePreview, MermaidEdge, MermaidGraphDirection, MermaidNode,
-        MermaidParticipant, MermaidPieSlice, MermaidSequenceFragment, MermaidSequenceFragmentKind,
-        MermaidSequenceItem, MermaidSequenceLifecycle, MermaidSequenceLifecycleKind,
-        MermaidSequenceMessage, MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState,
-        MermaidStateNote, MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph,
-        MetadataPreviewEntry, ResolvedImageSource, TocPreviewEntry,
+        FootnotePreview, HtmlImagePreview, MermaidClass, MermaidClassRelationship, MermaidEdge,
+        MermaidGraphDirection, MermaidNode, MermaidParticipant, MermaidPieSlice,
+        MermaidSequenceFragment, MermaidSequenceFragmentKind, MermaidSequenceItem,
+        MermaidSequenceLifecycle, MermaidSequenceLifecycleKind, MermaidSequenceMessage,
+        MermaidSequenceNote, MermaidSequenceNotePlacement, MermaidState, MermaidStateNote,
+        MermaidStateNotePlacement, MermaidStateTransition, MermaidSubgraph, MetadataPreviewEntry,
+        ResolvedImageSource, TocPreviewEntry,
         collect_mermaid_preview_nodes, collect_toc_preview_entries, footnote_edit_cursor_offset,
         footnote_preview, front_matter_edit_cursor_offset, front_matter_preview_entries,
         image_edit_cursor_offset, looks_like_image_uri, mermaid_edit_cursor_offset,
@@ -6466,6 +6920,56 @@ mod tests {
                 MermaidPieSlice {
                     label: "Print PDF".to_string(),
                     value: 35.5,
+                },
+            ]
+        );
+        assert_eq!(preview.unsupported_lines, 0);
+    }
+
+    #[test]
+    fn parses_mermaid_class_diagram_members_and_relationships() {
+        let preview = parse_mermaid_preview(
+            "classDiagram\n  class Document[Markdown Document] {\n    +String title\n    +save()\n  }\n  Document : +render_html()\n  Document <|-- LongformNote : extends <draft>\n  LongformNote --> AssetStore : writes\n",
+        );
+
+        assert_eq!(
+            preview.classes,
+            vec![
+                MermaidClass {
+                    id: "Document".to_string(),
+                    label: "Markdown Document".to_string(),
+                    members: vec![
+                        "+String title".to_string(),
+                        "+save()".to_string(),
+                        "+render_html()".to_string(),
+                    ],
+                },
+                MermaidClass {
+                    id: "LongformNote".to_string(),
+                    label: "LongformNote".to_string(),
+                    members: Vec::new(),
+                },
+                MermaidClass {
+                    id: "AssetStore".to_string(),
+                    label: "AssetStore".to_string(),
+                    members: Vec::new(),
+                },
+            ]
+        );
+        assert_eq!(
+            preview.class_relationships,
+            vec![
+                MermaidClassRelationship {
+                    from: "Document".to_string(),
+                    to: "LongformNote".to_string(),
+                    operator: "<|--".to_string(),
+                    label: Some("extends <draft>".to_string()),
+                },
+                MermaidClassRelationship {
+                    from: "LongformNote".to_string(),
+                    to: "AssetStore".to_string(),
+                    operator: "-->".to_string(),
+                    label: Some("writes".to_string()),
                 },
             ]
         );

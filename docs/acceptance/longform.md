@@ -159,6 +159,17 @@ stateDiagram-v2
 ```
 
 ```mermaid
+classDiagram
+  class Document[Markdown document] {
+    +String title
+    +save()
+  }
+  Document : +export_html()
+  Document <|-- LongformNote : specializes
+  LongformNote --> AssetStore : writes assets
+```
+
+```mermaid
 pie showData
   title Export coverage
   "HTML export" : 45

@@ -16,6 +16,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the Mermaid flowchart subgraph label remains visible in preview.
 - Confirm the Mermaid sequence numbering, note, loop fragment, and lifecycle events remain visible in preview.
 - Confirm the Mermaid state diagram transitions and note remain visible in preview.
+- Confirm the Mermaid class diagram classes, members, and relationships remain visible in preview.
 - Confirm the Mermaid pie chart title, slices, and values remain visible in preview.
 - Confirm footnote references render as superscript markers and footnote definitions show a preview when the cursor leaves them.
 - Save, close the tab, reopen the file, and confirm the edits persist.
@@ -49,6 +50,7 @@ Use `docs/acceptance/longform.md` for this pass. The checklist is intentionally 
 - Confirm the exported flowchart includes the subgraph label when browser Mermaid rendering is unavailable.
 - Confirm the exported sequence diagram includes numbering, the note, loop fragment, and lifecycle events when browser Mermaid rendering is unavailable.
 - Confirm the exported state diagram includes transitions and the note when browser Mermaid rendering is unavailable.
+- Confirm the exported class diagram includes classes, members, and relationships when browser Mermaid rendering is unavailable.
 - Confirm the exported pie chart includes the title, slices, and values when browser Mermaid rendering is unavailable.
 - Confirm local images are copied beside the exported HTML in the generated assets folder.
 - Confirm the local appendix links, including the raw HTML link, point into the generated assets folder and open from the exported HTML.
