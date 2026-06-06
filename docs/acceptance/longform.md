@@ -15,6 +15,10 @@ The exported article should keep local companion links portable, such as the [ac
 
 <p>Raw HTML links should stay portable too: <a href="assets/appendix.md?raw=1#notes">appendix source</a>.</p>
 
+<link rel="stylesheet" href="assets/acceptance.css">
+
+<p class="acceptance-style-sentinel">Raw HTML stylesheets should keep their imported local assets portable.</p>
+
 ![Acceptance cover](assets/cover.svg#acceptance-cover)
 
 ![Referenced local diagram][asset-diagram]

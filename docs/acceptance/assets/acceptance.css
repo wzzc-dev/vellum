@@ -1,0 +1,7 @@
+@import "acceptance-theme.css?print=1#screen";
+
+.acceptance-style-sentinel {
+  background-image: url("cover.svg#style-cover");
+  border-left: 4px solid #2563eb;
+  padding-left: 12px;
+}

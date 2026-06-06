@@ -5529,6 +5529,7 @@ mod tests {
         assert!(html.contains("src=\"longform_assets/reference-diagram.svg\""));
         assert!(html.contains("href=\"longform_assets/appendix.md#notes\""));
         assert!(html.contains("href=\"longform_assets/appendix.md?raw=1#notes\""));
+        assert!(html.contains("href=\"longform_assets/acceptance.css\""));
         assert!(
             html.contains(
                 "srcset=\"longform_assets/cover.svg 1x, longform_assets/reference-diagram.svg#workflow 2x\""
@@ -5572,9 +5573,18 @@ mod tests {
         assert!(html.contains(">HTML export</text>"));
         assert!(html.contains("data-footnotes"));
         assert!(html.contains("@media print"));
+        let css = std::fs::read_to_string(root.join("longform_assets/acceptance.css")).unwrap();
+        assert!(css.contains("@import \"acceptance-theme.css?print=1#screen\""));
+        assert!(css.contains("url(\"cover.svg#style-cover\")"));
+        assert!(!css.contains("longform_assets/cover.svg"));
+        let imported_css =
+            std::fs::read_to_string(root.join("longform_assets/acceptance-theme.css")).unwrap();
+        assert!(imported_css.contains("url(reference-diagram.svg#theme-diagram)"));
         assert!(root.join("longform_assets/cover.svg").is_file());
         assert!(root.join("longform_assets/reference-diagram.svg").is_file());
         assert!(root.join("longform_assets/appendix.md").is_file());
+        assert!(root.join("longform_assets/acceptance.css").is_file());
+        assert!(root.join("longform_assets/acceptance-theme.css").is_file());
 
         std::fs::remove_dir_all(root).unwrap();
     }
