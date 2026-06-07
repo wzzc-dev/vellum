@@ -21,7 +21,7 @@ use gpui::Focusable;
 use gpui::{
     App, AppContext, Application, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyBinding, ParentElement, Render, Styled, Subscription, Timer, VisualContext, Window,
-    WindowHandle, WindowOptions, actions, div, px,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, px, size,
 };
 #[cfg(target_os = "macos")]
 use gpui::{Menu, MenuItem, OsAction, SystemMenuType};
@@ -178,6 +178,7 @@ pub fn run() -> Result<()> {
         bind_editor_keys(cx);
 
         let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(1024.), px(768.)), cx)),
             titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         };
